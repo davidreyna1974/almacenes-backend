@@ -28,7 +28,7 @@ public class UserController {
      * Retorna el estatus 201 Created ante una operacion exitosa.
      */
     @PostMapping("/register")
-    public ResponseEntity<UserResponseDTO> register(@Valid @RequestBody UserRequestDTO request) {
+    public ResponseEntity<UserResponseDTO> registerUser(@Valid @RequestBody UserRequestDTO request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(userService.registerUser(request));
     }
 }

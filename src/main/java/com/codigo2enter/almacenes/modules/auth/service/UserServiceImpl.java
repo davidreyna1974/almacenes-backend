@@ -8,6 +8,8 @@ import com.codigo2enter.almacenes.modules.auth.model.User;
 import com.codigo2enter.almacenes.modules.auth.repository.RoleRepository;
 import com.codigo2enter.almacenes.modules.auth.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,6 +22,7 @@ public class UserServiceImpl implements UserService {
     private final UserRepository userRepository;
     private final RoleRepository roleRepository;
     private final UserMapper userMapper;
+    private final PasswordEncoder passwordEncoder;
 
     @Override
     public UserResponseDTO registerUser(UserRequestDTO request) {
@@ -35,8 +38,9 @@ public class UserServiceImpl implements UserService {
         // Convertir DTO de entrada a Entidad JPA usando MapStruct
         User userEntity = userMapper.toEntity(request);
 
-        // [ZONA DE CONTROL]: Aquí se interceptará el password para cifrarlo con BCrypt más adelante
-        userEntity.setPassword(request.getPassword());
+        // [ZONA DE CONTROL]: Aquí se interceptará el password para cifrarlo con BCrypt
+        // El password ahora se encripta con un hash seguro antes de viajar a PostgreSQL
+        userEntity.setPassword(passwordEncoder.encode(request.getPassword()));
 
         // Buscamos la entidad del rol en la base de datos para asegurar su consistencia
         Role defaultRole = roleRepository.findByName("ROLE_WAREHOUSEMAN")

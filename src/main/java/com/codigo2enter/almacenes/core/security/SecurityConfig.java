@@ -26,7 +26,7 @@ public class SecurityConfig {
             .csrf(AbstractHttpConfigurer::disable)
             // 2. Le decimos que permita el acceso libre a tu endpoint de registro
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/api/v1/auth/register").permitAll()
+                .requestMatchers("/api/v1/auth/**").permitAll()
                 .anyRequest().authenticated()
             );
         return http.build();

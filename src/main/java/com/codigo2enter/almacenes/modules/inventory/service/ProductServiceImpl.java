@@ -70,15 +70,35 @@ public class ProductServiceImpl implements ProductService {
     /**
      * {@inheritDoc}
      *
-     * El mapper updateFromDTO actualiza los campos escalares del producto.
-     * Luego el servicio resuelve siempre la categoría desde el categoryId
-     * del DTO para reflejar cualquier cambio en la asignación.
+     * Flujo de validaciones antes de actualizar:
+     *   1. Verifica que el producto exista.
+     *   2. Valida que el nuevo SKU no esté en uso por un producto DIFERENTE.
+     *      Sin esta validación, si el cliente cambia el SKU a uno ya registrado,
+     *      PostgreSQL lanzaría una excepción de constraint UNIQUE sin mensaje
+     *      de negocio — el frontend no podría mostrar un error claro al usuario.
+     *      La condición !existing.getId().equals(id) permite que el producto
+     *      conserve su propio SKU sin disparar el error (editar sin cambiar SKU).
+     *   3. Aplica los cambios escalares con el mapper.
+     *   4. Resuelve la categoría actualizada desde el categoryId del DTO.
      */
     @Override
     public ProductResponseDTO updateProduct(Long id, ProductRequestDTO dto) {
         Product product = findProductOrThrow(id);
 
+        // Validar que el nuevo SKU no pertenezca a otro producto distinto.
+        productRepository.findBySku(dto.getSku()).ifPresent(existing -> {
+            if (!existing.getId().equals(id)) {
+                throw new RuntimeException(
+                    "El SKU '" + dto.getSku() + "' ya está en uso por otro producto."
+                );
+            }
+        });
+
+        // El mapper actualiza: sku, name, description, price, currentStock,
+        // minimumStock, status, supplierId. Ignora id, active, createdAt y category.
         productMapper.updateFromDTO(dto, product);
+
+        // Resuelve y asigna la categoría — si categoryId cambió, se aplica el nuevo.
         product.setCategory(resolveCategory(dto.getCategoryId()));
 
         return productMapper.toResponseDTO(productRepository.save(product));
@@ -114,7 +134,19 @@ public class ProductServiceImpl implements ProductService {
     public void registerStockMovement(Long productId, int quantity, String reason, MovementType type) {
         Product product = findProductOrThrow(productId);
 
+        // Validar que la cantidad sea positiva.
+        // Un movimiento con quantity = 0 no tendría efecto en el stock pero
+        // generaría un registro inútil en el historial. Un valor negativo
+        // corrompería el stock incluso pasando la validación de OUT siguiente.
+        if (quantity <= 0) {
+            throw new RuntimeException(
+                "La cantidad del movimiento debe ser mayor a cero. Valor recibido: " + quantity + "."
+            );
+        }
+
         // Validar que una salida no genere stock negativo.
+        // Esta validación ocurre después de verificar quantity > 0 para garantizar
+        // que la resta sea siempre con un número positivo y el resultado sea predecible.
         if (type == MovementType.OUT && product.getCurrentStock() - quantity < 0) {
             throw new RuntimeException(
                 "Stock insuficiente. Disponible: " + product.getCurrentStock()
@@ -157,12 +189,19 @@ public class ProductServiceImpl implements ProductService {
     /**
      * {@inheritDoc}
      *
-     * Usa findByCategoryIdAndActiveTrue para excluir automáticamente
-     * los productos dados de baja lógica dentro de esa categoría.
+     * Valida primero que la categoría exista para distinguir entre
+     * "categoría no encontrada" (error) y "categoría sin productos" (lista vacía).
+     * Sin esta validación, ambos casos devolverían [] con HTTP 200, haciendo
+     * imposible que el cliente diferencie un ID inválido de una categoría vacía.
      */
     @Override
     @Transactional(readOnly = true)
     public List<ProductResponseDTO> getByCategoryId(Long categoryId) {
+        if (!categoryRepository.existsById(categoryId)) {
+            throw new RuntimeException(
+                "Categoría con id " + categoryId + " no encontrada."
+            );
+        }
         return productMapper.toResponseDTOList(
             productRepository.findByCategoryIdAndActiveTrue(categoryId)
         );
@@ -182,12 +221,20 @@ public class ProductServiceImpl implements ProductService {
     /**
      * {@inheritDoc}
      *
+     * Valida primero que el producto exista para distinguir entre
+     * "producto no encontrado" (error) y "producto sin movimientos" (lista vacía).
+     * Sin esta validación, un productId inexistente devolvería [] con HTTP 200,
+     * siendo imposible diferenciar un ID inválido de un producto sin historial.
+     *
      * El repositorio ya devuelve los movimientos ordenados por createdAt DESC,
-     * listo para pintar el Kardex en el frontend sin ordenamiento adicional.
+     * listos para pintar el Kardex en el frontend sin ordenamiento adicional.
      */
     @Override
     @Transactional(readOnly = true)
     public List<StockMovementResponseDTO> getStockMovementsByProduct(Long productId) {
+        // Verificar existencia del producto antes de consultar sus movimientos.
+        findProductOrThrow(productId);
+
         return stockMovementMapper.toResponseDTOList(
             stockMovementRepository.findByProductIdOrderByCreatedAtDesc(productId)
         );

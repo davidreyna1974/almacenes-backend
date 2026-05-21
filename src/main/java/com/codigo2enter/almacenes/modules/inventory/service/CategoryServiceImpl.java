@@ -4,6 +4,7 @@ import com.codigo2enter.almacenes.modules.inventory.dto.CategoryDTO;
 import com.codigo2enter.almacenes.modules.inventory.mapper.CategoryMapper;
 import com.codigo2enter.almacenes.modules.inventory.model.Category;
 import com.codigo2enter.almacenes.modules.inventory.repository.CategoryRepository;
+import com.codigo2enter.almacenes.modules.inventory.repository.ProductRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,6 +28,10 @@ public class CategoryServiceImpl implements CategoryService {
 
     private final CategoryRepository categoryRepository;
     private final CategoryMapper categoryMapper;
+
+    // Necesario para verificar si la categoría tiene productos activos
+    // antes de permitir su desactivación — evita dejar FKs huérfanas.
+    private final ProductRepository productRepository;
 
     /**
      * {@inheritDoc}
@@ -67,10 +72,17 @@ public class CategoryServiceImpl implements CategoryService {
     /**
      * {@inheritDoc}
      *
-     * Como eliminamos updateFromDTO del mapper, el servicio actualiza
-     * directamente los campos editables de la entidad. Hibernate detecta
-     * los cambios al final de la transacción y ejecuta el UPDATE automáticamente
-     * sin necesidad de llamar explícitamente a save().
+     * Flujo de validaciones antes de actualizar:
+     *   1. Verifica que la categoría exista.
+     *   2. Valida que el nuevo nombre no esté en uso por una categoría DIFERENTE.
+     *      Sin esta validación, cambiar el nombre a uno ya registrado lanzaría
+     *      una excepción de constraint UNIQUE de PostgreSQL sin mensaje claro —
+     *      el frontend no podría mostrar un error comprensible al usuario.
+     *      La condición !existing.getId().equals(id) permite que la categoría
+     *      conserve su propio nombre sin disparar el error (editar sin cambiar nombre).
+     *   3. Actualiza los campos editables directamente sobre la entidad.
+     *      Hibernate dirty-checking detecta los cambios y ejecuta el UPDATE
+     *      automáticamente al cerrar la transacción, sin llamar a save().
      */
     @Override
     public CategoryDTO updateCategory(Long id, CategoryDTO dto) {
@@ -79,20 +91,35 @@ public class CategoryServiceImpl implements CategoryService {
                     "Categoría con id " + id + " no encontrada."
                 ));
 
+        // Validar que el nuevo nombre no pertenezca a otra categoría distinta.
+        categoryRepository.findByName(dto.getName()).ifPresent(existing -> {
+            if (!existing.getId().equals(id)) {
+                throw new RuntimeException(
+                    "Ya existe otra categoría con el nombre '" + dto.getName() + "'."
+                );
+            }
+        });
+
         // Actualizar únicamente los campos que el cliente puede modificar.
+        // 'id', 'active' y cualquier otro campo gestionado por el sistema
+        // no se tocan aquí — el DTO no tiene autoridad sobre ellos en una edición.
         category.setName(dto.getName());
         category.setDescription(dto.getDescription());
 
-        // Hibernate dirty-checking persiste el cambio al cerrar la transacción.
         return categoryMapper.toDTO(category);
     }
 
     /**
      * {@inheritDoc}
      *
-     * Soft delete: marca la categoría como inactiva sin borrar el registro.
-     * Esto preserva la integridad referencial — los productos que apunten
-     * a esta categoría no quedan con una FK huérfana.
+     * Antes de desactivar se verifica que la categoría no tenga productos activos.
+     * Si se permitiera desactivar con productos asignados, esos productos
+     * quedarían con una FK apuntando a una categoría inactiva — el frontend
+     * los mostraría sin categoría válida en tablas y selectores, generando
+     * inconsistencias visuales y posibles errores en flujos de edición.
+     *
+     * La solución correcta es que el usuario reasigne o desactive los productos
+     * de esa categoría antes de poder desactivarla.
      */
     @Override
     public void deactivateCategory(Long id) {
@@ -101,7 +128,17 @@ public class CategoryServiceImpl implements CategoryService {
                     "Categoría con id " + id + " no encontrada."
                 ));
 
-        // Hibernate detecta el cambio en active y ejecuta el UPDATE al cerrar la transacción.
+        // Verificar que no existan productos activos asignados a esta categoría.
+        // findByCategoryIdAndActiveTrue devuelve lista vacía si no hay productos —
+        // isEmpty() es la forma más directa de verificarlo sin contar registros.
+        if (!productRepository.findByCategoryIdAndActiveTrue(id).isEmpty()) {
+            throw new RuntimeException(
+                "No se puede desactivar la categoría: tiene productos activos asignados. " +
+                "Reasigne o desactive los productos antes de continuar."
+            );
+        }
+
+        // Soft delete: Hibernate detecta el cambio y ejecuta el UPDATE al cerrar la transacción.
         category.setActive(false);
     }
 }

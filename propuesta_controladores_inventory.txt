@@ -1,0 +1,224 @@
+================================================================================
+  PROPUESTA: CONTROLADORES REST — MÓDULO INVENTORY
+  Backend REST API — Gestión de Almacenes
+  Fecha: 2026-05-22
+================================================================================
+
+CONTEXTO
+────────
+Capa de entrada HTTP del módulo inventory. Los controladores reciben las
+peticiones de Angular, delegan al servicio correspondiente y retornan la
+respuesta con el código HTTP semánticamente correcto.
+
+Principio: cero lógica de negocio en controladores — delegación pura.
+
+
+================================================================================
+  PRINCIPIOS APLICADOS
+================================================================================
+
+  15-Factor App
+  ─────────────
+  Factor II  — API First
+    Endpoints diseñados como contrato explícito. Verbos HTTP semánticamente
+    correctos (POST para crear, PUT para actualizar, DELETE para desactivar,
+    GET para consultar).
+
+  Factor III — Dependencias
+    El controlador depende únicamente de la INTERFAZ del servicio, nunca de
+    la implementación concreta. Spring inyecta la impl en tiempo de ejecución.
+
+  Factor XII — Stateless
+    Sin estado en el servidor. Cada petición se autentica con JWT en la
+    cabecera Authorization — sin sesiones, sin cookies de sesión.
+
+  Factor XV  — Autenticación y autorización
+    Todas las rutas de inventario quedan protegidas automáticamente por el
+    bloque anyRequest().authenticated() en SecurityConfig. No requiere
+    cambios adicionales en la configuración de seguridad.
+
+  Buenas prácticas REST
+  ─────────────────────
+  · URLs basadas en sustantivos, no verbos (/products, no /getProducts)
+  · Jerarquía de recursos en rutas (/products/{id}/movements)
+  · @Valid en todo @RequestBody para activar validaciones Jakarta
+  · ResponseEntity fluido: .status().body() / .ok() / .noContent()
+  · Códigos HTTP semánticamente correctos:
+      201 Created     → creación de recurso nuevo
+      200 OK          → consulta o actualización exitosa
+      204 No Content  → operación exitosa sin cuerpo de respuesta
+
+
+================================================================================
+  PREREQUISITO: DTO YA CREADO
+================================================================================
+
+  StockMovementRequestDTO.java  (ya existe en modules/inventory/dto/)
+  ──────────────────────────────
+  Campo       Tipo     Validaciones
+  ─────────   ──────   ─────────────────────────────────────────────────────
+  productId   Long     @NotNull
+  quantity    int      @NotNull, @Min(1)
+  reason      String   @NotBlank, @Size(max = 255)
+  type        String   @NotBlank  ("IN" o "OUT" — el servicio convierte a enum)
+
+
+================================================================================
+  ARCHIVO 1 — CategoryController.java
+================================================================================
+
+  Paquete:    com.codigo2enter.almacenes.modules.inventory.controller
+  Ruta base:  /api/v1/inventory/categories
+
+  Anotaciones de clase
+  ────────────────────
+  @RestController
+  @RequestMapping("/api/v1/inventory/categories")
+  @RequiredArgsConstructor
+
+  Dependencia inyectada
+  ─────────────────────
+  private final CategoryService categoryService;
+
+
+  Endpoints
+  ─────────
+  ┌─────────┬──────────┬─────────────────────────────┬──────────────────────┐
+  │ Método  │ Ruta     │ Método del servicio          │ Respuesta HTTP       │
+  ├─────────┼──────────┼─────────────────────────────┼──────────────────────┤
+  │ POST    │ /        │ createCategory(dto)          │ 201 + CategoryDTO    │
+  │ GET     │ /active  │ getAllActiveCategories()      │ 200 + List<DTO>      │
+  │ PUT     │ /{id}    │ updateCategory(id, dto)      │ 200 + CategoryDTO    │
+  │ DELETE  │ /{id}    │ deactivateCategory(id)       │ 204 No Content       │
+  └─────────┴──────────┴─────────────────────────────┴──────────────────────┘
+
+  Detalle de parámetros
+  ─────────────────────
+  POST /
+    @Valid @RequestBody CategoryDTO dto
+    → ResponseEntity.status(HttpStatus.CREATED).body(categoryService.createCategory(dto))
+
+  GET /active
+    sin parámetros
+    → ResponseEntity.ok(categoryService.getAllActiveCategories())
+
+  PUT /{id}
+    @PathVariable Long id
+    @Valid @RequestBody CategoryDTO dto
+    → ResponseEntity.ok(categoryService.updateCategory(id, dto))
+
+  DELETE /{id}
+    @PathVariable Long id
+    → categoryService.deactivateCategory(id)
+    → ResponseEntity.noContent().build()   ← HTTP 204, sin cuerpo
+
+
+================================================================================
+  ARCHIVO 2 — ProductController.java
+================================================================================
+
+  Paquete:    com.codigo2enter.almacenes.modules.inventory.controller
+  Ruta base:  /api/v1/inventory/products
+
+  Anotaciones de clase
+  ────────────────────
+  @RestController
+  @RequestMapping("/api/v1/inventory/products")
+  @RequiredArgsConstructor
+
+  Dependencia inyectada
+  ─────────────────────
+  private final ProductService productService;
+
+
+  Endpoints
+  ─────────
+  ┌─────────┬────────────────────────┬──────────────────────────────────────┬───────────────────────────────┐
+  │ Método  │ Ruta                   │ Método del servicio                  │ Respuesta HTTP                │
+  ├─────────┼────────────────────────┼──────────────────────────────────────┼───────────────────────────────┤
+  │ POST    │ /                      │ createProduct(dto)                   │ 201 + ProductResponseDTO      │
+  │ PUT     │ /{id}                  │ updateProduct(id, dto)               │ 200 + ProductResponseDTO      │
+  │ DELETE  │ /{id}                  │ deactivateProduct(id)                │ 204 No Content                │
+  │ GET     │ /sku/{sku}             │ getBySku(sku)                        │ 200 + ProductResponseDTO      │
+  │ GET     │ /category/{categoryId} │ getByCategoryId(categoryId)          │ 200 + List<ProductResponseDTO>│
+  │ GET     │ /low-stock             │ getLowStockProducts()                │ 200 + List<ProductResponseDTO>│
+  │ POST    │ /movement              │ registerStockMovement(request)       │ 204 No Content                │
+  │ GET     │ /{id}/movements        │ getStockMovementsByProduct(id)       │ 200 + List<StockMovementDTO>  │
+  └─────────┴────────────────────────┴──────────────────────────────────────┴───────────────────────────────┘
+
+  Detalle de parámetros
+  ─────────────────────
+  POST /
+    @Valid @RequestBody ProductRequestDTO dto
+    → ResponseEntity.status(HttpStatus.CREATED).body(productService.createProduct(dto))
+
+  PUT /{id}
+    @PathVariable Long id
+    @Valid @RequestBody ProductRequestDTO dto
+    → ResponseEntity.ok(productService.updateProduct(id, dto))
+
+  DELETE /{id}
+    @PathVariable Long id
+    → productService.deactivateProduct(id)
+    → ResponseEntity.noContent().build()
+
+  GET /sku/{sku}
+    @PathVariable String sku
+    → ResponseEntity.ok(productService.getBySku(sku))
+
+  GET /category/{categoryId}
+    @PathVariable Long categoryId
+    → ResponseEntity.ok(productService.getByCategoryId(categoryId))
+
+  GET /low-stock
+    sin parámetros
+    → ResponseEntity.ok(productService.getLowStockProducts())
+
+  POST /movement
+    @Valid @RequestBody StockMovementRequestDTO request
+    → productService.registerStockMovement(request)
+    → ResponseEntity.noContent().build()   ← 204 porque el servicio retorna void
+
+  GET /{id}/movements
+    @PathVariable Long id
+    → ResponseEntity.ok(productService.getStockMovementsByProduct(id))
+
+
+================================================================================
+  NOTA SOBRE SecurityConfig
+================================================================================
+
+  Las rutas de inventario NO requieren cambios en SecurityConfig.
+  El bloque existente ya las protege:
+
+    .authorizeHttpRequests(auth -> auth
+        .requestMatchers("/api/v1/auth/**").permitAll()
+        .anyRequest().authenticated()   ← cubre /api/v1/inventory/**
+    )
+
+  Toda petición a /api/v1/inventory/** requiere JWT válido en la cabecera:
+    Authorization: Bearer <token>
+
+
+================================================================================
+  ORDEN DE IMPLEMENTACIÓN
+================================================================================
+
+  1. CategoryController.java       ← más simple, 4 endpoints
+  2. CategoryControllerTest.java   ← @WebMvcTest + MockMvc
+  3. ProductController.java        ← 8 endpoints
+  4. ProductControllerTest.java    ← @WebMvcTest + MockMvc
+
+
+================================================================================
+  RESUMEN DE ARCHIVOS
+================================================================================
+
+  Archivo                        Paquete                              Total
+  ─────────────────────────────  ───────────────────────────────────  ─────
+  CategoryController.java        modules/inventory/controller             1
+  ProductController.java         modules/inventory/controller             1
+  ─────────────────────────────────────────────────────────────────────────
+  TOTAL                                                                    2
+
+================================================================================

@@ -1,0 +1,112 @@
+package com.codigo2enter.almacenes.modules.inventory.controller;
+
+import com.codigo2enter.almacenes.modules.inventory.dto.CategoryDTO;
+import com.codigo2enter.almacenes.modules.inventory.service.CategoryService;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
+
+/**
+ * Controlador REST para la gestión de categorías del inventario.
+ *
+ * Ruta base: /api/v1/inventory/categories
+ * Todas las rutas están protegidas por JWT — requieren cabecera:
+ *   Authorization: Bearer <token>
+ *
+ * Responsabilidad exclusiva: recibir la petición HTTP, activar las
+ * validaciones Jakarta con @Valid y delegar al servicio. Cero lógica
+ * de negocio en esta capa.
+ */
+@RestController
+@RequestMapping("/api/v1/inventory/categories")
+@RequiredArgsConstructor
+public class CategoryController {
+
+    /**
+     * Depende de la interfaz CategoryService, nunca de la implementación
+     * concreta. Spring inyecta CategoryServiceImpl en tiempo de ejecución,
+     * lo que facilita el reemplazo y las pruebas con mocks.
+     */
+    private final CategoryService categoryService;
+
+    /**
+     * POST /api/v1/inventory/categories
+     *
+     * Crea una nueva categoría en el sistema.
+     * @Valid activa las validaciones del DTO antes de invocar al servicio:
+     *   - @NotBlank en name → rechaza null, vacío y solo espacios
+     *   - @Size(max=80) en name y @Size(max=255) en description
+     * Si alguna validación falla, Spring retorna HTTP 400 automáticamente.
+     *
+     * @param dto datos de la nueva categoría enviados por el cliente
+     * @return 201 Created con el CategoryDTO que incluye el id asignado
+     */
+    @PostMapping
+    public ResponseEntity<CategoryDTO> createCategory(@Valid @RequestBody CategoryDTO dto) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(categoryService.createCategory(dto));
+    }
+
+    /**
+     * GET /api/v1/inventory/categories/active
+     *
+     * Retorna todas las categorías con active = true.
+     * Utilizado por Angular para poblar los selectores de asignación
+     * de categoría en formularios de creación y edición de productos.
+     *
+     * @return 200 OK con la lista de categorías activas (puede ser vacía)
+     */
+    @GetMapping("/active")
+    public ResponseEntity<List<CategoryDTO>> getAllActiveCategories() {
+        return ResponseEntity.ok(categoryService.getAllActiveCategories());
+    }
+
+    /**
+     * PUT /api/v1/inventory/categories/{id}
+     *
+     * Actualiza los datos de una categoría existente.
+     * El servicio valida que el id exista y que el nuevo nombre no
+     * pertenezca a otra categoría diferente antes de aplicar los cambios.
+     *
+     * @param id  identificador de la categoría a modificar
+     * @param dto datos nuevos enviados por el cliente
+     * @return 200 OK con el CategoryDTO actualizado
+     */
+    @PutMapping("/{id}")
+    public ResponseEntity<CategoryDTO> updateCategory(
+            @PathVariable Long id,
+            @Valid @RequestBody CategoryDTO dto) {
+        return ResponseEntity.ok(categoryService.updateCategory(id, dto));
+    }
+
+    /**
+     * DELETE /api/v1/inventory/categories/{id}
+     *
+     * Desactiva lógicamente una categoría (soft delete: active = false).
+     * No elimina el registro — preserva la integridad referencial con
+     * los productos asociados. El servicio valida que no existan productos
+     * activos asignados antes de permitir la desactivación.
+     *
+     * Se retorna 204 No Content porque la operación no produce un cuerpo
+     * de respuesta — solo confirma que fue exitosa.
+     *
+     * @param id identificador de la categoría a desactivar
+     * @return 204 No Content
+     */
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deactivateCategory(@PathVariable Long id) {
+        categoryService.deactivateCategory(id);
+        return ResponseEntity.noContent().build();
+    }
+}

@@ -2,6 +2,7 @@ package com.codigo2enter.almacenes.modules.inventory.service;
 
 import com.codigo2enter.almacenes.modules.inventory.dto.ProductRequestDTO;
 import com.codigo2enter.almacenes.modules.inventory.dto.ProductResponseDTO;
+import com.codigo2enter.almacenes.modules.inventory.dto.StockMovementRequestDTO;
 import com.codigo2enter.almacenes.modules.inventory.dto.StockMovementResponseDTO;
 import com.codigo2enter.almacenes.modules.inventory.mapper.ProductMapper;
 import com.codigo2enter.almacenes.modules.inventory.mapper.StockMovementMapper;
@@ -130,43 +131,67 @@ public class ProductServiceImpl implements ProductService {
      * rollback de las dos, garantizando que el stock y el historial
      * estén siempre sincronizados.
      */
+    /**
+     * {@inheritDoc}
+     *
+     * Convierte el campo 'type' del DTO (String) al enum MovementType usando
+     * MovementType.valueOf(). Si el cliente envía un valor distinto de "IN" u "OUT",
+     * valueOf() lanza IllegalArgumentException — el controlador debe capturarla
+     * y devolverla como HTTP 400 Bad Request con un mensaje claro.
+     *
+     * Orden de validaciones:
+     *   1. Conversión del tipo (falla rápido si el valor es inválido).
+     *   2. Existencia del producto.
+     *   3. Quantity positiva — aunque @Min(1) en el DTO ya lo garantiza en el
+     *      controlador, se mantiene como defensa en profundidad si el método
+     *      es invocado directamente desde otro servicio sin pasar por el @Valid.
+     *   4. Stock suficiente para movimientos OUT.
+     */
     @Override
-    public void registerStockMovement(Long productId, int quantity, String reason, MovementType type) {
-        Product product = findProductOrThrow(productId);
+    public void registerStockMovement(StockMovementRequestDTO request) {
 
-        // Validar que la cantidad sea positiva.
-        // Un movimiento con quantity = 0 no tendría efecto en el stock pero
-        // generaría un registro inútil en el historial. Un valor negativo
-        // corrompería el stock incluso pasando la validación de OUT siguiente.
-        if (quantity <= 0) {
+        // Convertir String a enum. valueOf() lanza IllegalArgumentException
+        // si el valor no es exactamente "IN" o "OUT" (case-sensitive).
+        MovementType type;
+        try {
+            type = MovementType.valueOf(request.getType());
+        } catch (IllegalArgumentException e) {
             throw new RuntimeException(
-                "La cantidad del movimiento debe ser mayor a cero. Valor recibido: " + quantity + "."
+                "Tipo de movimiento inválido: '" + request.getType() + "'. Use 'IN' o 'OUT'."
+            );
+        }
+
+        Product product = findProductOrThrow(request.getProductId());
+
+        // Defensa en profundidad: valida quantity > 0 aunque el DTO ya lo restringe
+        // con @Min(1) para el caso en que el método sea llamado sin pasar por @Valid.
+        if (request.getQuantity() <= 0) {
+            throw new RuntimeException(
+                "La cantidad debe ser mayor a cero. Valor recibido: " + request.getQuantity() + "."
             );
         }
 
         // Validar que una salida no genere stock negativo.
-        // Esta validación ocurre después de verificar quantity > 0 para garantizar
-        // que la resta sea siempre con un número positivo y el resultado sea predecible.
-        if (type == MovementType.OUT && product.getCurrentStock() - quantity < 0) {
+        if (type == MovementType.OUT && product.getCurrentStock() - request.getQuantity() < 0) {
             throw new RuntimeException(
                 "Stock insuficiente. Disponible: " + product.getCurrentStock()
-                + ", solicitado: " + quantity + "."
+                + ", solicitado: " + request.getQuantity() + "."
             );
         }
 
-        // Calcular y aplicar el nuevo nivel de stock.
+        // Calcular y aplicar el nuevo nivel de stock según el tipo de movimiento.
         int newStock = type == MovementType.IN
-                ? product.getCurrentStock() + quantity
-                : product.getCurrentStock() - quantity;
+                ? product.getCurrentStock() + request.getQuantity()
+                : product.getCurrentStock() - request.getQuantity();
 
         product.setCurrentStock(newStock);
         productRepository.save(product);
 
-        // Registrar el movimiento como bitácora — no se actualiza ni elimina jamás.
+        // Registrar el movimiento como bitácora inmutable del Kardex.
         StockMovement movement = StockMovement.builder()
                 .product(product)
-                .quantity(quantity)
-                .reason(reason)
+                .quantity(request.getQuantity())
+                .reason(request.getReason())
                 .type(type)
                 .build();
 

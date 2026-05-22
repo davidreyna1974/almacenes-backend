@@ -2,8 +2,8 @@ package com.codigo2enter.almacenes.modules.inventory.service;
 
 import com.codigo2enter.almacenes.modules.inventory.dto.ProductRequestDTO;
 import com.codigo2enter.almacenes.modules.inventory.dto.ProductResponseDTO;
+import com.codigo2enter.almacenes.modules.inventory.dto.StockMovementRequestDTO;
 import com.codigo2enter.almacenes.modules.inventory.dto.StockMovementResponseDTO;
-import com.codigo2enter.almacenes.modules.inventory.model.MovementType;
 
 import java.util.List;
 
@@ -47,13 +47,12 @@ public interface ProductService {
      * Registra un movimiento de stock (entrada o salida) sobre un producto.
      * Actualiza currentStock del producto y genera un registro en stock_movements.
      * Para movimientos OUT valida que el stock no quede negativo.
+     * El campo 'type' del DTO llega como String ("IN"/"OUT") y el servicio
+     * lo convierte al enum MovementType antes de ejecutar la lógica.
      *
-     * @param productId id del producto afectado
-     * @param quantity  número de unidades del movimiento (siempre positivo)
-     * @param reason    motivo del movimiento (puede ser null)
-     * @param type      IN para entrada, OUT para salida
+     * @param request DTO con productId, quantity, reason y type
      */
-    void registerStockMovement(Long productId, int quantity, String reason, MovementType type);
+    void registerStockMovement(StockMovementRequestDTO request);
 
     /**
      * Busca un producto por su SKU.

@@ -17,8 +17,8 @@ Backend REST API para gestión de almacenes. Proyecto Spring Boot 3.5.14 con Jav
 # Compilar
 ./mvnw clean package
 
-# Ejecutar en modo desarrollo (puerto 8080)
-./mvnw spring-boot:run
+# Ejecutar la aplicación (forma segura — evita interferencia del IDE)
+./mvnw clean package -DskipTests && java -jar target/almacenes-0.0.1-SNAPSHOT.jar
 
 # Ejecutar tests
 ./mvnw test
@@ -50,94 +50,235 @@ modules/<modulo>/
 ├── mapper/       → Conversión entre entidades y DTOs (MapStruct)
 ├── model/        → Entidades JPA (@Entity)
 ├── repository/   → Acceso a datos (Spring Data JPA)
-└── service/      → Lógica de negocio
+└── service/      → Lógica de negocio (interfaz + implementación)
 ```
 
 El paquete `core/` contiene configuración transversal:
 - `core/exception/` — Manejo centralizado de excepciones
-- `core/security/` — Configuración de Spring Security
+- `core/security/` — Configuración de Spring Security y utilidades JWT
 
 ## Dependencias clave
 
-- **MapStruct 1.5.5** — Los mappers se generan en tiempo de compilación con anotaciones. Los procesadores de anotaciones están configurados en el `pom.xml` junto con Lombok; el orden de los `annotationProcessorPaths` importa (Lombok antes que MapStruct).
-- **Lombok** — Usado en modelos y DTOs para reducir boilerplate (`@Data`, `@Builder`, `@NoArgsConstructor`, etc.)
+- **MapStruct 1.5.5** — Los mappers se generan en tiempo de compilación. El orden de los `annotationProcessorPaths` en `pom.xml` importa: Lombok debe ir antes que MapStruct.
+- **Lombok** — Usado en modelos y DTOs para reducir boilerplate (`@Data`, `@Builder`, `@NoArgsConstructor`, `@AllArgsConstructor`, `@RequiredArgsConstructor`).
 - **Spring Security** — Configurado con cadena de filtros JWT stateless. Ver `core/security/SecurityConfig.java`.
 - **JJWT 0.12.6** — Librería para generación y validación de tokens JWT (jjwt-api, jjwt-impl, jjwt-jackson).
 
-## Estándares del módulo auth
+---
 
-### Seguridad y contraseñas
-- Las contraseñas se cifran con **BCrypt** antes de persistirse. Nunca se almacenan en texto plano.
-- El bean `PasswordEncoder` está declarado en `SecurityConfig` y se inyecta en los servicios que lo necesiten.
-- El método `passwordEncoder.matches(plain, hash)` se usa para verificar credenciales en el login — BCrypt es unidireccional, nunca se desencripta.
+## Estándares y convenciones globales
 
-### Tokens JWT
-- Los tokens se generan en `core/security/JwtUtils.java` usando HMAC-SHA256.
-- El login exitoso devuelve un `AuthResponseDTO` con el token JWT firmado, válido por **2 horas**.
-- El token contiene los claims: `sub` (username), `roles`, `iat` (emisión) y `exp` (expiración).
-- `JwtAuthenticationFilter` intercepta cada petición y valida el token antes de que llegue al controlador.
-- Las rutas bajo `/api/v1/auth/**` son públicas (no requieren token). Todas las demás requieren `Authorization: Bearer <token>`.
+### Documentación de código
+Todo código generado debe incluir comentarios o Javadoc que expliquen el **por qué** del funcionamiento, no solo el qué. Esto aplica a: clases, métodos no triviales, decisiones de diseño y comportamientos que podrían sorprender a un lector.
 
-### Inyección de dependencias en servicios
-- Todos los servicios deben usar **inyección por constructor** declarando las dependencias como campos `final` y anotando la clase con `@RequiredArgsConstructor` de Lombok.
-- No usar `@Autowired` en campos — dificulta las pruebas unitarias y oculta las dependencias reales.
+### Inyección de dependencias
+Usar siempre **inyección por constructor** con campos `final` y `@RequiredArgsConstructor`. Nunca usar `@Autowired` en campos.
 
 ```java
-// Correcto
 @Service
 @RequiredArgsConstructor
 public class MiServiceImpl implements MiService {
     private final MiRepository miRepository;
-    private final JwtUtils jwtUtils;
+    private final MiMapper miMapper;
 }
 ```
 
 ### Transacciones
-- Usar `@Transactional` a nivel de clase en los `ServiceImpl` para operaciones que escriben en la base de datos.
-- Para métodos de solo lectura (consultas), usar `@Transactional(readOnly = true)` — Hibernate omite el flush y el pool puede enrutar a réplicas de lectura.
-
-```java
-@Transactional               // escritura (clase)
-public UserResponseDTO registerUser(...) { ... }
-
-@Transactional(readOnly = true)   // lectura (método)
-public AuthResponseDTO login(...) { ... }
-```
+- `@Transactional` a nivel de clase en `ServiceImpl` para operaciones de escritura.
+- `@Transactional(readOnly = true)` en métodos de solo lectura — Hibernate omite el flush y optimiza la sesión.
 
 ### Respuestas HTTP en controladores
-- Los controladores deben retornar siempre `ResponseEntity<T>` usando el estilo fluido.
-- Usar `ResponseEntity.status(HttpStatus.CREATED).body(...)` para creaciones (POST que persisten).
-- Usar `ResponseEntity.ok(...)` para consultas y operaciones que no crean recursos nuevos.
+- Retornar siempre `ResponseEntity<T>` con estilo fluido.
+- `201 Created` para operaciones que persisten un recurso nuevo.
+- `200 OK` para consultas y actualizaciones.
+- `204 No Content` para operaciones exitosas sin cuerpo de respuesta (void del servicio).
 
 ```java
-// Registro de recurso → 201 Created
-return ResponseEntity.status(HttpStatus.CREATED).body(userService.registerUser(request));
-
-// Login / consulta → 200 OK
-return ResponseEntity.ok(userService.login(request));
+return ResponseEntity.status(HttpStatus.CREATED).body(service.create(dto)); // POST que persiste
+return ResponseEntity.ok(service.findById(id));                              // GET / PUT
+return ResponseEntity.noContent().build();                                   // DELETE / void
 ```
 
 ### Nota sobre el compilador del IDE
-El compilador incremental de VS Code puede sobreescribir clases generadas por MapStruct con stubs inválidos. Para evitar este problema, el proyecto incluye `.vscode/settings.json` que excluye `target/` del escaneo del IDE. Siempre ejecutar la aplicación con:
+El compilador incremental de VS Code puede sobreescribir clases generadas por MapStruct con stubs inválidos. El proyecto incluye `.vscode/settings.json` que excluye `target/` del escaneo. Siempre ejecutar con:
 
 ```bash
 ./mvnw clean package -DskipTests && java -jar target/almacenes-0.0.1-SNAPSHOT.jar
 ```
 
-### Documentar el funcionamiento de todo codigo que se genere
-- Para todo codigo de programación que se genere, se deben agregar comentarios o Javadoc que informen el funcionamiento de este codigo.
+---
+
+## Estándares del módulo auth
+
+### Seguridad y contraseñas
+- Las contraseñas se cifran con **BCrypt** antes de persistirse. Nunca en texto plano.
+- `passwordEncoder.matches(plain, hash)` verifica credenciales — BCrypt es unidireccional.
+
+### Tokens JWT
+- Los tokens se generan en `core/security/JwtUtils.java` con HMAC-SHA256, vigentes **2 horas**.
+- Claims del payload: `sub` (username), `roles`, `iat`, `exp`.
+- `JwtAuthenticationFilter` valida el token en cada petición antes de llegar al controlador.
+- Rutas públicas: `/api/v1/auth/**`. Todo lo demás requiere `Authorization: Bearer <token>`.
+
+---
+
+## Estándares del módulo inventory
+
+### Modelos JPA
+
+- Todas las entidades usan `@Builder` con `@Builder.Default` para campos con valor inicial.
+- `active` (boolean) implementa **soft delete** en todas las entidades — nunca se elimina un registro físicamente.
+- `createdAt` siempre lleva `updatable = false` para que Hibernate nunca lo sobreescriba.
+- Relaciones `@ManyToOne` usan `FetchType.LAZY` para evitar queries N+1 al listar colecciones.
+- Enumerados como `MovementType` se almacenan con `@Enumerated(EnumType.STRING)` para que los registros históricos sean legibles sin traducción.
+
+```java
+@Builder.Default
+@Column(name = "created_at", nullable = false, updatable = false)
+private LocalDateTime createdAt = LocalDateTime.now();
+
+@ManyToOne(fetch = FetchType.LAZY)
+@JoinColumn(name = "category_id")
+private Category category;
+```
+
+### Repositorios
+
+- Query methods derivados para consultas simples: `findByActiveTrue()`, `findBySku()`, `existsBySku()`.
+- `@Query` con JPQL solo cuando la condición compara dos campos de la misma entidad (no expresable con query methods):
+
+```java
+@Query("SELECT p FROM Product p WHERE p.currentStock <= p.minimumStock AND p.active = true")
+List<Product> findLowStockProducts();
+```
+
+- Métodos de búsqueda filtrada incluyen `AndActiveTrue` para excluir registros dados de baja:
+
+```java
+List<Product> findByCategoryIdAndActiveTrue(Long categoryId);
+```
+
+### DTOs
+
+- **DTOs de request** llevan validaciones Jakarta (`@NotBlank`, `@NotNull`, `@Min`, `@DecimalMin`, `@Size`).
+- **DTOs de response** no llevan validaciones — son solo de salida.
+- Relaciones `@ManyToOne` se **aplanan** en el DTO de respuesta con campos simples (`categoryId`, `categoryName`) en lugar de objetos anidados — Angular puede mostrar el nombre sin acceso profundo.
+- Enums en DTOs de entrada se reciben como `String` para desacoplar el cliente del modelo Java; el servicio convierte con `Enum.valueOf()`.
+- Regla `@NotBlank` vs `@NotNull`:
+  - `String` obligatorio → `@NotBlank` (rechaza null, `""` y `"   "`)
+  - `BigDecimal`, `Long`, `Integer` obligatorio → `@NotNull`
+  - Primitivos (`int`, `boolean`) → no necesitan anotación (nunca son null)
+
+### Mappers (MapStruct)
+
+- Todos los mappers usan `@Mapper(componentModel = "spring")`.
+- Campos ignorados en `toEntity`: `id`, `active`, `createdAt` y relaciones resueltas por el servicio.
+- Relaciones `@ManyToOne` se mapean con `source` de múltiples niveles:
+
+```java
+@Mapping(source = "category.id",   target = "categoryId")
+@Mapping(source = "category.name", target = "categoryName")
+ProductResponseDTO toResponseDTO(Product product);
+```
+
+- Declarar siempre el método de lista (`toDTOList`, `toResponseDTOList`) para evitar streams en los servicios:
+
+```java
+List<ProductResponseDTO> toResponseDTOList(List<Product> products);
+```
+
+- `@Named` + `qualifiedByName` para conversiones no triviales que MapStruct no puede inferir automáticamente.
+
+### Servicios
+
+- Separar siempre **interfaz** (`XxxService`) de **implementación** (`XxxServiceImpl`).
+- Métodos privados de apoyo (`findProductOrThrow`, `resolveCategory`) centralizan el manejo de `orElseThrow` para no repetirlo en cada método.
+
+```java
+private Product findProductOrThrow(Long id) {
+    return productRepository.findById(id)
+            .orElseThrow(() -> new RuntimeException("Producto con id " + id + " no encontrado."));
+}
+```
+
+- **Orden de validaciones en el servicio** (de más barata a más costosa):
+  1. Validar tipos/formatos (conversión de enum, quantity > 0)
+  2. Verificar existencia de entidades (`findById`, `existsById`)
+  3. Validar reglas de negocio (unicidad de nombre/SKU, stock suficiente, productos activos)
+
+- **Regla de visibilidad de errores**: para operaciones de autenticación, lanzar el mismo mensaje independientemente de qué falló (usuario no encontrado o contraseña incorrecta) — evita enumerar usuarios válidos.
+
+- **Validación de existencia antes de consultar colecciones**: si un método retorna `List<>` filtrada por un ID (categoría, producto), verificar primero que ese ID exista. Sin esta validación, un ID inválido devuelve `[]` con HTTP 200, haciendo imposible que el cliente distinga "vacío" de "no encontrado".
+
+- **Soft delete** sobre entidades con dependencias: verificar que no existan registros activos dependientes antes de desactivar. Ejemplo: no desactivar una `Category` si tiene `Product` activos asignados.
+
+```java
+if (!productRepository.findByCategoryIdAndActiveTrue(id).isEmpty()) {
+    throw new RuntimeException("La categoría tiene productos activos asignados.");
+}
+```
+
+- **Defensa en profundidad**: mantener validaciones en el servicio aunque el DTO ya las tenga con anotaciones Jakarta, para proteger invocaciones directas al servicio sin pasar por el controlador.
+
+### Controladores
+
+- Cero lógica de negocio — delegación pura al servicio.
+- `@PathVariable` para IDs en la URL; `@RequestBody` con `@Valid` para datos del cliente.
+- Rutas REST semánticas (sustantivos, no verbos):
+  - `GET /products/low-stock` — colección filtrada
+  - `GET /products/sku/{sku}` — búsqueda por atributo único
+  - `GET /products/category/{categoryId}` — colección por relación
+  - `GET /products/{id}/movements` — subrecurso jerárquico
+  - `POST /products/movement` — acción sobre recurso
+- `void` del servicio → `ResponseEntity<Void>` con `204 No Content`.
+
+---
+
+## Patrones de pruebas
+
+### Tests unitarios de servicios
+- `@ExtendWith(MockitoExtension.class)` — sin contexto Spring, instancia solo la clase bajo prueba.
+- `@Mock` para dependencias, `@InjectMocks` para la clase bajo prueba.
+- `@BeforeEach` reinicia los datos en cada test para garantizar independencia.
+- Patrón AAA: **Arrange** → **Act** → **Assert**.
+- Cubrir siempre: happy path + entidad no encontrada + reglas de negocio que lanzan excepción.
+- Verificar con `verify(repo, never()).save(any())` que operaciones costosas no se ejecutan cuando la validación falla.
+
+### Tests de integración de controladores
+- `@WebMvcTest(XxxController.class)` + `@AutoConfigureMockMvc(addFilters = false)`.
+- `@MockBean XxxService` para aislar la capa web.
+- `@MockBean JwtUtils` siempre requerido — `SecurityConfig` lo necesita para construir `JwtAuthenticationFilter`.
+- Verificar validaciones Jakarta con bodies inválidos → confirmar que `@Valid` está en el parámetro del controlador.
+- `jsonPath("$.campo").value(...)` para verificar el body de respuesta.
+- Métodos `void` del servicio no requieren `when/thenReturn` — Mockito los ignora por defecto.
+
+---
 
 ## Estado actual del proyecto
 
-El módulo `auth` está completamente implementado con:
-- Entidades `User` y `Role` con relación `@ManyToMany`
-- Repositorios `UserRepository` y `RoleRepository`
-- Mapper `UserMapper` con MapStruct
-- Servicio `UserServiceImpl` con registro y login
-- Controlador `UserController` con endpoints `POST /register` y `POST /login`
-- Filtro JWT `JwtAuthenticationFilter` integrado en la cadena de Spring Security
-- Tests unitarios (`JwtUtilsTest`) y de integración (`UserControllerTest`)
+### Módulo `auth` — completo
+- Entidades: `User`, `Role` con relación `@ManyToMany`
+- Repositorios: `UserRepository`, `RoleRepository`
+- Mapper: `UserMapper`
+- Servicio: `UserServiceImpl` (registro y login con JWT)
+- Controlador: `UserController` — `POST /api/v1/auth/register`, `POST /api/v1/auth/login`
+- Seguridad: `JwtAuthenticationFilter`, `SecurityConfig`, `JwtUtils`
+- Tests: `JwtUtilsTest` (3), `UserControllerTest` (2)
 
-Los módulos `inventory` y `purchases` están pendientes de implementación.
+### Módulo `inventory` — completo
+- Entidades: `Category`, `Product`, `StockMovement`, enum `MovementType`
+- Repositorios: `CategoryRepository`, `ProductRepository`, `StockMovementRepository`
+- DTOs: `CategoryDTO`, `ProductRequestDTO`, `ProductResponseDTO`, `StockMovementRequestDTO`, `StockMovementResponseDTO`
+- Mappers: `CategoryMapper`, `ProductMapper`, `StockMovementMapper`
+- Servicios: `CategoryServiceImpl`, `ProductServiceImpl`
+- Controladores:
+  - `CategoryController` — `POST /`, `GET /active`, `PUT /{id}`, `DELETE /{id}`
+  - `ProductController` — `POST /`, `PUT /{id}`, `DELETE /{id}`, `GET /sku/{sku}`, `GET /category/{id}`, `GET /low-stock`, `POST /movement`, `GET /{id}/movements`
+- Tests unitarios: `CategoryServiceImplTest` (9), `ProductServiceImplTest` (20)
+- Tests de integración: `CategoryControllerTest` (6), `ProductControllerTest` (10)
+
+### Módulo `purchases` — pendiente de implementación
+
+### Suite de tests actual: 51 tests — 0 fallos
 
 Rama activa de desarrollo: `feature/auth`

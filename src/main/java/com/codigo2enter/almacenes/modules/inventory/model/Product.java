@@ -6,6 +6,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import com.codigo2enter.almacenes.modules.purchases.model.Supplier;
+
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
@@ -80,9 +82,11 @@ public class Product {
     @JoinColumn(name = "category_id")
     private Category category;
 
-    /** ID del proveedor que suministra este producto.
-     *  Se almacena como FK simple (Long) en espera de que el módulo de compras
-     *  implemente la entidad Supplier con su relación completa. */
-    @Column(name = "supplier_id")
-    private Long supplierId;
+    /** Proveedor que suministra este producto.
+     *  FetchType.LAZY — el proveedor no se carga automáticamente al listar
+     *  productos, evitando queries N+1 en colecciones grandes.
+     *  La columna 'supplier_id' ya existe en la tabla con FK hacia suppliers. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "supplier_id")
+    private Supplier supplier;
 }

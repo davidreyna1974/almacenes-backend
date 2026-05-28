@@ -285,10 +285,27 @@ significativamente más barato que descubrirlos durante pruebas de integración.
 
   Configuración de SecurityContextHolder en @BeforeEach:
     Authentication auth = mock(Authentication.class)
-    when(auth.getName()).thenReturn("operador01")
-    SecurityContextHolder.getContext().setAuthentication(auth)
+    lenient().when(auth.getName()).thenReturn("operador01")   ← lenient obligatorio
+    SecurityContext ctx = mock(SecurityContext.class)
+    lenient().when(ctx.getAuthentication()).thenReturn(auth)  ← lenient obligatorio
+    SecurityContextHolder.setContext(ctx)
 
   @AfterEach: SecurityContextHolder.clearContext()
+
+  Nota sobre lenient():
+    Mockito con @ExtendWith(MockitoExtension.class) activa strict stubbing por defecto.
+    En este modo, si un stub configurado en @BeforeEach no es invocado por el test
+    actual, Mockito lanza UnnecessaryStubbingException y el test falla.
+
+    Los stubs del SecurityContextHolder solo son usados por los tests de createOrder
+    (únicos que ejecutan resolveAuthenticatedUser()). Para los otros 23 tests
+    esos stubs son innecesarios.
+
+    lenient() desactiva la verificación de "stub no usado" ÚNICAMENTE para esos
+    dos stubs específicos, manteniendo el strict mode en todo lo demás.
+    Es la solución quirúrgica — preferible a anotar toda la clase con
+    @MockitoSettings(strictness = Strictness.LENIENT) que desactivaría
+    la protección globalmente.
 
 
   ── createOrder ──────────────────────────────────────────────────────────────

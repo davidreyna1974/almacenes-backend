@@ -1,0 +1,717 @@
+================================================================================
+  PROPUESTA: PRUEBAS UNITARIAS — CAPA DE SERVICIOS — MÓDULO PURCHASES
+  Backend REST API — Gestión de Almacenes
+  Fecha: 2026-05-28
+================================================================================
+
+CONTEXTO
+────────
+Pruebas unitarias para SupplierServiceImpl y PurchaseOrderServiceImpl.
+Cubren tres enfoques por cada método:
+
+  Happy Path  → el flujo correcto funciona como se espera
+  Edge Case   → casos límite o situaciones atípicas pero válidas
+  Error Case  → entradas o estados inválidos que deben lanzar excepción
+
+Los servicios de purchases son los más complejos del proyecto porque:
+  · Implementan una máquina de estados estricta (PENDING→APPROVED→RECEIVED)
+  · Integran dos módulos: purchases llama a inventory al recibir una orden
+  · Resuelven el usuario autenticado desde SecurityContextHolder (JWT)
+  · Generan números de orden secuenciales con lógica de colisión
+
+Detectar errores en esta capa ANTES de implementar los controladores es
+significativamente más barato que descubrirlos durante pruebas de integración.
+
+
+================================================================================
+  CONFIGURACIÓN BASE
+================================================================================
+
+  Framework:    JUnit 5 + Mockito
+  Anotaciones:  @ExtendWith(MockitoExtension.class)
+                @Mock para repositorios, mappers y servicios dependientes
+                @InjectMocks para la clase bajo prueba
+                @BeforeEach para datos reutilizables por categoría de test
+  Patrón:       AAA — Arrange / Act / Assert
+
+
+================================================================================
+  ARCHIVO 1 — SupplierServiceImplTest.java
+================================================================================
+
+  Ubicación:  src/test/java/.../modules/purchases/service/
+  Clase bajo prueba:  SupplierServiceImpl
+
+  Mocks necesarios
+  ────────────────
+  @Mock  SupplierRepository      supplierRepository
+  @Mock  PurchaseOrderRepository purchaseOrderRepository
+  @Mock  SupplierMapper          supplierMapper
+
+  Datos en @BeforeEach
+  ────────────────────
+  SupplierDTO  inputDTO  → rfc="ABC123456789A", companyName="Ferretería SA",
+                           email="info@ferreteria.com", active=true
+  Supplier     entity    → id=1L, rfc="ABC123456789A", companyName="Ferretería SA",
+                           active=true
+  SupplierDTO  outputDTO → id=1L, rfc="ABC123456789A", companyName="Ferretería SA",
+                           active=true
+
+
+  ── createSupplier ───────────────────────────────────────────────────────────
+
+  TEST 1 — Happy Path — shouldCreateSupplierSuccessfully
+  ──────────────────────────────────────────────────────
+  Justificación: valida el flujo principal de registro de un nuevo proveedor.
+                 Verifica que ambas validaciones de unicidad pasan y que save()
+                 es invocado exactamente una vez.
+  ARRANGE:
+    when(supplierRepository.existsByRfc("ABC123456789A")).thenReturn(false)
+    when(supplierRepository.existsByCompanyName("Ferretería SA")).thenReturn(false)
+    when(supplierMapper.toEntity(inputDTO)).thenReturn(entity)
+    when(supplierRepository.save(entity)).thenReturn(entity)
+    when(supplierMapper.toDTO(entity)).thenReturn(outputDTO)
+  ACT:   SupplierDTO result = supplierService.createSupplier(inputDTO)
+  ASSERT:
+    assertNotNull(result)
+    assertEquals("ABC123456789A", result.getRfc())
+    verify(supplierRepository, times(1)).save(entity)
+
+  TEST 2 — Error Case — shouldThrowWhenRfcAlreadyExists
+  ──────────────────────────────────────────────────────
+  Justificación: el RFC es el identificador fiscal único. Si ya existe,
+                 el sistema NO debe registrar un duplicado bajo ninguna circunstancia.
+                 save() nunca debe invocarse cuando la validación falla.
+  ARRANGE:
+    when(supplierRepository.existsByRfc("ABC123456789A")).thenReturn(true)
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> supplierService.createSupplier(inputDTO))
+    verify(supplierRepository, never()).save(any())
+
+  TEST 3 — Error Case — shouldThrowWhenCompanyNameAlreadyExists
+  ─────────────────────────────────────────────────────────────
+  Justificación: la razón social única en el servicio evita confusión en la UI.
+                 Aunque no es un constraint de BD, es una regla de negocio que
+                 debe mantenerse consistente.
+  ARRANGE:
+    when(supplierRepository.existsByRfc("ABC123456789A")).thenReturn(false)
+    when(supplierRepository.existsByCompanyName("Ferretería SA")).thenReturn(true)
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> supplierService.createSupplier(inputDTO))
+    verify(supplierRepository, never()).save(any())
+
+
+  ── getAllActiveSuppliers ────────────────────────────────────────────────────
+
+  TEST 4 — Happy Path — shouldReturnAllActiveSuppliers
+  ────────────────────────────────────────────────────
+  Justificación: verifica que el mapper de lista es invocado y que la respuesta
+                 contiene el número correcto de proveedores activos.
+  ARRANGE:
+    Supplier entity2 = Supplier(id=2L, companyName="Distribuidora XYZ", active=true)
+    SupplierDTO output2 = SupplierDTO(id=2L, companyName="Distribuidora XYZ")
+    when(supplierRepository.findByActiveTrue()).thenReturn(List.of(entity, entity2))
+    when(supplierMapper.toDTOList(anyList())).thenReturn(List.of(outputDTO, output2))
+  ACT:   List<SupplierDTO> result = supplierService.getAllActiveSuppliers()
+  ASSERT:
+    assertEquals(2, result.size())
+    verify(supplierMapper, times(1)).toDTOList(anyList())
+
+  TEST 5 — Edge Case — shouldReturnEmptyListWhenNoActiveSuppliers
+  ───────────────────────────────────────────────────────────────
+  Justificación: una lista vacía es un resultado válido — no debe lanzar excepción.
+                 Todos los proveedores pueden estar dados de baja simultáneamente.
+  ARRANGE:
+    when(supplierRepository.findByActiveTrue()).thenReturn(Collections.emptyList())
+    when(supplierMapper.toDTOList(anyList())).thenReturn(Collections.emptyList())
+  ACT:   List<SupplierDTO> result = supplierService.getAllActiveSuppliers()
+  ASSERT:
+    assertNotNull(result)
+    assertTrue(result.isEmpty())
+
+
+  ── findById ─────────────────────────────────────────────────────────────────
+
+  TEST 6 — Happy Path — shouldReturnSupplierById
+  ───────────────────────────────────────────────
+  Justificación: flujo básico de consulta por ID.
+  ARRANGE:
+    when(supplierRepository.findById(1L)).thenReturn(Optional.of(entity))
+    when(supplierMapper.toDTO(entity)).thenReturn(outputDTO)
+  ACT:   SupplierDTO result = supplierService.findById(1L)
+  ASSERT:
+    assertNotNull(result)
+    assertEquals(1L, result.getId())
+
+  TEST 7 — Error Case — shouldThrowWhenSupplierNotFound
+  ──────────────────────────────────────────────────────
+  Justificación: un ID inválido debe producir RuntimeException con mensaje claro,
+                 no una NullPointerException silenciosa.
+  ARRANGE:
+    when(supplierRepository.findById(99L)).thenReturn(Optional.empty())
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class, () -> supplierService.findById(99L))
+
+
+  ── updateSupplier ───────────────────────────────────────────────────────────
+
+  TEST 8 — Happy Path — shouldUpdateSupplierSuccessfully
+  ───────────────────────────────────────────────────────
+  Justificación: el proveedor actualiza sus propios datos (RFC y nombre no cambian).
+                 findByRfc y findByCompanyName devuelven el mismo proveedor (mismo id)
+                 → condición !existing.getId().equals(id) es false → sin excepción.
+  ARRANGE:
+    when(supplierRepository.findById(1L)).thenReturn(Optional.of(entity))
+    when(supplierRepository.findByRfc("ABC123456789A")).thenReturn(Optional.of(entity))
+    when(supplierRepository.findByCompanyName("Ferretería SA")).thenReturn(Optional.of(entity))
+    when(supplierMapper.toDTO(entity)).thenReturn(outputDTO)
+  ACT:   SupplierDTO result = supplierService.updateSupplier(1L, inputDTO)
+  ASSERT:
+    assertNotNull(result)
+
+  TEST 9 — Error Case — shouldThrowWhenSupplierNotFoundOnUpdate
+  ─────────────────────────────────────────────────────────────
+  Justificación: actualizar un ID inexistente debe fallar antes de intentar
+                 cualquier validación de negocio.
+  ARRANGE:
+    when(supplierRepository.findById(99L)).thenReturn(Optional.empty())
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> supplierService.updateSupplier(99L, inputDTO))
+
+  TEST 10 — Error Case — shouldThrowWhenRfcBelongsToAnotherSupplier
+  ──────────────────────────────────────────────────────────────────
+  Justificación: el mismo RFC en dos proveedores distintos viola la unicidad fiscal.
+                 La condición !existing.getId().equals(id) con id=2L detecta el conflicto.
+  ARRANGE:
+    Supplier other = Supplier(id=2L, rfc="ABC123456789A")
+    when(supplierRepository.findById(1L)).thenReturn(Optional.of(entity))
+    when(supplierRepository.findByRfc("ABC123456789A")).thenReturn(Optional.of(other))
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> supplierService.updateSupplier(1L, inputDTO))
+
+  TEST 11 — Error Case — shouldThrowWhenCompanyNameBelongsToAnotherSupplier
+  ──────────────────────────────────────────────────────────────────────────
+  Justificación: misma razón social en dos proveedores genera confusión en UI.
+  ARRANGE:
+    Supplier other = Supplier(id=2L, companyName="Ferretería SA")
+    when(supplierRepository.findById(1L)).thenReturn(Optional.of(entity))
+    when(supplierRepository.findByRfc("ABC123456789A")).thenReturn(Optional.of(entity))
+    when(supplierRepository.findByCompanyName("Ferretería SA")).thenReturn(Optional.of(other))
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> supplierService.updateSupplier(1L, inputDTO))
+
+
+  ── deactivateSupplier ───────────────────────────────────────────────────────
+
+  TEST 12 — Happy Path — shouldDeactivateSupplierSuccessfully
+  ────────────────────────────────────────────────────────────
+  Justificación: un proveedor sin órdenes activas puede darse de baja.
+                 Verifica que active=false es aplicado (dirty-checking de Hibernate).
+  ARRANGE:
+    when(supplierRepository.findById(1L)).thenReturn(Optional.of(entity))
+    when(purchaseOrderRepository.findActiveOrdersBySupplier(1L))
+        .thenReturn(Collections.emptyList())
+  ACT:   supplierService.deactivateSupplier(1L)
+  ASSERT:
+    assertFalse(entity.isActive())
+    verify(purchaseOrderRepository, times(1)).findActiveOrdersBySupplier(1L)
+
+  TEST 13 — Error Case — shouldThrowWhenSupplierHasActiveOrders
+  ─────────────────────────────────────────────────────────────
+  Justificación: dar de baja un proveedor con órdenes PENDING o APPROVED
+                 dejaría esas órdenes sin proveedor activo válido.
+                 El mensaje debe indicar que deben cancelarse o recibirse primero.
+  ARRANGE:
+    PurchaseOrder activeOrder = PurchaseOrder(id=1L, status=PENDING)
+    when(supplierRepository.findById(1L)).thenReturn(Optional.of(entity))
+    when(purchaseOrderRepository.findActiveOrdersBySupplier(1L))
+        .thenReturn(List.of(activeOrder))
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> supplierService.deactivateSupplier(1L))
+    assertTrue(entity.isActive())   ← active NO debe haber cambiado
+
+
+  Total tests SupplierServiceImplTest:  13
+  ─────────────────────────────────────
+  createSupplier         3  (happy + RFC dup + nombre dup)
+  getAllActiveSuppliers   2  (happy + lista vacía)
+  findById               2  (happy + no encontrado)
+  updateSupplier         4  (happy + no encontrado + RFC ajeno + nombre ajeno)
+  deactivateSupplier     2  (happy + tiene órdenes activas)
+
+
+================================================================================
+  ARCHIVO 2 — PurchaseOrderServiceImplTest.java
+================================================================================
+
+  Ubicación:  src/test/java/.../modules/purchases/service/
+  Clase bajo prueba:  PurchaseOrderServiceImpl
+
+  Mocks necesarios
+  ────────────────
+  @Mock  PurchaseOrderRepository      purchaseOrderRepository
+  @Mock  PurchaseOrderDetailRepository purchaseOrderDetailRepository
+  @Mock  SupplierRepository           supplierRepository
+  @Mock  ProductRepository            productRepository
+  @Mock  UserRepository               userRepository
+  @Mock  ProductService               productService
+  @Mock  PurchaseOrderMapper          purchaseOrderMapper
+  @Mock  PurchaseOrderDetailMapper    purchaseOrderDetailMapper
+
+  Datos en @BeforeEach
+  ────────────────────
+  Supplier     supplier    → id=1L, companyName="Ferretería SA", active=true
+  Product      product     → id=5L, name="Taladro", sku="TOOL-001", currentStock=50
+  User         user        → id=1L, username="operador01"
+
+  PurchaseOrderDetail detail → id=1L, quantity=10, unitPrice=89.99,
+                                subtotal=899.90, product=product
+
+  PurchaseOrder order       → id=1L, orderNumber="OC-2026-0001",
+                               status=PENDING, supplier=supplier,
+                               createdBy=user, totalAmount=899.90,
+                               details=List.of(detail)
+
+  PurchaseOrder approvedOrder → igual que order pero status=APPROVED
+
+  PurchaseOrderResponseDTO responseDTO → id=1L, orderNumber="OC-2026-0001",
+                                          status="PENDING", totalAmount=899.90
+
+  Configuración de SecurityContextHolder en @BeforeEach:
+    Authentication auth = mock(Authentication.class)
+    when(auth.getName()).thenReturn("operador01")
+    SecurityContextHolder.getContext().setAuthentication(auth)
+
+  @AfterEach: SecurityContextHolder.clearContext()
+
+
+  ── createOrder ──────────────────────────────────────────────────────────────
+
+  TEST 1 — Happy Path — shouldCreateOrderWithCorrectTotalAmount
+  ─────────────────────────────────────────────────────────────
+  Justificación: el caso más crítico del módulo. Verifica que: el proveedor
+                 se resuelve, el usuario se extrae del JWT, el orderNumber se
+                 genera, los detalles se procesan y el totalAmount es correcto.
+  ARRANGE:
+    PurchaseOrderDetailRequestDTO detailDto = PurchaseOrderDetailRequestDTO
+        (productId=5L, quantity=10, unitPrice=89.99)
+    PurchaseOrderRequestDTO requestDto = PurchaseOrderRequestDTO
+        (supplierId=1L, notes="Pedido Q2", details=List.of(detailDto))
+    when(supplierRepository.findById(1L)).thenReturn(Optional.of(supplier))
+    when(userRepository.findByUsername("operador01")).thenReturn(Optional.of(user))
+    when(purchaseOrderRepository.countByYear(anyInt())).thenReturn(0L)
+    when(purchaseOrderRepository.findByOrderNumber("OC-2026-0001"))
+        .thenReturn(Optional.empty())
+    when(productRepository.findById(5L)).thenReturn(Optional.of(product))
+    when(purchaseOrderDetailMapper.toEntity(detailDto)).thenReturn(detail)
+    when(purchaseOrderRepository.save(any())).thenReturn(order)
+    when(purchaseOrderMapper.toResponseDTO(order)).thenReturn(responseDTO)
+  ACT:   PurchaseOrderResponseDTO result = purchaseOrderService.createOrder(requestDto)
+  ASSERT:
+    assertNotNull(result)
+    assertEquals("OC-2026-0001", result.getOrderNumber())
+    verify(purchaseOrderRepository, times(1)).save(any(PurchaseOrder.class))
+
+  TEST 2 — Error Case — shouldThrowWhenSupplierNotFoundOnCreate
+  ─────────────────────────────────────────────────────────────
+  Justificación: crear una orden con un proveedor inexistente debe fallar
+                 de inmediato antes de cualquier otro procesamiento.
+  ARRANGE:
+    when(supplierRepository.findById(99L)).thenReturn(Optional.empty())
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> purchaseOrderService.createOrder(
+              PurchaseOrderRequestDTO(supplierId=99L, ...)))
+    verify(purchaseOrderRepository, never()).save(any())
+
+  TEST 3 — Error Case — shouldThrowWhenProductNotFoundInDetail
+  ─────────────────────────────────────────────────────────────
+  Justificación: un detalle con productId inválido no debe crear la orden parcialmente.
+                 La transacción debe hacer rollback antes de persistir nada.
+  ARRANGE:
+    when(supplierRepository.findById(1L)).thenReturn(Optional.of(supplier))
+    when(userRepository.findByUsername("operador01")).thenReturn(Optional.of(user))
+    when(purchaseOrderRepository.countByYear(anyInt())).thenReturn(0L)
+    when(purchaseOrderRepository.findByOrderNumber(any())).thenReturn(Optional.empty())
+    when(productRepository.findById(99L)).thenReturn(Optional.empty())
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> purchaseOrderService.createOrder(
+              PurchaseOrderRequestDTO con detailDto con productId=99L))
+    verify(purchaseOrderRepository, never()).save(any())
+
+
+  ── findById ─────────────────────────────────────────────────────────────────
+
+  TEST 4 — Happy Path — shouldReturnOrderById
+  ──────────────────────────────────────────
+  ARRANGE:
+    when(purchaseOrderRepository.findById(1L)).thenReturn(Optional.of(order))
+    when(purchaseOrderMapper.toResponseDTO(order)).thenReturn(responseDTO)
+  ACT:   PurchaseOrderResponseDTO result = purchaseOrderService.findById(1L)
+  ASSERT:
+    assertNotNull(result)
+    assertEquals("OC-2026-0001", result.getOrderNumber())
+
+  TEST 5 — Error Case — shouldThrowWhenOrderNotFound
+  ───────────────────────────────────────────────────
+  ARRANGE:
+    when(purchaseOrderRepository.findById(99L)).thenReturn(Optional.empty())
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> purchaseOrderService.findById(99L))
+
+
+  ── findByStatus ─────────────────────────────────────────────────────────────
+
+  TEST 6 — Happy Path — shouldReturnOrdersByStatus
+  ─────────────────────────────────────────────────
+  Justificación: verifica conversión String→enum y delegación al repositorio.
+  ARRANGE:
+    when(purchaseOrderRepository.findByStatus(PurchaseOrderStatus.PENDING))
+        .thenReturn(List.of(order))
+    when(purchaseOrderMapper.toResponseDTOList(anyList())).thenReturn(List.of(responseDTO))
+  ACT:   List<PurchaseOrderResponseDTO> result = purchaseOrderService.findByStatus("PENDING")
+  ASSERT:
+    assertEquals(1, result.size())
+
+  TEST 7 — Error Case — shouldThrowWhenStatusIsInvalid
+  ──────────────────────────────────────────────────────
+  Justificación: un valor fuera del enum (ej. "ESPERA") debe producir RuntimeException
+                 con mensaje que liste los valores válidos. Mismo patrón que
+                 registerStockMovement con type="ENTRADA".
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> purchaseOrderService.findByStatus("ESPERA"))
+    verify(purchaseOrderRepository, never()).findByStatus(any())
+
+
+  ── updateOrder ──────────────────────────────────────────────────────────────
+
+  TEST 8 — Happy Path — shouldUpdateOrderSuccessfully
+  ─────────────────────────────────────────────────────
+  Justificación: orden PENDING puede cambiar notas y proveedor.
+  ARRANGE:
+    Supplier newSupplier = Supplier(id=2L, companyName="Nuevo Proveedor")
+    PurchaseOrderUpdateRequestDTO updateDto = (supplierId=2L, notes="Actualizado")
+    when(purchaseOrderRepository.findById(1L)).thenReturn(Optional.of(order))
+    when(supplierRepository.findById(2L)).thenReturn(Optional.of(newSupplier))
+    when(purchaseOrderMapper.toResponseDTO(order)).thenReturn(responseDTO)
+  ACT:   PurchaseOrderResponseDTO result = purchaseOrderService.updateOrder(1L, updateDto)
+  ASSERT:
+    assertNotNull(result)
+    assertEquals(newSupplier, order.getSupplier())
+    assertEquals("Actualizado", order.getNotes())
+    assertNotNull(order.getUpdatedAt())
+
+  TEST 9 — Error Case — shouldThrowWhenUpdatingNonPendingOrder
+  ─────────────────────────────────────────────────────────────
+  Justificación: una orden APPROVED ya fue autorizada — no puede editarse.
+                 La máquina de estados debe ser inviolable.
+  ARRANGE:
+    when(purchaseOrderRepository.findById(1L)).thenReturn(Optional.of(approvedOrder))
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> purchaseOrderService.updateOrder(1L, updateDto))
+
+
+  ── approveOrder ─────────────────────────────────────────────────────────────
+
+  TEST 10 — Happy Path — shouldApproveOrderSuccessfully
+  ──────────────────────────────────────────────────────
+  Justificación: PENDING con detalles → APPROVED. Verifica timestamps asignados.
+  ARRANGE:
+    when(purchaseOrderRepository.findById(1L)).thenReturn(Optional.of(order))
+    when(purchaseOrderMapper.toResponseDTO(order)).thenReturn(responseDTO)
+  ACT:   purchaseOrderService.approveOrder(1L)
+  ASSERT:
+    assertEquals(PurchaseOrderStatus.APPROVED, order.getStatus())
+    assertNotNull(order.getApprovedAt())
+    assertNotNull(order.getUpdatedAt())
+
+  TEST 11 — Error Case — shouldThrowWhenApprovingNonPendingOrder
+  ──────────────────────────────────────────────────────────────
+  Justificación: solo PENDING puede aprobarse. APPROVED, RECEIVED y CANCELLED
+                 deben ser rechazados para proteger la integridad de la máquina de estados.
+  ARRANGE:
+    when(purchaseOrderRepository.findById(1L)).thenReturn(Optional.of(approvedOrder))
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> purchaseOrderService.approveOrder(1L))
+
+  TEST 12 — Edge Case — shouldThrowWhenApprovingOrderWithNoDetails
+  ────────────────────────────────────────────────────────────────
+  Justificación: aprobar una orden vacía es un error de negocio — no tiene
+                 sentido autorizar una compra sin productos. Este edge case
+                 valida una regla que solo aplica en approveOrder y no en
+                 otras transiciones de estado.
+  ARRANGE:
+    PurchaseOrder emptyOrder = PurchaseOrder(id=2L, status=PENDING, details=[])
+    when(purchaseOrderRepository.findById(2L)).thenReturn(Optional.of(emptyOrder))
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> purchaseOrderService.approveOrder(2L))
+
+
+  ── receiveOrder ─────────────────────────────────────────────────────────────
+
+  TEST 13 — Happy Path — shouldReceiveOrderAndTriggerStockMovementsPerDetail
+  ───────────────────────────────────────────────────────────────────────────
+  Justificación: es el test más importante del módulo. Verifica que:
+                 1. El status cambia a RECEIVED
+                 2. Se llama a registerStockMovement UNA VEZ por detalle
+                 3. El StockMovementRequestDTO contiene el productId, quantity
+                    y reason correctos ("Recepción orden de compra OC-2026-0001")
+                 4. receivedAt y updatedAt son asignados
+  ARRANGE:
+    PurchaseOrder twoDetailOrder = PurchaseOrder con status=APPROVED y 2 detalles
+    when(purchaseOrderRepository.findById(1L)).thenReturn(Optional.of(approvedOrder))
+    when(purchaseOrderMapper.toResponseDTO(approvedOrder)).thenReturn(responseDTO)
+  ACT:   purchaseOrderService.receiveOrder(1L)
+  ASSERT:
+    assertEquals(PurchaseOrderStatus.RECEIVED, approvedOrder.getStatus())
+    assertNotNull(approvedOrder.getReceivedAt())
+    assertNotNull(approvedOrder.getUpdatedAt())
+    verify(productService, times(1)).registerStockMovement(
+        argThat(mov -> mov.getProductId().equals(5L)
+             && mov.getQuantity() == 10
+             && mov.getType().equals("IN")
+             && mov.getReason().contains("OC-2026-0001")))
+
+  TEST 14 — Error Case — shouldThrowWhenReceivingNonApprovedOrder
+  ────────────────────────────────────────────────────────────────
+  Justificación: solo APPROVED puede recibirse. Si una orden PENDING intenta
+                 recibirse (saltándose la aprobación), el stock no debe modificarse.
+  ARRANGE:
+    when(purchaseOrderRepository.findById(1L)).thenReturn(Optional.of(order))
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> purchaseOrderService.receiveOrder(1L))
+    verify(productService, never()).registerStockMovement(any())
+
+  TEST 15 — Error Case — shouldThrowWhenReceivingAlreadyReceivedOrder
+  ────────────────────────────────────────────────────────────────────
+  Justificación: RECEIVED es estado terminal. Intentar recibirla de nuevo
+                 incrementaría el stock por segunda vez — corrupción de datos.
+  ARRANGE:
+    PurchaseOrder receivedOrder = PurchaseOrder(status=RECEIVED)
+    when(purchaseOrderRepository.findById(1L)).thenReturn(Optional.of(receivedOrder))
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> purchaseOrderService.receiveOrder(1L))
+    verify(productService, never()).registerStockMovement(any())
+
+
+  ── cancelOrder ──────────────────────────────────────────────────────────────
+
+  TEST 16 — Happy Path — shouldCancelPendingOrder
+  ────────────────────────────────────────────────
+  Justificación: PENDING puede cancelarse — es el estado más común de cancelación.
+  ARRANGE:
+    when(purchaseOrderRepository.findById(1L)).thenReturn(Optional.of(order))
+    when(purchaseOrderMapper.toResponseDTO(order)).thenReturn(responseDTO)
+  ACT:   purchaseOrderService.cancelOrder(1L)
+  ASSERT:
+    assertEquals(PurchaseOrderStatus.CANCELLED, order.getStatus())
+    assertNotNull(order.getCancelledAt())
+
+  TEST 17 — Happy Path — shouldCancelApprovedOrder
+  ──────────────────────────────────────────────────
+  Justificación: APPROVED también puede cancelarse — antes de recibir la mercancía
+                 puede surgir la necesidad de cancelar la orden ya autorizada.
+  ARRANGE:
+    when(purchaseOrderRepository.findById(1L)).thenReturn(Optional.of(approvedOrder))
+    when(purchaseOrderMapper.toResponseDTO(approvedOrder)).thenReturn(responseDTO)
+  ACT:   purchaseOrderService.cancelOrder(1L)
+  ASSERT:
+    assertEquals(PurchaseOrderStatus.CANCELLED, approvedOrder.getStatus())
+
+  TEST 18 — Error Case — shouldThrowWhenCancellingReceivedOrder
+  ──────────────────────────────────────────────────────────────
+  Justificación: una orden RECEIVED ya impactó el inventario. Cancelarla
+                 no revertiría los movimientos de stock — sería inconsistente.
+  ARRANGE:
+    PurchaseOrder receivedOrder = PurchaseOrder(status=RECEIVED)
+    when(purchaseOrderRepository.findById(1L)).thenReturn(Optional.of(receivedOrder))
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> purchaseOrderService.cancelOrder(1L))
+
+  TEST 19 — Error Case — shouldThrowWhenCancellingAlreadyCancelledOrder
+  ──────────────────────────────────────────────────────────────────────
+  Justificación: CANCELLED es estado terminal. Una segunda cancelación
+                 es una operación sin sentido que el sistema debe rechazar.
+  ARRANGE:
+    PurchaseOrder cancelledOrder = PurchaseOrder(status=CANCELLED)
+    when(purchaseOrderRepository.findById(1L)).thenReturn(Optional.of(cancelledOrder))
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> purchaseOrderService.cancelOrder(1L))
+
+
+  ── addDetail ────────────────────────────────────────────────────────────────
+
+  TEST 20 — Happy Path — shouldAddDetailAndRecalculateTotal
+  ──────────────────────────────────────────────────────────
+  Justificación: el caso principal de agregar una línea. Verifica que el
+                 subtotal es correcto y que el totalAmount de la orden se actualiza.
+  ARRANGE:
+    PurchaseOrderDetailRequestDTO dto = (productId=5L, quantity=10, unitPrice=89.99)
+    PurchaseOrder emptyOrder = PurchaseOrder(status=PENDING, details=[], totalAmount=0)
+    when(purchaseOrderRepository.findById(1L)).thenReturn(Optional.of(emptyOrder))
+    when(productRepository.findById(5L)).thenReturn(Optional.of(product))
+    when(purchaseOrderDetailRepository.existsByPurchaseOrderIdAndProductId(1L, 5L))
+        .thenReturn(false)
+    when(purchaseOrderDetailMapper.toEntity(dto)).thenReturn(detail)
+    when(purchaseOrderRepository.save(emptyOrder)).thenReturn(emptyOrder)
+    when(purchaseOrderMapper.toResponseDTO(emptyOrder)).thenReturn(responseDTO)
+  ACT:   purchaseOrderService.addDetail(1L, dto)
+  ASSERT:
+    assertEquals(new BigDecimal("899.90"), emptyOrder.getTotalAmount())
+    assertEquals(1, emptyOrder.getDetails().size())
+
+  TEST 21 — Error Case — shouldThrowWhenAddingDuplicateProductToOrder
+  ────────────────────────────────────────────────────────────────────
+  Justificación: un producto no debe aparecer dos veces en la misma orden.
+                 El usuario debe usar updateDetail para cambiar la cantidad.
+  ARRANGE:
+    when(purchaseOrderRepository.findById(1L)).thenReturn(Optional.of(order))
+    when(productRepository.findById(5L)).thenReturn(Optional.of(product))
+    when(purchaseOrderDetailRepository.existsByPurchaseOrderIdAndProductId(1L, 5L))
+        .thenReturn(true)
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> purchaseOrderService.addDetail(1L, dto))
+
+  TEST 22 — Error Case — shouldThrowWhenAddingDetailToNonPendingOrder
+  ───────────────────────────────────────────────────────────────────
+  Justificación: los detalles de una orden APPROVED están bloqueados.
+                 Agregar más productos tras la aprobación podría modificar
+                 un compromiso ya autorizado con el proveedor.
+  ARRANGE:
+    when(purchaseOrderRepository.findById(1L)).thenReturn(Optional.of(approvedOrder))
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> purchaseOrderService.addDetail(1L, dto))
+
+
+  ── updateDetail ─────────────────────────────────────────────────────────────
+
+  TEST 23 — Happy Path — shouldUpdateDetailAndRecalculateTotals
+  ──────────────────────────────────────────────────────────────
+  Justificación: verifica que quantity, unitPrice y subtotal del detalle
+                 se actualizan correctamente y que totalAmount de la orden
+                 se recalcula con el nuevo subtotal.
+  ARRANGE:
+    PurchaseOrderDetailUpdateRequestDTO updateDto = (quantity=20, unitPrice=75.00)
+    when(purchaseOrderRepository.findById(1L)).thenReturn(Optional.of(order))
+    when(purchaseOrderDetailRepository.findByIdAndPurchaseOrderId(1L, 1L))
+        .thenReturn(Optional.of(detail))
+    when(purchaseOrderRepository.save(order)).thenReturn(order)
+    when(purchaseOrderMapper.toResponseDTO(order)).thenReturn(responseDTO)
+  ACT:   purchaseOrderService.updateDetail(1L, 1L, updateDto)
+  ASSERT:
+    assertEquals(20, detail.getQuantity())
+    assertEquals(new BigDecimal("75.00"), detail.getUnitPrice())
+    assertEquals(new BigDecimal("1500.00"), detail.getSubtotal())  ← 20 × 75.00
+
+  TEST 24 — Error Case — shouldThrowWhenDetailNotFoundOrBelongsToDifferentOrder
+  ───────────────────────────────────────────────────────────────────────────────
+  Justificación: findByIdAndPurchaseOrderId devuelve vacío tanto si el detalle
+                 no existe como si pertenece a otra orden. Este test valida la
+                 protección contra accesos cruzados entre órdenes diferentes.
+  ARRANGE:
+    when(purchaseOrderRepository.findById(1L)).thenReturn(Optional.of(order))
+    when(purchaseOrderDetailRepository.findByIdAndPurchaseOrderId(99L, 1L))
+        .thenReturn(Optional.empty())
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> purchaseOrderService.updateDetail(1L, 99L, updateDto))
+
+
+  ── removeDetail ─────────────────────────────────────────────────────────────
+
+  TEST 25 — Happy Path — shouldRemoveDetailAndRecalculateTotal
+  ─────────────────────────────────────────────────────────────
+  Justificación: verifica que el detalle es removido de la lista (orphanRemoval
+                 hará el DELETE físico), que totalAmount se recalcula a ZERO
+                 cuando se elimina el único detalle.
+  ARRANGE:
+    when(purchaseOrderRepository.findById(1L)).thenReturn(Optional.of(order))
+    when(purchaseOrderDetailRepository.findByIdAndPurchaseOrderId(1L, 1L))
+        .thenReturn(Optional.of(detail))
+    when(purchaseOrderRepository.save(order)).thenReturn(order)
+  ACT:   purchaseOrderService.removeDetail(1L, 1L)
+  ASSERT:
+    assertTrue(order.getDetails().isEmpty())
+    assertEquals(BigDecimal.ZERO, order.getTotalAmount())  ← sin detalles el total es 0
+
+  TEST 26 — Error Case — shouldThrowWhenRemovingDetailFromNonPendingOrder
+  ─────────────────────────────────────────────────────────────────────────
+  Justificación: eliminar detalles de una orden APPROVED alteraría el
+                 compromiso ya autorizado con el proveedor.
+  ARRANGE:
+    when(purchaseOrderRepository.findById(1L)).thenReturn(Optional.of(approvedOrder))
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> purchaseOrderService.removeDetail(1L, 1L))
+    verify(purchaseOrderDetailRepository, never())
+        .findByIdAndPurchaseOrderId(any(), any())
+
+
+  Total tests PurchaseOrderServiceImplTest:  26
+  ─────────────────────────────────────────────
+  createOrder        3  (happy + proveedor NF + producto NF en detalle)
+  findById           2  (happy + NF)
+  findByStatus       2  (happy + status inválido)
+  updateOrder        2  (happy + no PENDING)
+  approveOrder       3  (happy + no PENDING + sin detalles)
+  receiveOrder       3  (happy con verify + no APPROVED/PENDING + no APPROVED/RECEIVED)
+  cancelOrder        4  (PENDING + APPROVED + ya RECEIVED + ya CANCELLED)
+  addDetail          3  (happy + producto duplicado + no PENDING)
+  updateDetail       2  (happy con recálculo + detalle NF/cruzado)
+  removeDetail       2  (happy + no PENDING)
+
+
+================================================================================
+  RESUMEN GENERAL
+================================================================================
+
+  Clase de test                    Enfoque               Tests   Cobertura
+  ──────────────────────────────   ───────────────────   ─────   ─────────────────────────────
+  SupplierServiceImplTest          HP + EC + Error         13    Unicidad RFC/nombre, bloqueo
+                                                                  de baja con órdenes activas
+  PurchaseOrderServiceImplTest     HP + EC + Error         26    Máquina de estados, integración
+                                                                  inventario, acceso cruzado,
+                                                                  recálculo de totales
+  ────────────────────────────────────────────────────────────────────────────────────────────
+  TOTAL                                                    39
+
+  Leyenda: HP = Happy Path  /  EC = Edge Case  /  NF = Not Found
+
+  Tests de mayor valor:
+  ─────────────────────
+  · TEST 13 (receiveOrder happy): usa argThat() para verificar que el DTO
+    enviado a registerStockMovement contiene los valores exactos — productId,
+    quantity, type="IN" y reason con el número de orden. Sin este nivel de
+    detalle el test podría pasar aunque el movimiento de stock fuera incorrecto.
+
+  · TEST 12 (approveOrder edge case): valida una regla de negocio que no
+    existe en otros servicios — no se puede aprobar una orden sin detalles.
+    Un sistema que permitiera órdenes vacías en APPROVED sería incoherente.
+
+  · TEST 24 (updateDetail error): el mismo Optional.empty() protege contra
+    dos situaciones distintas (detalle inexistente y acceso cruzado) sin
+    revelar cuál de las dos ocurrió — seguridad por oscuridad.
+
+  · TEST 25 (removeDetail edge case): el totalAmount debe llegar a ZERO
+    cuando se elimina el último detalle, no quedar en el valor anterior.
+    Un cálculo incorrecto aquí corrupta la coherencia financiera de la orden.
+
+================================================================================

@@ -1,0 +1,519 @@
+================================================================================
+  PROPUESTA: PRUEBAS DE INTEGRACIÓN — CAPA DE CONTROLADORES — MÓDULO PURCHASES
+  Backend REST API — Gestión de Almacenes
+  Fecha: 2026-05-28
+================================================================================
+
+JUSTIFICACIÓN
+─────────────
+Los tests unitarios de los servicios (SupplierServiceImplTest con 13 tests y
+PurchaseOrderServiceImplTest con 29 tests) cubren exhaustivamente la lógica de
+negocio. Sin embargo, existen aspectos que SOLO pueden verificarse en la capa
+del controlador:
+
+  1. Enrutamiento HTTP correcto
+     ¿El método anotado con @PatchMapping("/{id}/approve") realmente responde
+     a PATCH y no a PUT? ¿La ruta /supplier/{supplierId}/status/{status} no
+     colisiona con /supplier/{supplierId}? Los tests unitarios de servicios
+     no ejecutan el DispatcherServlet — solo la capa de integración web lo hace.
+
+  2. @Valid está colocado en el parámetro correcto
+     Es el bug más común en controladores: olvidar @Valid en el @RequestBody
+     hace que Jakarta ignore todas las anotaciones del DTO y el servicio recibe
+     datos inválidos. Un test que envíe body inválido y espere HTTP 400 detecta
+     esto inmediatamente.
+
+  3. Serialización JSON correcta
+     ¿Jackson serializa BigDecimal como número y no como String?
+     ¿LocalDateTime sigue el formato esperado? ¿Los campos null aparecen
+     como null y no se omiten? Los tests de servicio usan mocks —
+     nunca pasan por el serializador real.
+
+  4. Códigos HTTP semánticamente correctos
+     ¿createOrder retorna 201 y no 200? ¿removeDetail retorna 204 y no 200?
+     Estos detalles son críticos para el contrato con Angular y solo se
+     verifican en la capa web.
+
+  5. Endpoints sin body son invocables sin error
+     Los PATCH (approve, receive, cancel) no reciben body. Es válido verificar
+     que Spring no exige body donde no corresponde.
+
+
+CRITERIO DE SELECCIÓN DE TESTS
+───────────────────────────────
+Se seleccionaron tests con el siguiente criterio de valor/esfuerzo:
+
+  ✓ INCLUIR:
+    · Happy path de cada endpoint → verifica enrutamiento + status HTTP + estructura JSON
+    · Tests de validación (@Valid) en cada endpoint con @RequestBody
+      → detectan el bug de "olvidar @Valid"
+    · Tests de PATCH sin body → verifican que no se exige body donde no corresponde
+
+  ✗ EXCLUIR:
+    · Lógica de negocio (proveedor no encontrado, orden no en PENDING, etc.)
+      → ya cubierta exhaustivamente en los 42 tests de servicios
+    · Casos edge del servicio (stock insuficiente, máquina de estados)
+      → responsabilidad del servicio, no del controlador
+    · Tests de autorización JWT
+      → addFilters=false los desactiva; se probarían en tests E2E
+
+  Resultado: tests concisos, sin duplicación con la capa de servicios,
+  enfocados en lo que SOLO el controlador puede validar.
+
+
+CONFIGURACIÓN BASE
+──────────────────
+  @WebMvcTest(XxxController.class)        → contexto web reducido
+  @AutoConfigureMockMvc(addFilters=false) → desactiva filtros JWT
+  @Autowired MockMvc mockMvc
+  @MockBean XxxService                    → aísla el controlador
+  @MockBean JwtUtils                      → satisface dependencia de SecurityConfig
+
+  Patrón ACT+ASSERT (sin ARRANGE en tests de validación):
+    mockMvc.perform(...).andExpect(status().isXxx()).andExpect(jsonPath(...))
+
+
+================================================================================
+  ARCHIVO 1 — SupplierControllerTest.java
+================================================================================
+
+  Ubicación:   src/test/java/.../modules/purchases/controller/
+  Controlador: SupplierController
+  MockBeans:   SupplierService, JwtUtils
+
+  Datos en @BeforeEach
+  ────────────────────
+  SupplierDTO response → id=1L, rfc="ABC123456789A",
+                          companyName="Ferretería SA", active=true
+
+  Body JSON válido:
+  {
+      "rfc": "ABC123456789A",
+      "companyName": "Ferretería Industrial SA de CV",
+      "email": "compras@ferreteria.com"
+  }
+
+  Body JSON inválido (rfc en blanco):
+  {
+      "rfc": "",
+      "companyName": "Ferretería Industrial SA de CV"
+  }
+
+  Body JSON inválido (companyName en blanco):
+  {
+      "rfc": "ABC123456789A",
+      "companyName": ""
+  }
+
+
+  ── POST / ───────────────────────────────────────────────────────────────────
+
+  TEST 1 — Happy Path — shouldCreateSupplierAndReturn201
+  ───────────────────────────────────────────────────────
+  Justificación: verifica que POST retorna 201 (no 200) y que el body
+                 incluye los campos clave del SupplierDTO.
+  ARRANGE: when(supplierService.createSupplier(any())).thenReturn(response)
+  ACT:     POST / con body válido
+  ASSERT:  status().isCreated()
+           jsonPath("$.id").value(1)
+           jsonPath("$.rfc").value("ABC123456789A")
+           jsonPath("$.active").value(true)
+
+  TEST 2 — Validación — shouldReturn400WhenRfcIsBlank
+  ────────────────────────────────────────────────────
+  Justificación: verifica que @Valid está en el parámetro del controlador.
+                 rfc="" falla @NotBlank — Spring debe rechazar con 400 antes
+                 de llegar al servicio. Sin @Valid en el controlador, este test
+                 fallaría y revelaría el bug.
+  ACT:    POST / con body de rfc en blanco
+  ASSERT: status().isBadRequest()
+
+  TEST 3 — Validación — shouldReturn400WhenCompanyNameIsBlank
+  ─────────────────────────────────────────────────────────────
+  Justificación: valida el segundo campo obligatorio del DTO.
+                 companyName="" falla @NotBlank.
+  ACT:    POST / con body de companyName en blanco
+  ASSERT: status().isBadRequest()
+
+
+  ── GET /active ──────────────────────────────────────────────────────────────
+
+  TEST 4 — Happy Path — shouldReturnActiveSuppliers
+  ──────────────────────────────────────────────────
+  Justificación: verifica la ruta /active (no colisiona con /{id}) y que
+                 la lista se serializa correctamente como JSON array.
+  ARRANGE: when(supplierService.getAllActiveSuppliers()).thenReturn(List.of(response))
+  ACT:     GET /active
+  ASSERT:  status().isOk()
+           jsonPath("$.length()").value(1)
+           jsonPath("$[0].companyName").value("Ferretería SA")
+
+
+  ── GET /{id} ────────────────────────────────────────────────────────────────
+
+  TEST 5 — Happy Path — shouldReturnSupplierById
+  ───────────────────────────────────────────────
+  Justificación: verifica que @PathVariable Long id es extraído correctamente
+                 y que la respuesta contiene los datos del proveedor.
+  ARRANGE: when(supplierService.findById(1L)).thenReturn(response)
+  ACT:     GET /1
+  ASSERT:  status().isOk()
+           jsonPath("$.rfc").value("ABC123456789A")
+
+
+  ── PUT /{id} ────────────────────────────────────────────────────────────────
+
+  TEST 6 — Happy Path — shouldUpdateSupplierAndReturn200
+  ───────────────────────────────────────────────────────
+  Justificación: verifica que PUT retorna 200 (no 201 ni 204) y que el body
+                 contiene los datos actualizados del proveedor.
+  ARRANGE: when(supplierService.updateSupplier(eq(1L), any())).thenReturn(response)
+  ACT:     PUT /1 con body válido
+  ASSERT:  status().isOk()
+           jsonPath("$.id").value(1)
+
+
+  ── DELETE /{id} ─────────────────────────────────────────────────────────────
+
+  TEST 7 — Happy Path — shouldDeactivateSupplierAndReturn204
+  ───────────────────────────────────────────────────────────
+  Justificación: verifica que DELETE retorna 204 No Content (no 200) y que
+                 no hay cuerpo en la respuesta. deactivateSupplier es void —
+                 204 es el código semánticamente correcto.
+  ACT:    DELETE /1
+  ASSERT: status().isNoContent()
+
+
+  Total tests SupplierControllerTest:  7
+  ───────────────────────────────────────
+  POST /      3  (happy + @NotBlank rfc + @NotBlank companyName)
+  GET /active 1  (happy + verifica ruta)
+  GET /{id}   1  (happy)
+  PUT /{id}   1  (happy)
+  DELETE /{id} 1 (happy + verifica 204)
+
+
+================================================================================
+  ARCHIVO 2 — PurchaseOrderControllerTest.java
+================================================================================
+
+  Ubicación:   src/test/java/.../modules/purchases/controller/
+  Controlador: PurchaseOrderController
+  MockBeans:   PurchaseOrderService, JwtUtils
+
+  Datos en @BeforeEach
+  ────────────────────
+  PurchaseOrderResponseDTO response → id=1L, orderNumber="OC-2026-0001",
+                                       status="PENDING", totalAmount=899.90,
+                                       supplierName="Ferretería SA"
+
+  PurchaseOrderDetailResponseDTO detailResponse → id=1L, productId=5L,
+      productSku="TOOL-001", productName="Taladro", quantity=10,
+      unitPrice=89.99, subtotal=899.90
+
+  Body JSON válido de orden:
+  {
+      "supplierId": 1,
+      "notes": "Pedido Q2",
+      "details": [
+          { "productId": 5, "quantity": 10, "unitPrice": 89.99 }
+      ]
+  }
+
+  Body JSON inválido — lista de detalles vacía (falla @NotEmpty):
+  {
+      "supplierId": 1,
+      "details": []
+  }
+
+  Body JSON inválido — supplierId nulo (falla @NotNull):
+  {
+      "notes": "Sin proveedor",
+      "details": [
+          { "productId": 5, "quantity": 10, "unitPrice": 89.99 }
+      ]
+  }
+
+  Body JSON válido de detalle:
+  { "productId": 8, "quantity": 5, "unitPrice": 49.99 }
+
+  Body JSON inválido de detalle — quantity=0 (falla @Min(1)):
+  { "productId": 8, "quantity": 0, "unitPrice": 49.99 }
+
+  Body JSON válido de actualización de orden:
+  { "supplierId": 1, "notes": "Notas actualizadas" }
+
+  Body JSON inválido de actualización — supplierId nulo (falla @NotNull):
+  { "notes": "Sin proveedor" }
+
+  Body JSON válido de actualización de detalle:
+  { "quantity": 15, "unitPrice": 75.00 }
+
+  Body JSON inválido de actualización de detalle — unitPrice=0.00 (falla @DecimalMin("0.01")):
+  { "quantity": 15, "unitPrice": 0.00 }
+
+
+  ── POST / ───────────────────────────────────────────────────────────────────
+
+  TEST 1 — Happy Path — shouldCreateOrderAndReturn201
+  ────────────────────────────────────────────────────
+  Justificación: verifica que POST retorna 201 y que orderNumber, status y
+                 totalAmount se serializan correctamente.
+  ARRANGE: when(purchaseOrderService.createOrder(any())).thenReturn(response)
+  ACT:     POST / con body válido
+  ASSERT:  status().isCreated()
+           jsonPath("$.orderNumber").value("OC-2026-0001")
+           jsonPath("$.status").value("PENDING")
+           jsonPath("$.totalAmount").value(899.90)
+
+  TEST 2 — Validación — shouldReturn400WhenDetailsListIsEmpty
+  ─────────────────────────────────────────────────────────────
+  Justificación: details=[] falla @NotEmpty. Verifica que @Valid está activo
+                 en el controlador. Sin @Valid, el servicio recibiría una lista
+                 vacía y la excepción sería diferente o la orden se crearía vacía.
+  ACT:    POST / con body de detalles vacíos
+  ASSERT: status().isBadRequest()
+
+  TEST 3 — Validación — shouldReturn400WhenSupplierIdIsNull
+  ──────────────────────────────────────────────────────────
+  Justificación: supplierId=null falla @NotNull. Valida que el campo
+                 obligatorio más crítico del request es rechazado antes
+                 de llegar al servicio.
+  ACT:    POST / con body sin supplierId
+  ASSERT: status().isBadRequest()
+
+
+  ── GET /{id} ────────────────────────────────────────────────────────────────
+
+  TEST 4 — Happy Path — shouldReturnOrderById
+  ───────────────────────────────────────────
+  Justificación: verifica enrutamiento de /{id} y serialización de la respuesta.
+  ARRANGE: when(purchaseOrderService.findById(1L)).thenReturn(response)
+  ACT:     GET /1
+  ASSERT:  status().isOk()
+           jsonPath("$.orderNumber").value("OC-2026-0001")
+
+
+  ── GET /status/{status} ─────────────────────────────────────────────────────
+
+  TEST 5 — Happy Path — shouldReturnOrdersByStatus
+  ─────────────────────────────────────────────────
+  Justificación: verifica la ruta /status/{status} y que la lista se
+                 serializa correctamente. El status como PathVariable String
+                 es delegado al servicio para la conversión a enum.
+  ARRANGE: when(purchaseOrderService.findByStatus("PENDING")).thenReturn(List.of(response))
+  ACT:     GET /status/PENDING
+  ASSERT:  status().isOk()
+           jsonPath("$.length()").value(1)
+           jsonPath("$[0].status").value("PENDING")
+
+
+  ── GET /supplier/{supplierId} ───────────────────────────────────────────────
+
+  TEST 6 — Happy Path — shouldReturnOrdersBySupplierId
+  ──────────────────────────────────────────────────────
+  Justificación: verifica la ruta /supplier/{supplierId} y que @PathVariable
+                 Long supplierId extrae correctamente el id del path.
+  ARRANGE: when(purchaseOrderService.findBySupplierId(1L)).thenReturn(List.of(response))
+  ACT:     GET /supplier/1
+  ASSERT:  status().isOk()
+           jsonPath("$.length()").value(1)
+
+
+  ── GET /supplier/{supplierId}/status/{status} ───────────────────────────────
+
+  TEST 7 — Happy Path — shouldReturnOrdersBySupplierIdAndStatus
+  ──────────────────────────────────────────────────────────────
+  Justificación: este endpoint es el más crítico de verificar en la capa web
+                 porque tiene DOS PathVariables y una ruta compleja que puede
+                 colisionar con /supplier/{supplierId}. El test garantiza que
+                 Spring MVC enruta correctamente al método con dos segmentos
+                 variables. Sin este test, un error de anotación (@GetMapping
+                 mal especificado) pasaría inadvertido.
+  ARRANGE: when(purchaseOrderService.findBySupplierIdAndStatus(1L, "APPROVED"))
+               .thenReturn(List.of(response))
+  ACT:     GET /supplier/1/status/APPROVED
+  ASSERT:  status().isOk()
+           jsonPath("$.length()").value(1)
+
+
+  ── GET /product/{productId} ─────────────────────────────────────────────────
+
+  TEST 8 — Happy Path — shouldReturnOrdersByProduct
+  ──────────────────────────────────────────────────
+  Justificación: verifica que /product/{productId} no colisiona con las rutas
+                 de detalles /{id}/details/{detailId}.
+  ARRANGE: when(purchaseOrderService.findOrdersByProduct(5L)).thenReturn(List.of(response))
+  ACT:     GET /product/5
+  ASSERT:  status().isOk()
+           jsonPath("$.length()").value(1)
+
+
+  ── PUT /{id} ────────────────────────────────────────────────────────────────
+
+  TEST 9 — Happy Path — shouldUpdateOrderAndReturn200
+  ────────────────────────────────────────────────────
+  Justificación: verifica que PUT sobre la orden retorna 200 con el cuerpo.
+  ARRANGE: when(purchaseOrderService.updateOrder(eq(1L), any())).thenReturn(response)
+  ACT:     PUT /1 con body válido de actualización
+  ASSERT:  status().isOk()
+           jsonPath("$.id").value(1)
+
+  TEST 10 — Validación — shouldReturn400WhenUpdateSupplierIdIsNull
+  ─────────────────────────────────────────────────────────────────
+  Justificación: supplierId=null en PurchaseOrderUpdateRequestDTO falla @NotNull.
+                 Verifica que @Valid está activo en el PUT de la orden.
+  ACT:    PUT /1 con body sin supplierId
+  ASSERT: status().isBadRequest()
+
+
+  ── PATCH /{id}/approve ──────────────────────────────────────────────────────
+
+  TEST 11 — Happy Path — shouldApproveOrderAndReturn200
+  ──────────────────────────────────────────────────────
+  Justificación: verifica que PATCH (no PUT) es el método correcto para la
+                 transición de estado y que la ruta /approve está correctamente
+                 mapeada. No recibe body — verifica que Spring no lo exige.
+  ARRANGE: when(purchaseOrderService.approveOrder(1L)).thenReturn(response)
+  ACT:     PATCH /1/approve (sin body)
+  ASSERT:  status().isOk()
+           jsonPath("$.orderNumber").value("OC-2026-0001")
+
+
+  ── PATCH /{id}/receive ──────────────────────────────────────────────────────
+
+  TEST 12 — Happy Path — shouldReceiveOrderAndReturn200
+  ──────────────────────────────────────────────────────
+  Justificación: verifica enrutamiento de /receive. Es el endpoint que
+                 en producción dispara los movimientos de stock — el test
+                 de controlador verifica el contrato HTTP, mientras que el
+                 test de servicio (TEST 13 en PurchaseOrderServiceImplTest)
+                 verifica la integración con inventory con argThat.
+  ARRANGE: when(purchaseOrderService.receiveOrder(1L)).thenReturn(response)
+  ACT:     PATCH /1/receive (sin body)
+  ASSERT:  status().isOk()
+
+
+  ── PATCH /{id}/cancel ───────────────────────────────────────────────────────
+
+  TEST 13 — Happy Path — shouldCancelOrderAndReturn200
+  ─────────────────────────────────────────────────────
+  Justificación: verifica enrutamiento de /cancel y que no colisiona con
+                 /approve ni /receive.
+  ARRANGE: when(purchaseOrderService.cancelOrder(1L)).thenReturn(response)
+  ACT:     PATCH /1/cancel (sin body)
+  ASSERT:  status().isOk()
+
+
+  ── POST /{id}/details ───────────────────────────────────────────────────────
+
+  TEST 14 — Happy Path — shouldAddDetailAndReturn201
+  ───────────────────────────────────────────────────
+  Justificación: verifica que POST al subrecurso /details retorna 201 y
+                 que la ruta /{id}/details no colisiona con /{id}.
+  ARRANGE: when(purchaseOrderService.addDetail(eq(1L), any())).thenReturn(response)
+  ACT:     POST /1/details con body válido de detalle
+  ASSERT:  status().isCreated()
+
+  TEST 15 — Validación — shouldReturn400WhenDetailQuantityIsZero
+  ──────────────────────────────────────────────────────────────
+  Justificación: quantity=0 falla @Min(1) en PurchaseOrderDetailRequestDTO.
+                 Verifica que @Valid está activo en el POST de detalles.
+                 Sin @Valid, el servicio recibiría quantity=0 y lanzaría
+                 RuntimeException en lugar de retornar HTTP 400.
+  ACT:    POST /1/details con quantity=0
+  ASSERT: status().isBadRequest()
+
+
+  ── PUT /{id}/details/{detailId} ─────────────────────────────────────────────
+
+  TEST 16 — Happy Path — shouldUpdateDetailAndReturn200
+  ──────────────────────────────────────────────────────
+  Justificación: verifica que PUT sobre el subrecurso /{id}/details/{detailId}
+                 extrae correctamente AMBOS PathVariables (id y detailId).
+  ARRANGE: when(purchaseOrderService.updateDetail(eq(1L), eq(1L), any()))
+               .thenReturn(response)
+  ACT:     PUT /1/details/1 con body válido de actualización de detalle
+  ASSERT:  status().isOk()
+
+  TEST 17 — Validación — shouldReturn400WhenDetailUnitPriceIsInvalid
+  ─────────────────────────────────────────────────────────────────────
+  Justificación: unitPrice=0.00 falla @DecimalMin("0.01") en
+                 PurchaseOrderDetailUpdateRequestDTO.
+                 Verifica que @Valid está activo en el PUT de detalles.
+  ACT:    PUT /1/details/1 con unitPrice=0.00
+  ASSERT: status().isBadRequest()
+
+
+  ── DELETE /{id}/details/{detailId} ──────────────────────────────────────────
+
+  TEST 18 — Happy Path — shouldRemoveDetailAndReturn204
+  ──────────────────────────────────────────────────────
+  Justificación: verifica que DELETE sobre /{id}/details/{detailId} retorna
+                 204 No Content (no 200) y extrae correctamente ambos
+                 PathVariables. removeDetail es void — 204 es el código correcto.
+  ACT:    DELETE /1/details/1
+  ASSERT: status().isNoContent()
+
+
+  Total tests PurchaseOrderControllerTest:  18
+  ─────────────────────────────────────────────
+  POST /                           3  (happy + @NotEmpty details + @NotNull supplierId)
+  GET /{id}                        1  (happy)
+  GET /status/{status}             1  (happy)
+  GET /supplier/{supplierId}       1  (happy)
+  GET /supplier/{id}/status/{s}    1  (happy + verifica ruta compleja ★)
+  GET /product/{productId}         1  (happy)
+  PUT /{id}                        2  (happy + @NotNull supplierId)
+  PATCH /{id}/approve              1  (happy sin body)
+  PATCH /{id}/receive              1  (happy sin body)
+  PATCH /{id}/cancel               1  (happy sin body)
+  POST /{id}/details               2  (happy + @Min(1) quantity)
+  PUT /{id}/details/{detailId}     2  (happy + @DecimalMin unitPrice)
+  DELETE /{id}/details/{detailId}  1  (happy + verifica 204)
+
+
+================================================================================
+  RESUMEN GENERAL
+================================================================================
+
+  Clase de test                     Tests   Cobertura
+  ─────────────────────────────     ─────   ─────────────────────────────────────────
+  SupplierControllerTest               7    5 endpoints: happy + 2 validaciones @Valid
+  PurchaseOrderControllerTest         18    13 endpoints: happy + 5 validaciones @Valid
+  ────────────────────────────────────────────────────────────────────────────────────
+  TOTAL                               25
+
+  Tests de mayor valor:
+  ─────────────────────
+
+  TEST 7 (GET /supplier/{supplierId}/status/{status}):
+    Es el endpoint con la ruta más compleja — dos PathVariables en un path
+    anidado. Un error en la anotación @GetMapping o en la firma del método
+    (@PathVariable mal nombrado) haría que Spring no encuentre el endpoint.
+    Este test garantiza que el enrutamiento doble funciona correctamente.
+
+  TEST 2 (POST / details vacíos) y TEST 3 (supplierId nulo):
+    Los dos casos de validación más críticos del endpoint principal. Si @Valid
+    falta en el PurchaseOrderRequestDTO, órdenes con datos inválidos llegarían
+    al servicio y el error resultante sería confuso. Estos tests son la red
+    de seguridad más barata para ese escenario.
+
+  TEST 11, 12, 13 (PATCH sin body):
+    Verifican que los endpoints de transición de estado no exigen body donde
+    no corresponde. Es común que frameworks rechacen PATCH sin Content-Type
+    o sin body — este test garantiza que Spring los acepta correctamente.
+
+  TEST 15 (POST /details con quantity=0) y TEST 17 (PUT /details con unitPrice=0.00):
+    Las validaciones de los subrecursos son igualmente importantes que las
+    de la orden. Un quantity=0 llegaría al servicio y produciría un error
+    de negocio en lugar del 400 más informativo de Jakarta.
+
+  Criterio final de selección:
+  ─────────────────────────────
+  Cada test de esta suite responde a la pregunta:
+    "¿Podría este error pasar inadvertido en los tests de servicio?"
+  Si la respuesta es Sí → el test pertenece a la capa del controlador.
+  Si la respuesta es No → ya está cubierto y se excluye para evitar duplicación.
+
+================================================================================

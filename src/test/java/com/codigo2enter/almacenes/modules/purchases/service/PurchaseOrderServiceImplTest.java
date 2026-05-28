@@ -291,6 +291,66 @@ class PurchaseOrderServiceImplTest {
     }
 
     // =========================================================================
+    // findBySupplierIdAndStatus
+    // =========================================================================
+
+    /**
+     * Happy Path: proveedor existe y status válido → retorna solo las órdenes
+     * de ese proveedor en ese estado. Verifica que se invoca el método combinado
+     * del repositorio (no los dos métodos simples por separado).
+     */
+    @Test
+    @DisplayName("findBySupplierIdAndStatus: debe retornar órdenes del proveedor filtradas por estado")
+    void shouldReturnOrdersBySupplierAndStatus() {
+        // ARRANGE
+        when(supplierRepository.findById(1L)).thenReturn(Optional.of(supplier));
+        when(purchaseOrderRepository.findBySupplierIdAndStatus(1L, PurchaseOrderStatus.PENDING))
+                .thenReturn(List.of(order));
+        when(purchaseOrderMapper.toResponseDTOList(anyList())).thenReturn(List.of(responseDTO));
+
+        // ACT
+        List<PurchaseOrderResponseDTO> result =
+                purchaseOrderService.findBySupplierIdAndStatus(1L, "PENDING");
+
+        // ASSERT
+        assertEquals(1, result.size());
+        verify(purchaseOrderRepository, times(1))
+                .findBySupplierIdAndStatus(1L, PurchaseOrderStatus.PENDING);
+    }
+
+    /**
+     * Error Case: status inválido → RuntimeException antes de consultar la BD.
+     * La conversión String→enum falla primero — el proveedor ni siquiera se consulta.
+     * Mismo patrón que findByStatus con status="ESPERA".
+     */
+    @Test
+    @DisplayName("findBySupplierIdAndStatus: debe lanzar excepción para status inválido")
+    void shouldThrowWhenStatusInvalidInCombinedFilter() {
+        // ACT + ASSERT — falla en la conversión, antes de tocar el repositorio
+        assertThrows(RuntimeException.class,
+                () -> purchaseOrderService.findBySupplierIdAndStatus(1L, "INVALIDO"));
+        verify(supplierRepository, never()).findById(any());
+        verify(purchaseOrderRepository, never()).findBySupplierIdAndStatus(any(), any());
+    }
+
+    /**
+     * Error Case: supplierId inexistente → RuntimeException.
+     * El servicio distingue "proveedor sin órdenes en ese estado" (lista vacía)
+     * de "proveedor inexistente" (error) — sin esta validación ambos retornarían [].
+     */
+    @Test
+    @DisplayName("findBySupplierIdAndStatus: debe lanzar excepción cuando el proveedor no existe")
+    void shouldThrowWhenSupplierNotFoundInCombinedFilter() {
+        // ARRANGE — status válido pero supplierId inexistente
+        when(supplierRepository.findById(99L)).thenReturn(Optional.empty());
+
+        // ACT + ASSERT
+        assertThrows(RuntimeException.class,
+                () -> purchaseOrderService.findBySupplierIdAndStatus(99L, "PENDING"));
+        verify(purchaseOrderRepository, never()).findBySupplierIdAndStatus(any(), any());
+    }
+
+    // =========================================================================
     // updateOrder
     // =========================================================================
 

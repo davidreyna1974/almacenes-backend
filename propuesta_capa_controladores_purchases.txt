@@ -1,0 +1,877 @@
+================================================================================
+  PROPUESTA: CAPA DE CONTROLADORES — MÓDULO PURCHASES
+  Backend REST API — Gestión de Almacenes
+  Fecha: 2026-05-28
+================================================================================
+
+CONTEXTO
+────────
+Los controladores son la capa de entrada HTTP del módulo purchases.
+Su única responsabilidad es: recibir la petición, activar validaciones
+Jakarta con @Valid y delegar al servicio. Cero lógica de negocio.
+
+Principios aplicados:
+  · Factor II  (15-Factor) — API First: contrato explícito antes de implementar
+  · Factor XII (15-Factor) — Stateless: JWT en cada petición, sin sesiones
+  · Factor XV  (15-Factor) — Autenticación: todas las rutas protegidas por JWT
+  · REST semántico: sustantivos en URLs, verbos HTTP correctos, códigos HTTP precisos
+
+Códigos HTTP utilizados:
+  201 Created     → POST que persiste un recurso nuevo
+  200 OK          → GET, PUT y PATCH con cuerpo de respuesta
+  204 No Content  → DELETE exitoso sin cuerpo de respuesta
+  400 Bad Request → Validaciones Jakarta fallidas (@Valid)
+  500 Server Error → RuntimeException del servicio (futuro: GlobalExceptionHandler)
+
+Seguridad:
+  Todas las rutas de /api/v1/purchases/** requieren:
+    Authorization: Bearer <token_jwt>
+  El filtro JwtAuthenticationFilter valida el token antes de llegar al controlador.
+  No se requieren cambios en SecurityConfig — ya están cubiertas por anyRequest().authenticated()
+
+
+================================================================================
+  ARCHIVO 1 — SupplierController.java
+================================================================================
+
+  Paquete:    com.codigo2enter.almacenes.modules.purchases.controller
+  Ruta base:  /api/v1/purchases/suppliers
+  Anotaciones: @RestController @RequestMapping @RequiredArgsConstructor
+
+  Dependencia: private final SupplierService supplierService
+
+
+  ════════════════════════════════════════════════════════════════════════════
+  POST /api/v1/purchases/suppliers
+  ════════════════════════════════════════════════════════════════════════════
+
+  Método del servicio:  createSupplier(SupplierDTO dto)
+  Respuesta HTTP:       201 Created + SupplierDTO
+  Parámetro:            @Valid @RequestBody SupplierDTO
+
+  Justificación:
+    Registra un nuevo proveedor en el catálogo. Es el primer paso antes de
+    poder crear órdenes de compra — sin proveedores activos no hay compras posibles.
+
+  Consideraciones importantes:
+    · @Valid activa las validaciones del DTO antes de invocar al servicio.
+      Si fallan (@NotBlank en rfc o companyName) → HTTP 400 automático.
+    · El campo 'id' del DTO se ignora en creación — PostgreSQL lo genera.
+    · El campo 'active' no se envía en creación — el servicio lo inicializa en true.
+    · El servicio valida unicidad de RFC y razón social antes de persistir.
+    · RFC: exactamente 13 caracteres, formato SAT (letras y números).
+
+  JSON Request (body):
+  {
+      "rfc":         "ABC123456789A",
+      "companyName": "Ferretería Industrial SA de CV",
+      "contactName": "Juan Pérez López",
+      "email":       "compras@ferreteria.com",
+      "phone":       "5551234567",
+      "address":     "Av. Industria 456, Col. Centro, CDMX"
+  }
+
+  JSON Response (201 Created):
+  {
+      "id":          1,
+      "rfc":         "ABC123456789A",
+      "companyName": "Ferretería Industrial SA de CV",
+      "contactName": "Juan Pérez López",
+      "email":       "compras@ferreteria.com",
+      "phone":       "5551234567",
+      "address":     "Av. Industria 456, Col. Centro, CDMX",
+      "active":      true
+  }
+
+
+  ════════════════════════════════════════════════════════════════════════════
+  GET /api/v1/purchases/suppliers/active
+  ════════════════════════════════════════════════════════════════════════════
+
+  Método del servicio:  getAllActiveSuppliers()
+  Respuesta HTTP:       200 OK + List<SupplierDTO>
+  Sin parámetros.
+
+  Justificación:
+    Alimenta los selectores desplegables de Angular al crear o editar una
+    orden de compra. Angular solo debe mostrar proveedores vigentes — un
+    proveedor dado de baja no puede asignarse a nuevas órdenes.
+
+  Consideraciones importantes:
+    · Retorna solo proveedores con active=true.
+    · Lista vacía es respuesta válida — no lanza excepción.
+    · No incluye proveedores dados de baja (soft delete).
+
+  JSON Response (200 OK):
+  [
+      {
+          "id": 1, "rfc": "ABC123456789A",
+          "companyName": "Ferretería Industrial SA de CV",
+          "active": true
+      },
+      {
+          "id": 2, "rfc": "XYZ987654321B",
+          "companyName": "Distribuidora Norte SA",
+          "active": true
+      }
+  ]
+
+
+  ════════════════════════════════════════════════════════════════════════════
+  GET /api/v1/purchases/suppliers/{id}
+  ════════════════════════════════════════════════════════════════════════════
+
+  Método del servicio:  findById(Long id)
+  Respuesta HTTP:       200 OK + SupplierDTO
+  Parámetro:            @PathVariable Long id
+
+  Justificación:
+    Permite consultar los datos completos de un proveedor específico para
+    mostrarlos en el formulario de edición de Angular o en el detalle de
+    una orden de compra.
+
+  Consideraciones importantes:
+    · Si el id no existe → RuntimeException → HTTP 500 (futuro: 404 con GlobalExceptionHandler)
+    · Retorna proveedores activos e inactivos — un proveedor dado de baja
+      sigue siendo consultable para el historial de órdenes antiguas.
+
+  JSON Response (200 OK):
+  {
+      "id":          1,
+      "rfc":         "ABC123456789A",
+      "companyName": "Ferretería Industrial SA de CV",
+      "contactName": "Juan Pérez López",
+      "email":       "compras@ferreteria.com",
+      "phone":       "5551234567",
+      "address":     "Av. Industria 456, Col. Centro, CDMX",
+      "active":      true
+  }
+
+
+  ════════════════════════════════════════════════════════════════════════════
+  PUT /api/v1/purchases/suppliers/{id}
+  ════════════════════════════════════════════════════════════════════════════
+
+  Método del servicio:  updateSupplier(Long id, SupplierDTO dto)
+  Respuesta HTTP:       200 OK + SupplierDTO
+  Parámetros:           @PathVariable Long id + @Valid @RequestBody SupplierDTO
+
+  Justificación:
+    Permite actualizar datos de contacto del proveedor (teléfono, email,
+    dirección) sin necesidad de dar de baja y re-registrar.
+    También permite activar un proveedor dado de baja enviando active=true.
+
+  Consideraciones importantes:
+    · El servicio valida que el nuevo RFC y razón social no pertenezcan
+      a otro proveedor diferente (condición !existing.getId().equals(id)).
+    · Enviar el mismo RFC o nombre del proveedor que se edita NO genera error
+      — la validación excluye al proveedor mismo.
+    · Incluir active=true en el body reactiva un proveedor dado de baja.
+    · Incluir active=false desactiva el proveedor solo si no tiene órdenes activas.
+
+  JSON Request (body) — actualizar teléfono y reactivar:
+  {
+      "rfc":         "ABC123456789A",
+      "companyName": "Ferretería Industrial SA de CV",
+      "contactName": "María García",
+      "email":       "compras@ferreteria.com",
+      "phone":       "5559876543",
+      "address":     "Av. Industria 456, Col. Centro, CDMX",
+      "active":      true
+  }
+
+  JSON Response (200 OK):
+  {
+      "id":          1,
+      "rfc":         "ABC123456789A",
+      "companyName": "Ferretería Industrial SA de CV",
+      "contactName": "María García",
+      "email":       "compras@ferreteria.com",
+      "phone":       "5559876543",
+      "address":     "Av. Industria 456, Col. Centro, CDMX",
+      "active":      true
+  }
+
+
+  ════════════════════════════════════════════════════════════════════════════
+  DELETE /api/v1/purchases/suppliers/{id}
+  ════════════════════════════════════════════════════════════════════════════
+
+  Método del servicio:  deactivateSupplier(Long id)
+  Respuesta HTTP:       204 No Content
+  Parámetro:            @PathVariable Long id
+
+  Justificación:
+    Permite dar de baja a un proveedor que ya no opera con el almacén,
+    ocultándolo de los selectores sin borrar su historial de órdenes.
+
+  Consideraciones importantes:
+    · Soft delete: el registro permanece en BD con active=false.
+    · El servicio BLOQUEA la desactivación si el proveedor tiene órdenes
+      en estado PENDING o APPROVED — deben cancelarse o recibirse primero.
+    · 204 No Content: la operación exitosa no retorna cuerpo.
+    · El proveedor puede reactivarse con PUT /{id} enviando active=true.
+
+  Sin body de request.
+  Sin body de response (204 No Content).
+
+
+  ════════════════════════════════════════════════════════════════════════════
+  TABLA RESUMEN — SupplierController
+  ════════════════════════════════════════════════════════════════════════════
+
+  Método   Ruta        Servicio                Respuesta
+  ───────  ──────────  ──────────────────────  ──────────────────────────────
+  POST     /           createSupplier(dto)      201 + SupplierDTO
+  GET      /active     getAllActiveSuppliers()   200 + List<SupplierDTO>
+  GET      /{id}       findById(id)             200 + SupplierDTO
+  PUT      /{id}       updateSupplier(id, dto)  200 + SupplierDTO
+  DELETE   /{id}       deactivateSupplier(id)   204 No Content
+
+
+================================================================================
+  ARCHIVO 2 — PurchaseOrderController.java
+================================================================================
+
+  Paquete:    com.codigo2enter.almacenes.modules.purchases.controller
+  Ruta base:  /api/v1/purchases/orders
+  Anotaciones: @RestController @RequestMapping @RequiredArgsConstructor
+
+  Dependencia: private final PurchaseOrderService purchaseOrderService
+
+  Nota sobre PATCH vs PUT:
+    PATCH → modificación parcial de un recurso (solo el campo 'status')
+    PUT   → actualización de campos de datos (notes, supplierId, detalles)
+    Los tres endpoints de transición de estado usan PATCH correctamente.
+
+
+  ════════════════════════════════════════════════════════════════════════════
+  POST /api/v1/purchases/orders
+  ════════════════════════════════════════════════════════════════════════════
+
+  Método del servicio:  createOrder(PurchaseOrderRequestDTO dto)
+  Respuesta HTTP:       201 Created + PurchaseOrderResponseDTO
+  Parámetro:            @Valid @RequestBody PurchaseOrderRequestDTO
+
+  Justificación:
+    Inicia el ciclo de vida de una orden de compra. La orden se crea en
+    estado PENDING — el operador puede seguir editándola antes de aprobarla.
+
+  Consideraciones importantes:
+    · 'createdBy' NO se envía en el body — el servicio lo resuelve desde el JWT.
+      El usuario autenticado queda registrado automáticamente como creador.
+    · 'orderNumber' NO se envía — generado con formato OC-YYYY-NNNN.
+    · 'totalAmount' NO se envía — calculado como suma de subtotales de detalles.
+    · @NotEmpty en details: debe incluir al menos un detalle al crear.
+    · @Valid en details: propaga validaciones a cada PurchaseOrderDetailRequestDTO.
+    · El servicio valida que cada productId exista en la BD.
+    · El servicio valida que el supplierId exista y esté activo.
+
+  JSON Request (body):
+  {
+      "supplierId": 1,
+      "notes":      "Pedido urgente para reposición de stock",
+      "details": [
+          {
+              "productId": 5,
+              "quantity":  10,
+              "unitPrice": 89.99
+          },
+          {
+              "productId": 12,
+              "quantity":  5,
+              "unitPrice": 249.50
+          }
+      ]
+  }
+
+  JSON Response (201 Created):
+  {
+      "id":                 1,
+      "orderNumber":        "OC-2026-0001",
+      "status":             "PENDING",
+      "notes":              "Pedido urgente para reposición de stock",
+      "totalAmount":        2147.40,
+      "supplierId":         1,
+      "supplierName":       "Ferretería Industrial SA de CV",
+      "createdById":        1,
+      "createdByUsername":  "operador01",
+      "createdAt":          "2026-05-28T10:30:00",
+      "updatedAt":          null,
+      "approvedAt":         null,
+      "receivedAt":         null,
+      "cancelledAt":        null,
+      "details": [
+          {
+              "id":          1,
+              "productId":   5,
+              "productSku":  "TOOL-001",
+              "productName": "Taladro percutor",
+              "quantity":    10,
+              "unitPrice":   89.99,
+              "subtotal":    899.90
+          },
+          {
+              "id":          2,
+              "productId":   12,
+              "productSku":  "TOOL-012",
+              "productName": "Broca de 10mm",
+              "quantity":    5,
+              "unitPrice":   249.50,
+              "subtotal":    1247.50
+          }
+      ]
+  }
+
+
+  ════════════════════════════════════════════════════════════════════════════
+  GET /api/v1/purchases/orders/{id}
+  ════════════════════════════════════════════════════════════════════════════
+
+  Método del servicio:  findById(Long id)
+  Respuesta HTTP:       200 OK + PurchaseOrderResponseDTO
+  Parámetro:            @PathVariable Long id
+
+  Justificación:
+    Consulta el estado completo de una orden incluyendo todos sus detalles.
+    Angular lo usa para mostrar el formulario de edición o el detalle de la orden.
+
+  Consideraciones importantes:
+    · La respuesta incluye SIEMPRE la lista completa de detalles.
+    · Los timestamps null (approvedAt, receivedAt, cancelledAt) indican que
+      la orden aún no llegó a ese estado.
+
+  Sin body de request.
+  JSON Response: igual que el ejemplo de POST (201 Created) adaptado al estado actual.
+
+
+  ════════════════════════════════════════════════════════════════════════════
+  GET /api/v1/purchases/orders/status/{status}
+  ════════════════════════════════════════════════════════════════════════════
+
+  Método del servicio:  findByStatus(String status)
+  Respuesta HTTP:       200 OK + List<PurchaseOrderResponseDTO>
+  Parámetro:            @PathVariable String status
+
+  Justificación:
+    Permite filtrar órdenes por estado para los paneles de gestión:
+    lista de pendientes por aprobar, órdenes aprobadas en tránsito, etc.
+
+  Consideraciones importantes:
+    · El valor de {status} debe ser exactamente uno de:
+      PENDING, APPROVED, RECEIVED, CANCELLED  (case-sensitive)
+    · El servicio convierte el String al enum con valueOf() — si el valor
+      es inválido lanza RuntimeException → HTTP 500.
+    · Lista vacía es respuesta válida si no hay órdenes en ese estado.
+
+  URL de ejemplo:  GET /api/v1/purchases/orders/status/PENDING
+  Sin body de request.
+
+  JSON Response (200 OK) — lista de órdenes PENDING resumidas:
+  [
+      {
+          "id": 1, "orderNumber": "OC-2026-0001", "status": "PENDING",
+          "totalAmount": 2147.40, "supplierName": "Ferretería Industrial SA de CV",
+          "createdByUsername": "operador01", "createdAt": "2026-05-28T10:30:00",
+          "details": [ ... ]
+      },
+      {
+          "id": 2, "orderNumber": "OC-2026-0002", "status": "PENDING",
+          "totalAmount": 560.00, "supplierName": "Distribuidora Norte SA",
+          "createdByUsername": "operador02", "createdAt": "2026-05-28T11:00:00",
+          "details": [ ... ]
+      }
+  ]
+
+
+  ════════════════════════════════════════════════════════════════════════════
+  GET /api/v1/purchases/orders/supplier/{supplierId}
+  ════════════════════════════════════════════════════════════════════════════
+
+  Método del servicio:  findBySupplierId(Long supplierId)
+  Respuesta HTTP:       200 OK + List<PurchaseOrderResponseDTO>
+  Parámetro:            @PathVariable Long supplierId
+
+  Justificación:
+    Permite consultar el historial completo de compras realizadas a un
+    proveedor específico — útil para evaluar volumen, precios y frecuencia.
+
+  Consideraciones importantes:
+    · El servicio valida que el supplierId exista. Si no → RuntimeException.
+    · Retorna órdenes en TODOS los estados (PENDING, APPROVED, RECEIVED, CANCELLED).
+    · Lista vacía si el proveedor existe pero no tiene órdenes.
+
+  URL de ejemplo:  GET /api/v1/purchases/orders/supplier/1
+  Sin body de request. JSON Response: lista de PurchaseOrderResponseDTO.
+
+
+  ════════════════════════════════════════════════════════════════════════════
+  GET /api/v1/purchases/orders/supplier/{supplierId}/status/{status}  ★ Nuevo
+  ════════════════════════════════════════════════════════════════════════════
+
+  Método del servicio:  findBySupplierIdAndStatus(Long supplierId, String status)
+  Respuesta HTTP:       200 OK + List<PurchaseOrderResponseDTO>
+  Parámetros:           @PathVariable Long supplierId
+                        @PathVariable String status
+
+  Justificación:
+    Combina el filtro por proveedor y por estado en una sola consulta eficiente.
+    Los endpoints simples (por proveedor solo o por estado solo) no son suficientes
+    para los casos de uso operativos más frecuentes:
+
+      · "¿Qué órdenes del proveedor X están esperando aprobación?"
+        → /supplier/1/status/PENDING
+      · "¿Qué mercancía del proveedor X está en tránsito (aprobada, sin recibir)?"
+        → /supplier/1/status/APPROVED
+      · "¿Cuánto hemos recibido del proveedor X históricamente?"
+        → /supplier/1/status/RECEIVED
+
+    Sin este endpoint, Angular tendría que:
+      1. Pedir TODAS las órdenes del proveedor (GET /supplier/{id})
+      2. Filtrar por estado en el frontend
+    Esto es ineficiente con volúmenes grandes y transfiere datos innecesarios.
+
+  Consideraciones importantes:
+    · El valor de {status} debe ser exactamente uno de:
+      PENDING, APPROVED, RECEIVED, CANCELLED  (case-sensitive).
+      El servicio convierte con PurchaseOrderStatus.valueOf(status).
+      Si el valor es inválido → RuntimeException (mismo patrón que /status/{status}).
+    · El servicio valida que supplierId exista antes de consultar.
+      Si el proveedor no existe → RuntimeException en lugar de lista vacía silenciosa.
+    · Lista vacía es respuesta válida si el proveedor existe pero no tiene
+      órdenes en ese estado.
+    · Infraestructura ya disponible: PurchaseOrderRepository ya declara
+      findBySupplierIdAndStatus(Long, PurchaseOrderStatus) — solo requiere
+      un nuevo método en el servicio y este endpoint en el controlador.
+    · El servicio debe aplicar las mismas validaciones de:
+        findBySupplierId  → valida existencia del proveedor
+        findByStatus      → convierte String a enum con try/catch
+
+  Implementación del servicio (pendiente):
+    List<PurchaseOrderResponseDTO> findBySupplierIdAndStatus(Long supplierId,
+                                                              String status) {
+        // 1. Validar supplierId
+        findSupplierOrThrow(supplierId);
+        // 2. Convertir status String → enum
+        PurchaseOrderStatus statusEnum = PurchaseOrderStatus.valueOf(status);
+        // 3. Consultar y mapear
+        return purchaseOrderMapper.toResponseDTOList(
+            purchaseOrderRepository.findBySupplierIdAndStatus(supplierId, statusEnum));
+    }
+
+  URLs de ejemplo:
+    GET /api/v1/purchases/orders/supplier/1/status/PENDING
+    GET /api/v1/purchases/orders/supplier/1/status/APPROVED
+    GET /api/v1/purchases/orders/supplier/2/status/RECEIVED
+
+  Sin body de request.
+
+  JSON Response (200 OK) — órdenes PENDING del proveedor 1:
+  [
+      {
+          "id":                1,
+          "orderNumber":       "OC-2026-0001",
+          "status":            "PENDING",
+          "totalAmount":       2147.40,
+          "supplierId":        1,
+          "supplierName":      "Ferretería Industrial SA de CV",
+          "createdByUsername": "operador01",
+          "createdAt":         "2026-05-28T10:30:00",
+          "updatedAt":         null,
+          "approvedAt":        null,
+          "receivedAt":        null,
+          "cancelledAt":       null,
+          "details":           [ ... ]
+      },
+      {
+          "id":                3,
+          "orderNumber":       "OC-2026-0003",
+          "status":            "PENDING",
+          "totalAmount":       850.00,
+          "supplierId":        1,
+          "supplierName":      "Ferretería Industrial SA de CV",
+          "createdByUsername": "operador02",
+          "createdAt":         "2026-05-28T15:00:00",
+          "updatedAt":         null,
+          "approvedAt":        null,
+          "receivedAt":        null,
+          "cancelledAt":       null,
+          "details":           [ ... ]
+      }
+  ]
+
+  JSON Response (200 OK) — lista vacía cuando no hay órdenes en ese estado:
+  []
+
+
+  ════════════════════════════════════════════════════════════════════════════
+  GET /api/v1/purchases/orders/product/{productId}
+  ════════════════════════════════════════════════════════════════════════════
+
+  Método del servicio:  findOrdersByProduct(Long productId)
+  Respuesta HTTP:       200 OK + List<PurchaseOrderResponseDTO>
+  Parámetro:            @PathVariable Long productId
+
+  Justificación:
+    Permite consultar todas las órdenes que incluyen un producto específico,
+    mostrando a qué proveedores se ha comprado y a qué precios históricamente.
+    Útil para decisiones de reabastecimiento.
+
+  Consideraciones importantes:
+    · Navega la relación @OneToMany details con @Query DISTINCT en el repositorio.
+    · El servicio valida que el productId exista antes de consultar.
+    · Retorna la orden completa (con todos sus detalles), no solo el detalle
+      del producto buscado.
+
+  URL de ejemplo:  GET /api/v1/purchases/orders/product/5
+  Sin body de request. JSON Response: lista de PurchaseOrderResponseDTO.
+
+
+  ════════════════════════════════════════════════════════════════════════════
+  PUT /api/v1/purchases/orders/{id}
+  ════════════════════════════════════════════════════════════════════════════
+
+  Método del servicio:  updateOrder(Long id, PurchaseOrderUpdateRequestDTO dto)
+  Respuesta HTTP:       200 OK + PurchaseOrderResponseDTO
+  Parámetros:           @PathVariable Long id + @Valid @RequestBody PurchaseOrderUpdateRequestDTO
+
+  Justificación:
+    Permite corregir el proveedor o las notas de una orden antes de aprobarla.
+    Solo aplica en PENDING — una vez aprobada el compromiso está establecido.
+
+  Consideraciones importantes:
+    · Solo edita supplierId y notes. Nada más.
+    · El servicio rechaza si status != PENDING → RuntimeException.
+    · Si supplierId no cambia, el servicio lo reasigna igual (sin efecto).
+    · Enviar notes=null borra las notas de la orden.
+    · Los detalles (líneas de productos) tienen sus propios endpoints.
+    · updatedAt se actualiza automáticamente en el servicio.
+
+  JSON Request (body):
+  {
+      "supplierId": 2,
+      "notes":      "Cambio de proveedor por mejor precio negociado"
+  }
+
+  JSON Response (200 OK) — orden actualizada con nuevo proveedor:
+  {
+      "id":                1,
+      "orderNumber":       "OC-2026-0001",
+      "status":            "PENDING",
+      "notes":             "Cambio de proveedor por mejor precio negociado",
+      "totalAmount":       2147.40,
+      "supplierId":        2,
+      "supplierName":      "Distribuidora Norte SA",
+      "createdByUsername": "operador01",
+      "createdAt":         "2026-05-28T10:30:00",
+      "updatedAt":         "2026-05-28T11:15:00",
+      "details":           [ ... ]
+  }
+
+
+  ════════════════════════════════════════════════════════════════════════════
+  PATCH /api/v1/purchases/orders/{id}/approve
+  ════════════════════════════════════════════════════════════════════════════
+
+  Método del servicio:  approveOrder(Long id)
+  Respuesta HTTP:       200 OK + PurchaseOrderResponseDTO
+  Parámetro:            @PathVariable Long id
+
+  Justificación:
+    Formaliza la autorización de la orden de compra. Después de este punto
+    los detalles quedan bloqueados — el proveedor ya fue comprometido.
+
+  Consideraciones importantes:
+    · No recibe body — solo el id en el path.
+    · El servicio valida: status == PENDING Y details no vacíos.
+    · Una orden sin detalles no puede aprobarse — sería autorizar una compra vacía.
+    · Tras la aprobación: status=APPROVED, approvedAt=now(), updatedAt=now().
+    · Los detalles quedan bloqueados: addDetail, updateDetail y removeDetail
+      lanzarán RuntimeException si se intentan sobre una orden APPROVED.
+
+  Sin body de request.
+
+  JSON Response (200 OK) — orden aprobada:
+  {
+      "id":          1,
+      "orderNumber": "OC-2026-0001",
+      "status":      "APPROVED",
+      "totalAmount": 2147.40,
+      "supplierId":  1,
+      "supplierName": "Ferretería Industrial SA de CV",
+      "createdAt":   "2026-05-28T10:30:00",
+      "updatedAt":   "2026-05-28T14:00:00",
+      "approvedAt":  "2026-05-28T14:00:00",
+      "receivedAt":  null,
+      "cancelledAt": null,
+      "details":     [ ... ]
+  }
+
+
+  ════════════════════════════════════════════════════════════════════════════
+  PATCH /api/v1/purchases/orders/{id}/receive
+  ════════════════════════════════════════════════════════════════════════════
+
+  Método del servicio:  receiveOrder(Long id)
+  Respuesta HTTP:       200 OK + PurchaseOrderResponseDTO
+  Parámetro:            @PathVariable Long id
+
+  Justificación:
+    Confirma la recepción física de la mercancía. Es el endpoint de mayor
+    impacto del sistema: actualiza el inventario automáticamente por cada
+    línea de la orden disparando registerStockMovement(IN) en el módulo inventory.
+
+  Consideraciones importantes:
+    · No recibe body — solo el id en el path.
+    · El servicio valida: status == APPROVED (no puede recibirse desde PENDING).
+    · INTEGRACIÓN TRANSACCIONAL: todos los movimientos de stock y el cambio
+      de estado ocurren en la MISMA transacción. Si cualquier movimiento falla
+      (ej. producto dado de baja en ese momento), Hibernate hace rollback completo —
+      el inventario y la orden quedan en el estado previo sin datos parciales.
+    · Cada movimiento generado lleva reason = "Recepción orden de compra OC-YYYY-NNNN"
+      para trazabilidad en el Kardex del módulo inventory.
+    · Estado terminal: RECEIVED no admite más transiciones.
+
+  Sin body de request.
+
+  JSON Response (200 OK) — orden recibida con inventario ya actualizado:
+  {
+      "id":          1,
+      "orderNumber": "OC-2026-0001",
+      "status":      "RECEIVED",
+      "totalAmount": 2147.40,
+      "supplierId":  1,
+      "supplierName": "Ferretería Industrial SA de CV",
+      "createdAt":   "2026-05-28T10:30:00",
+      "updatedAt":   "2026-05-29T09:00:00",
+      "approvedAt":  "2026-05-28T14:00:00",
+      "receivedAt":  "2026-05-29T09:00:00",
+      "cancelledAt": null,
+      "details":     [ ... ]
+  }
+
+
+  ════════════════════════════════════════════════════════════════════════════
+  PATCH /api/v1/purchases/orders/{id}/cancel
+  ════════════════════════════════════════════════════════════════════════════
+
+  Método del servicio:  cancelOrder(Long id)
+  Respuesta HTTP:       200 OK + PurchaseOrderResponseDTO
+  Parámetro:            @PathVariable Long id
+
+  Justificación:
+    Permite cancelar una orden que ya no procede — antes de recibirla.
+    Los detalles se conservan como historial de intención de compra.
+
+  Consideraciones importantes:
+    · No recibe body — solo el id en el path.
+    · Solo cancelable desde PENDING o APPROVED.
+    · RECEIVED y CANCELLED son terminales → RuntimeException.
+    · No impacta el inventario en ningún caso.
+    · Los detalles NO se eliminan — quedan como historial de la orden cancelada.
+    · Estado terminal: CANCELLED no admite más transiciones.
+
+  Sin body de request.
+
+  JSON Response (200 OK) — orden cancelada:
+  {
+      "id":          1,
+      "orderNumber": "OC-2026-0001",
+      "status":      "CANCELLED",
+      "totalAmount": 2147.40,
+      "supplierId":  1,
+      "supplierName": "Ferretería Industrial SA de CV",
+      "createdAt":   "2026-05-28T10:30:00",
+      "updatedAt":   "2026-05-28T16:00:00",
+      "approvedAt":  "2026-05-28T14:00:00",
+      "receivedAt":  null,
+      "cancelledAt": "2026-05-28T16:00:00",
+      "details":     [ ... ]
+  }
+
+
+  ════════════════════════════════════════════════════════════════════════════
+  POST /api/v1/purchases/orders/{id}/details
+  ════════════════════════════════════════════════════════════════════════════
+
+  Método del servicio:  addDetail(Long orderId, PurchaseOrderDetailRequestDTO dto)
+  Respuesta HTTP:       201 Created + PurchaseOrderResponseDTO
+  Parámetros:           @PathVariable Long id + @Valid @RequestBody PurchaseOrderDetailRequestDTO
+
+  Justificación:
+    Permite agregar productos a una orden ya creada que aún está en PENDING.
+    Angular usa este endpoint cuando el operador selecciona un producto
+    adicional después de haber creado la orden inicial.
+
+  Consideraciones importantes:
+    · Solo cuando status == PENDING — detalles bloqueados en otros estados.
+    · Un producto no puede aparecer dos veces en la misma orden.
+      Si el operador necesita más unidades, debe usar PUT /{id}/details/{detailId}.
+    · unitPrice lo envía el cliente — normalmente pre-rellenado con product.price
+      desde el catálogo de Angular, pero el usuario puede modificarlo.
+    · subtotal (quantity × unitPrice) y totalAmount se calculan en el servicio.
+    · La respuesta retorna la ORDEN COMPLETA (no solo el detalle) para que
+      Angular vea el totalAmount actualizado sin petición adicional.
+
+  JSON Request (body):
+  {
+      "productId": 8,
+      "quantity":  20,
+      "unitPrice": 15.00
+  }
+
+  JSON Response (201 Created) — orden completa con el nuevo detalle:
+  {
+      "id":          1,
+      "orderNumber": "OC-2026-0001",
+      "status":      "PENDING",
+      "totalAmount": 2447.40,
+      "updatedAt":   "2026-05-28T11:30:00",
+      "details": [
+          {
+              "id": 1, "productId": 5, "productSku": "TOOL-001",
+              "productName": "Taladro percutor",
+              "quantity": 10, "unitPrice": 89.99, "subtotal": 899.90
+          },
+          {
+              "id": 2, "productId": 12, "productSku": "TOOL-012",
+              "productName": "Broca de 10mm",
+              "quantity": 5, "unitPrice": 249.50, "subtotal": 1247.50
+          },
+          {
+              "id": 3, "productId": 8, "productSku": "CONS-008",
+              "productName": "Cinta aislante",
+              "quantity": 20, "unitPrice": 15.00, "subtotal": 300.00
+          }
+      ]
+  }
+
+
+  ════════════════════════════════════════════════════════════════════════════
+  PUT /api/v1/purchases/orders/{id}/details/{detailId}
+  ════════════════════════════════════════════════════════════════════════════
+
+  Método del servicio:  updateDetail(Long orderId, Long detailId,
+                                      PurchaseOrderDetailUpdateRequestDTO dto)
+  Respuesta HTTP:       200 OK + PurchaseOrderResponseDTO
+  Parámetros:           @PathVariable Long id, @PathVariable Long detailId
+                        + @Valid @RequestBody PurchaseOrderDetailUpdateRequestDTO
+
+  Justificación:
+    Permite ajustar la cantidad o el precio negociado de un producto ya
+    incluido en la orden, sin necesidad de eliminarlo y volver a agregarlo.
+
+  Consideraciones importantes:
+    · Solo cuando status == PENDING.
+    · Solo edita quantity y unitPrice.
+    · productId NO se puede cambiar — cambiar el producto es delete + add.
+    · findByIdAndPurchaseOrderId valida que el detailId pertenece a la orden
+      del path — protección contra accesos cruzados entre órdenes.
+    · subtotal y totalAmount se recalculan automáticamente en el servicio.
+    · La respuesta retorna la ORDEN COMPLETA para que Angular vea el
+      totalAmount actualizado.
+
+  JSON Request (body) — ajustar de 10 a 15 unidades:
+  {
+      "quantity":  15,
+      "unitPrice": 89.99
+  }
+
+  JSON Response (200 OK) — orden con detalle y total actualizados:
+  {
+      "id":          1,
+      "orderNumber": "OC-2026-0001",
+      "status":      "PENDING",
+      "totalAmount": 2547.40,
+      "updatedAt":   "2026-05-28T12:00:00",
+      "details": [
+          {
+              "id": 1, "productId": 5, "productSku": "TOOL-001",
+              "productName": "Taladro percutor",
+              "quantity": 15, "unitPrice": 89.99, "subtotal": 1349.85
+          },
+          {
+              "id": 2, "productId": 12, "productSku": "TOOL-012",
+              "productName": "Broca de 10mm",
+              "quantity": 5, "unitPrice": 249.50, "subtotal": 1247.50
+          }
+      ]
+  }
+
+
+  ════════════════════════════════════════════════════════════════════════════
+  DELETE /api/v1/purchases/orders/{id}/details/{detailId}
+  ════════════════════════════════════════════════════════════════════════════
+
+  Método del servicio:  removeDetail(Long orderId, Long detailId)
+  Respuesta HTTP:       204 No Content
+  Parámetros:           @PathVariable Long id, @PathVariable Long detailId
+
+  Justificación:
+    Permite quitar un producto de la orden durante la fase de construcción
+    (PENDING), antes de que sea aprobada y los detalles queden bloqueados.
+
+  Consideraciones importantes:
+    · Solo cuando status == PENDING — detalles bloqueados en otros estados.
+    · Eliminación FÍSICA del detalle — orphanRemoval=true en PurchaseOrder
+      hace que Hibernate ejecute DELETE FROM purchase_order_details.
+      Es diferente al soft delete de proveedores y productos.
+    · totalAmount de la orden se recalcula automáticamente tras la eliminación.
+    · Si se elimina el último detalle, totalAmount = 0 y la orden queda vacía
+      (no se podrá aprobar hasta agregar al menos un detalle nuevamente).
+    · findByIdAndPurchaseOrderId valida que el detailId pertenece a la orden.
+    · 204 No Content: void del servicio → sin cuerpo de respuesta.
+
+  Sin body de request.
+  Sin body de response (204 No Content).
+
+
+  ════════════════════════════════════════════════════════════════════════════
+  TABLA RESUMEN — PurchaseOrderController
+  ════════════════════════════════════════════════════════════════════════════
+
+  Método   Ruta                                    Servicio                               Resp.
+  ───────  ──────────────────────────────────────  ─────────────────────────────────────  ──────
+  POST     /                                       createOrder(dto)                       201
+  GET      /{id}                                   findById(id)                           200
+  GET      /status/{status}                        findByStatus(status)                   200
+  GET      /supplier/{supplierId}                  findBySupplierId(supplierId)           200
+  GET      /supplier/{supplierId}/status/{status}  findBySupplierIdAndStatus(id, status)  200  ★
+  GET      /product/{productId}                    findOrdersByProduct(productId)         200
+  PUT      /{id}                                   updateOrder(id, dto)                   200
+  PATCH    /{id}/approve                           approveOrder(id)                       200
+  PATCH    /{id}/receive                           receiveOrder(id)                       200
+  PATCH    /{id}/cancel                            cancelOrder(id)                        200
+  POST     /{id}/details                           addDetail(id, dto)                     201
+  PUT      /{id}/details/{detailId}                updateDetail(id, detailId, dto)        200
+  DELETE   /{id}/details/{detailId}                removeDetail(id, detailId)             204
+
+
+================================================================================
+  CONFIGURACIÓN ADICIONAL REQUERIDA EN SecurityConfig
+================================================================================
+
+  No se requieren cambios. Las rutas de purchases ya están protegidas
+  por el bloque existente:
+
+    .authorizeHttpRequests(auth -> auth
+        .requestMatchers("/api/v1/auth/**").permitAll()
+        .anyRequest().authenticated()   ← cubre /api/v1/purchases/**
+    )
+
+  Todas las peticiones a /api/v1/purchases/** requieren:
+    Authorization: Bearer <token_jwt_válido>
+
+
+================================================================================
+  RESUMEN DE ARCHIVOS
+================================================================================
+
+  Archivo                      Endpoints   Respuestas
+  ───────────────────────────  ─────────   ──────────────────────────────────
+  SupplierController.java          5       201, 200 (×3), 204
+  PurchaseOrderController.java    13       201 (×2), 200 (×9), 204
+
+  Total endpoints: 18  (★ GET /supplier/{supplierId}/status/{status} agregado)
+
+================================================================================

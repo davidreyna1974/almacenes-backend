@@ -49,9 +49,24 @@ public interface PurchaseOrderService {
      * Retorna todas las órdenes de un proveedor específico.
      *
      * @param supplierId identificador del proveedor
-     * @return lista de órdenes del proveedor
+     * @return lista de órdenes del proveedor en todos los estados
      */
     List<PurchaseOrderResponseDTO> findBySupplierId(Long supplierId);
+
+    /**
+     * Retorna las órdenes de un proveedor filtradas por estado.
+     * Combina ambos filtros en una sola consulta eficiente al repositorio,
+     * evitando que el cliente tenga que pedir todas las órdenes del proveedor
+     * y filtrarlas en el frontend.
+     *
+     * Aplica las mismas validaciones que findBySupplierId (proveedor debe existir)
+     * y findByStatus (status debe ser un valor válido del enum).
+     *
+     * @param supplierId identificador del proveedor
+     * @param status     nombre del estado ("PENDING", "APPROVED", "RECEIVED", "CANCELLED")
+     * @return lista de órdenes del proveedor en ese estado, vacía si no hay ninguna
+     */
+    List<PurchaseOrderResponseDTO> findBySupplierIdAndStatus(Long supplierId, String status);
 
     /**
      * Retorna todas las órdenes que contienen un producto específico.

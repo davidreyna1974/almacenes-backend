@@ -139,6 +139,35 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
     /**
      * {@inheritDoc}
      *
+     * Combina las validaciones de findBySupplierId (proveedor existe) y
+     * findByStatus (conversión String→enum con try/catch) antes de consultar
+     * el repositorio con el filtro doble.
+     *
+     * El orden de validaciones:
+     *   1. Convertir status String → enum — falla rápido si el valor es inválido,
+     *      antes de consultar la BD.
+     *   2. Validar que el proveedor exista — distingue "proveedor sin órdenes en
+     *      ese estado" (lista vacía válida) de "proveedor inexistente" (error).
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public List<PurchaseOrderResponseDTO> findBySupplierIdAndStatus(Long supplierId, String status) {
+        PurchaseOrderStatus statusEnum;
+        try {
+            statusEnum = PurchaseOrderStatus.valueOf(status);
+        } catch (IllegalArgumentException e) {
+            throw new RuntimeException(
+                    "Estado inválido: '" + status + "'. Valores permitidos: " +
+                    "PENDING, APPROVED, RECEIVED, CANCELLED.");
+        }
+        findSupplierOrThrow(supplierId);
+        return purchaseOrderMapper.toResponseDTOList(
+                purchaseOrderRepository.findBySupplierIdAndStatus(supplierId, statusEnum));
+    }
+
+    /**
+     * {@inheritDoc}
+     *
      * Valida existencia del producto antes de consultar sus órdenes para
      * distinguir "producto sin órdenes" (lista vacía) de "producto no existe" (error).
      */

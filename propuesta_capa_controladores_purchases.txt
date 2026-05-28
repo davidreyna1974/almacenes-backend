@@ -433,7 +433,7 @@ Seguridad:
 
   Consideraciones importantes:
     · El valor de {status} debe ser exactamente uno de:
-      PENDING, APPROVED, RECEIVED, CANCELLED  (case-sensitive).
+      PENDING, APPROVED, RECEIVED, CANCELLED  (case-sensitive).	
       El servicio convierte con PurchaseOrderStatus.valueOf(status).
       Si el valor es inválido → RuntimeException (mismo patrón que /status/{status}).
     · El servicio valida que supplierId exista antes de consultar.

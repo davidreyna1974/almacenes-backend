@@ -46,10 +46,16 @@ public interface PurchaseOrderMapper {
      * @param order entidad persistida con todas sus relaciones cargables
      * @return DTO completo listo para serializar como JSON en la respuesta HTTP
      */
-    @Mapping(source = "supplier.id",          target = "supplierId")
-    @Mapping(source = "supplier.companyName", target = "supplierName")
-    @Mapping(source = "createdBy.id",         target = "createdById")
-    @Mapping(source = "createdBy.username",   target = "createdByUsername")
+    @Mapping(source = "supplier.id",           target = "supplierId")
+    @Mapping(source = "supplier.companyName",  target = "supplierName")
+    @Mapping(source = "createdBy.id",          target = "createdById")
+    @Mapping(source = "createdBy.username",    target = "createdByUsername")
+    @Mapping(source = "approvedBy.id",         target = "approvedById")
+    @Mapping(source = "approvedBy.username",   target = "approvedByUsername")
+    @Mapping(source = "receivedBy.id",         target = "receivedById")
+    @Mapping(source = "receivedBy.username",   target = "receivedByUsername")
+    @Mapping(source = "cancelledBy.id",        target = "cancelledById")
+    @Mapping(source = "cancelledBy.username",  target = "cancelledByUsername")
     PurchaseOrderResponseDTO toResponseDTO(PurchaseOrder order);
 
     /**
@@ -95,5 +101,8 @@ public interface PurchaseOrderMapper {
     @Mapping(target = "approvedAt",  ignore = true)
     @Mapping(target = "receivedAt",  ignore = true)
     @Mapping(target = "cancelledAt", ignore = true)
+    @Mapping(target = "approvedBy",  ignore = true)
+    @Mapping(target = "receivedBy",  ignore = true)
+    @Mapping(target = "cancelledBy", ignore = true)
     PurchaseOrder toEntity(PurchaseOrderRequestDTO dto);
 }

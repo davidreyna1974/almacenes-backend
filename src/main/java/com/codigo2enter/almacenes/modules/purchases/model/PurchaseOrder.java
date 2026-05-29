@@ -110,4 +110,23 @@ public class PurchaseOrder {
     /** Asignado cuando la orden transiciona a CANCELLED. */
     @Column(name = "cancelled_at")
     private LocalDateTime cancelledAt;
+
+    /** Usuario que aprobó la orden. Null hasta que la orden pasa a APPROVED.
+     *  updatable=false: la aprobación es un evento inmutable — una vez registrada
+     *  no puede reasignarse a otro usuario. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "approved_by", updatable = false)
+    private User approvedBy;
+
+    /** Usuario que marcó la orden como recibida físicamente.
+     *  Null hasta que la orden pasa a RECEIVED. updatable=false por misma razón. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "received_by", updatable = false)
+    private User receivedBy;
+
+    /** Usuario que canceló la orden. Null en órdenes no canceladas.
+     *  updatable=false: la cancelación es un evento inmutable de auditoría. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "cancelled_by", updatable = false)
+    private User cancelledBy;
 }

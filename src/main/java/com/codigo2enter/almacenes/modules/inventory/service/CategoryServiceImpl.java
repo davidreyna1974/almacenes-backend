@@ -1,13 +1,18 @@
 package com.codigo2enter.almacenes.modules.inventory.service;
 
+import com.codigo2enter.almacenes.modules.auth.model.User;
+import com.codigo2enter.almacenes.modules.auth.repository.UserRepository;
 import com.codigo2enter.almacenes.modules.inventory.dto.CategoryDTO;
 import com.codigo2enter.almacenes.modules.inventory.mapper.CategoryMapper;
 import com.codigo2enter.almacenes.modules.inventory.model.Category;
 import com.codigo2enter.almacenes.modules.inventory.repository.CategoryRepository;
 import com.codigo2enter.almacenes.modules.inventory.repository.ProductRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDateTime;
 
 import java.util.List;
 
@@ -28,6 +33,7 @@ public class CategoryServiceImpl implements CategoryService {
 
     private final CategoryRepository categoryRepository;
     private final CategoryMapper categoryMapper;
+    private final UserRepository userRepository;
 
     // Necesario para verificar si la categoría tiene productos activos
     // antes de permitir su desactivación — evita dejar FKs huérfanas.
@@ -51,9 +57,10 @@ public class CategoryServiceImpl implements CategoryService {
             );
         });
 
-        // MapStruct convierte el DTO a entidad ignorando id y active.
-        // active se inicializa en true por @Builder.Default en Category.
-        Category saved = categoryRepository.save(categoryMapper.toEntity(dto));
+        // MapStruct convierte el DTO a entidad ignorando id, active y campos de auditoría.
+        Category category = categoryMapper.toEntity(dto);
+        category.setCreatedBy(resolveAuthenticatedUser());
+        Category saved = categoryRepository.save(category);
         return categoryMapper.toDTO(saved);
     }
 
@@ -101,10 +108,11 @@ public class CategoryServiceImpl implements CategoryService {
         });
 
         // Actualizar únicamente los campos que el cliente puede modificar.
-        // 'id', 'active' y cualquier otro campo gestionado por el sistema
-        // no se tocan aquí — el DTO no tiene autoridad sobre ellos en una edición.
+        // 'id', 'active' y los campos de auditoría son gestionados por el sistema.
         category.setName(dto.getName());
         category.setDescription(dto.getDescription());
+        category.setUpdatedAt(LocalDateTime.now());
+        category.setUpdatedBy(resolveAuthenticatedUser());
 
         return categoryMapper.toDTO(category);
     }
@@ -138,7 +146,20 @@ public class CategoryServiceImpl implements CategoryService {
             );
         }
 
-        // Soft delete: Hibernate detecta el cambio y ejecuta el UPDATE al cerrar la transacción.
+        // Soft delete: Hibernate dirty-checking persiste todos los cambios al cerrar la transacción.
         category.setActive(false);
+        category.setUpdatedAt(LocalDateTime.now());
+        category.setUpdatedBy(resolveAuthenticatedUser());
+    }
+
+    /**
+     * Resuelve el usuario autenticado desde el JWT en SecurityContextHolder.
+     * Mismo patrón que ProductServiceImpl, PurchaseOrderServiceImpl y SupplierServiceImpl.
+     */
+    private User resolveAuthenticatedUser() {
+        String username = SecurityContextHolder.getContext().getAuthentication().getName();
+        return userRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException(
+                        "Usuario autenticado no encontrado en el sistema."));
     }
 }

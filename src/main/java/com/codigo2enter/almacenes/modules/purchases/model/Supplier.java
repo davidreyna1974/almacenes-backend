@@ -1,5 +1,6 @@
 package com.codigo2enter.almacenes.modules.purchases.model;
 
+import com.codigo2enter.almacenes.modules.auth.model.User;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -68,4 +69,18 @@ public class Supplier {
     @Builder.Default
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt = LocalDateTime.now();
+
+    /** Usuario que registró al proveedor. updatable=false — el creador es inmutable. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "created_by", updatable = false)
+    private User createdBy;
+
+    /** Fecha de la última modificación de los datos del proveedor. Null si nunca fue editado. */
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
+
+    /** Usuario que realizó la última modificación. Null si el proveedor nunca fue editado. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "updated_by")
+    private User updatedBy;
 }

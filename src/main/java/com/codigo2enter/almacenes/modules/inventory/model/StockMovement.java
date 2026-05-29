@@ -1,5 +1,6 @@
 package com.codigo2enter.almacenes.modules.inventory.model;
 
+import com.codigo2enter.almacenes.modules.auth.model.User;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -57,4 +58,12 @@ public class StockMovement {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "product_id", nullable = false)
     private Product product;
+
+    /** Usuario que registró el movimiento.
+     *  updatable=false garantiza que Hibernate nunca modifique este campo
+     *  después de la inserción — campo de auditoría inmutable.
+     *  Resuelto desde SecurityContextHolder en ProductServiceImpl. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "created_by", nullable = false, updatable = false)
+    private User createdBy;
 }

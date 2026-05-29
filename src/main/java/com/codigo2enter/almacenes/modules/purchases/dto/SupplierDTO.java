@@ -65,4 +65,12 @@ public class SupplierDTO {
     /** Estado del proveedor. true = activo, false = dado de baja.
      *  Incluir en PUT para activar/desactivar el proveedor. */
     private boolean active;
+
+    /** Campos de auditoría — solo de salida, el cliente nunca los envía en request. */
+    private java.time.LocalDateTime createdAt;
+    private Long   createdById;
+    private String createdByUsername;
+    private java.time.LocalDateTime updatedAt;
+    private Long   updatedById;
+    private String updatedByUsername;
 }

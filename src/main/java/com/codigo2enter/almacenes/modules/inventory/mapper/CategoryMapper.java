@@ -22,11 +22,16 @@ public interface CategoryMapper {
 
     /**
      * Convierte una entidad Category a su DTO de salida.
-     * Todos los campos se mapean directamente por nombre coincidente.
+     * Los campos de auditoría de usuario se aplanan: createdBy y updatedBy
+     * (relaciones @ManyToOne) se exponen como pares de ID + username.
      *
      * @param category entidad persistida con datos de la base de datos
      * @return CategoryDTO listo para serializar como JSON en la respuesta HTTP
      */
+    @Mapping(source = "createdBy.id",       target = "createdById")
+    @Mapping(source = "createdBy.username", target = "createdByUsername")
+    @Mapping(source = "updatedBy.id",       target = "updatedById")
+    @Mapping(source = "updatedBy.username", target = "updatedByUsername")
     CategoryDTO toDTO(Category category);
 
     /**
@@ -52,7 +57,11 @@ public interface CategoryMapper {
      * @param dto datos enviados por el cliente en el request
      * @return entidad Category lista para persistir con save()
      */
-    @Mapping(target = "id",     ignore = true)
-    @Mapping(target = "active", ignore = true)
+    @Mapping(target = "id",        ignore = true)
+    @Mapping(target = "active",    ignore = true)
+    @Mapping(target = "createdAt", ignore = true)
+    @Mapping(target = "createdBy", ignore = true)
+    @Mapping(target = "updatedAt", ignore = true)
+    @Mapping(target = "updatedBy", ignore = true)
     Category toEntity(CategoryDTO dto);
 }

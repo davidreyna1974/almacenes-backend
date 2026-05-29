@@ -1,13 +1,18 @@
 package com.codigo2enter.almacenes.modules.purchases.service;
 
+import com.codigo2enter.almacenes.modules.auth.model.User;
+import com.codigo2enter.almacenes.modules.auth.repository.UserRepository;
 import com.codigo2enter.almacenes.modules.purchases.dto.SupplierDTO;
 import com.codigo2enter.almacenes.modules.purchases.mapper.SupplierMapper;
 import com.codigo2enter.almacenes.modules.purchases.model.Supplier;
 import com.codigo2enter.almacenes.modules.purchases.repository.PurchaseOrderRepository;
 import com.codigo2enter.almacenes.modules.purchases.repository.SupplierRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDateTime;
 
 import java.util.List;
 
@@ -25,6 +30,7 @@ public class SupplierServiceImpl implements SupplierService {
 
     private final SupplierRepository supplierRepository;
     private final PurchaseOrderRepository purchaseOrderRepository;
+    private final UserRepository userRepository;
     private final SupplierMapper supplierMapper;
 
     /**
@@ -44,7 +50,9 @@ public class SupplierServiceImpl implements SupplierService {
                     "Ya existe un proveedor con la razón social '" + dto.getCompanyName() + "'.");
         }
 
-        Supplier saved = supplierRepository.save(supplierMapper.toEntity(dto));
+        Supplier supplier = supplierMapper.toEntity(dto);
+        supplier.setCreatedBy(resolveAuthenticatedUser());
+        Supplier saved = supplierRepository.save(supplier);
         return supplierMapper.toDTO(saved);
     }
 
@@ -102,6 +110,8 @@ public class SupplierServiceImpl implements SupplierService {
         supplier.setPhone(dto.getPhone());
         supplier.setEmail(dto.getEmail());
         supplier.setAddress(dto.getAddress());
+        supplier.setUpdatedAt(LocalDateTime.now());
+        supplier.setUpdatedBy(resolveAuthenticatedUser());
 
         return supplierMapper.toDTO(supplier);
     }
@@ -123,7 +133,10 @@ public class SupplierServiceImpl implements SupplierService {
                     "en estado PENDING o APPROVED. Cancélelas o recíbalas primero.");
         }
 
+        // Soft delete: Hibernate dirty-checking persiste los cambios al cerrar la transacción.
         supplier.setActive(false);
+        supplier.setUpdatedAt(LocalDateTime.now());
+        supplier.setUpdatedBy(resolveAuthenticatedUser());
     }
 
     // -------------------------------------------------------------------------
@@ -138,5 +151,16 @@ public class SupplierServiceImpl implements SupplierService {
         return supplierRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException(
                         "Proveedor con id " + id + " no encontrado."));
+    }
+
+    /**
+     * Resuelve el usuario autenticado desde el JWT en SecurityContextHolder.
+     * Mismo patrón que ProductServiceImpl y PurchaseOrderServiceImpl.
+     */
+    private User resolveAuthenticatedUser() {
+        String username = SecurityContextHolder.getContext().getAuthentication().getName();
+        return userRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException(
+                        "Usuario autenticado no encontrado en el sistema."));
     }
 }

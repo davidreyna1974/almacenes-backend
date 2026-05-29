@@ -1,5 +1,7 @@
 package com.codigo2enter.almacenes.modules.inventory.service;
 
+import com.codigo2enter.almacenes.modules.auth.model.User;
+import com.codigo2enter.almacenes.modules.auth.repository.UserRepository;
 import com.codigo2enter.almacenes.modules.inventory.dto.ProductRequestDTO;
 import com.codigo2enter.almacenes.modules.inventory.dto.ProductResponseDTO;
 import com.codigo2enter.almacenes.modules.inventory.dto.StockMovementRequestDTO;
@@ -14,6 +16,7 @@ import com.codigo2enter.almacenes.modules.inventory.repository.CategoryRepositor
 import com.codigo2enter.almacenes.modules.inventory.repository.ProductRepository;
 import com.codigo2enter.almacenes.modules.inventory.repository.StockMovementRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -36,6 +39,7 @@ public class ProductServiceImpl implements ProductService {
     private final ProductRepository productRepository;
     private final CategoryRepository categoryRepository;
     private final StockMovementRepository stockMovementRepository;
+    private final UserRepository userRepository;
     private final ProductMapper productMapper;
     private final StockMovementMapper stockMovementMapper;
 
@@ -64,6 +68,7 @@ public class ProductServiceImpl implements ProductService {
         // a @Builder.Default de la entidad.
         Product product = productMapper.toEntity(dto);
         product.setCategory(category);
+        product.setCreatedBy(resolveAuthenticatedUser());
 
         return productMapper.toResponseDTO(productRepository.save(product));
     }
@@ -101,6 +106,8 @@ public class ProductServiceImpl implements ProductService {
 
         // Resuelve y asigna la categoría — si categoryId cambió, se aplica el nuevo.
         product.setCategory(resolveCategory(dto.getCategoryId()));
+        product.setUpdatedAt(java.time.LocalDateTime.now());
+        product.setUpdatedBy(resolveAuthenticatedUser());
 
         return productMapper.toResponseDTO(productRepository.save(product));
     }
@@ -188,11 +195,15 @@ public class ProductServiceImpl implements ProductService {
         productRepository.save(product);
 
         // Registrar el movimiento como bitácora inmutable del Kardex.
+        // createdBy se resuelve desde el JWT para trazabilidad de auditoría.
+        User creator = resolveAuthenticatedUser();
+
         StockMovement movement = StockMovement.builder()
                 .product(product)
                 .quantity(request.getQuantity())
                 .reason(request.getReason())
                 .type(type)
+                .createdBy(creator)
                 .build();
 
         stockMovementRepository.save(movement);
@@ -240,7 +251,10 @@ public class ProductServiceImpl implements ProductService {
      */
     @Override
     public void deactivateProduct(Long id) {
-        findProductOrThrow(id).setActive(false);
+        Product product = findProductOrThrow(id);
+        product.setActive(false);
+        product.setUpdatedAt(java.time.LocalDateTime.now());
+        product.setUpdatedBy(resolveAuthenticatedUser());
     }
 
     /**
@@ -279,6 +293,17 @@ public class ProductServiceImpl implements ProductService {
                 .orElseThrow(() -> new RuntimeException(
                     "Producto con id " + id + " no encontrado."
                 ));
+    }
+
+    /**
+     * Resuelve el usuario autenticado desde el JWT en SecurityContextHolder.
+     * Mismo patrón que PurchaseOrderServiceImpl.resolveAuthenticatedUser().
+     */
+    private User resolveAuthenticatedUser() {
+        String username = SecurityContextHolder.getContext().getAuthentication().getName();
+        return userRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException(
+                        "Usuario autenticado no encontrado en el sistema."));
     }
 
     /**

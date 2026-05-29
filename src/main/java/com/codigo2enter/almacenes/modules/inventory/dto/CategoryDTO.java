@@ -44,4 +44,12 @@ public class CategoryDTO {
      *  El frontend usa este campo para mostrar u ocultar la categoría
      *  en los selectores de asignación de productos. */
     private boolean active;
+
+    /** Campos de auditoría — solo de salida, el cliente nunca los envía en request. */
+    private java.time.LocalDateTime createdAt;
+    private Long   createdById;
+    private String createdByUsername;
+    private java.time.LocalDateTime updatedAt;
+    private Long   updatedById;
+    private String updatedByUsername;
 }

@@ -1,10 +1,13 @@
 package com.codigo2enter.almacenes.modules.inventory.model;
 
+import com.codigo2enter.almacenes.modules.auth.model.User;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+
+import java.time.LocalDateTime;
 
 /**
  * Entidad JPA que representa una categoría de productos en el almacén.
@@ -41,4 +44,24 @@ public class Category {
     @Builder.Default
     @Column(nullable = false)
     private boolean active = true;
+
+    /** Fecha de creación. @Builder.Default garantiza que Hibernate nunca la deje null.
+     *  updatable=false: la fecha de alta es un dato histórico inmutable. */
+    @Builder.Default
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private LocalDateTime createdAt = LocalDateTime.now();
+
+    /** Usuario que creó la categoría. updatable=false — el creador es inmutable. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "created_by", updatable = false)
+    private User createdBy;
+
+    /** Fecha de la última modificación. Null si la categoría nunca fue editada. */
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
+
+    /** Usuario que realizó la última modificación. Null si nunca fue editada. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "updated_by")
+    private User updatedBy;
 }

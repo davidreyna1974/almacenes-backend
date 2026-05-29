@@ -222,6 +222,7 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
 
         order.setStatus(PurchaseOrderStatus.APPROVED);
         order.setApprovedAt(LocalDateTime.now());
+        order.setApprovedBy(resolveAuthenticatedUser());
         order.setUpdatedAt(LocalDateTime.now());
 
         return purchaseOrderMapper.toResponseDTO(order);
@@ -258,6 +259,7 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
 
         order.setStatus(PurchaseOrderStatus.RECEIVED);
         order.setReceivedAt(LocalDateTime.now());
+        order.setReceivedBy(resolveAuthenticatedUser());
         order.setUpdatedAt(LocalDateTime.now());
 
         return purchaseOrderMapper.toResponseDTO(order);
@@ -283,6 +285,7 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
 
         order.setStatus(PurchaseOrderStatus.CANCELLED);
         order.setCancelledAt(LocalDateTime.now());
+        order.setCancelledBy(resolveAuthenticatedUser());
         order.setUpdatedAt(LocalDateTime.now());
 
         return purchaseOrderMapper.toResponseDTO(order);

@@ -1,5 +1,7 @@
 package com.codigo2enter.almacenes.modules.purchases.service;
 
+import com.codigo2enter.almacenes.modules.auth.model.User;
+import com.codigo2enter.almacenes.modules.auth.repository.UserRepository;
 import com.codigo2enter.almacenes.modules.purchases.dto.SupplierDTO;
 import com.codigo2enter.almacenes.modules.purchases.mapper.SupplierMapper;
 import com.codigo2enter.almacenes.modules.purchases.model.PurchaseOrder;
@@ -7,6 +9,7 @@ import com.codigo2enter.almacenes.modules.purchases.model.PurchaseOrderStatus;
 import com.codigo2enter.almacenes.modules.purchases.model.Supplier;
 import com.codigo2enter.almacenes.modules.purchases.repository.PurchaseOrderRepository;
 import com.codigo2enter.almacenes.modules.purchases.repository.SupplierRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -14,6 +17,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.util.Collections;
 import java.util.List;
@@ -26,6 +32,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -35,23 +43,41 @@ import static org.mockito.Mockito.when;
  * Pruebas unitarias para SupplierServiceImpl.
  * Cubre 13 casos: Happy Path, Edge Case y Error Case por cada método.
  * Sin contexto de Spring — Mockito instancia solo la clase bajo prueba.
+ *
+ * SecurityContextHolder se configura en @BeforeEach y se limpia en @AfterEach
+ * para simular el usuario autenticado extraído del JWT en métodos de escritura.
  */
 @ExtendWith(MockitoExtension.class)
 class SupplierServiceImplTest {
 
     @Mock private SupplierRepository      supplierRepository;
     @Mock private PurchaseOrderRepository purchaseOrderRepository;
+    @Mock private UserRepository          userRepository;
     @Mock private SupplierMapper          supplierMapper;
 
     @InjectMocks
     private SupplierServiceImpl supplierService;
 
+    private User        user;
     private SupplierDTO inputDTO;
     private Supplier    entity;
     private SupplierDTO outputDTO;
 
     @BeforeEach
     void setUp() {
+        // SecurityContextHolder — lenient() porque los tests de consulta no lo usan
+        Authentication authentication = mock(Authentication.class);
+        lenient().when(authentication.getName()).thenReturn("operador01");
+        SecurityContext securityContext = mock(SecurityContext.class);
+        lenient().when(securityContext.getAuthentication()).thenReturn(authentication);
+        SecurityContextHolder.setContext(securityContext);
+
+        user = User.builder()
+                .id(1L).username("operador01").password("hashed").build();
+
+        // Stub para resolveAuthenticatedUser() en createSupplier, updateSupplier y deactivateSupplier.
+        lenient().when(userRepository.findByUsername("operador01")).thenReturn(Optional.of(user));
+
         inputDTO = SupplierDTO.builder()
                 .rfc("ABC123456789A")
                 .companyName("Ferretería SA")
@@ -75,13 +101,19 @@ class SupplierServiceImplTest {
                 .build();
     }
 
+    @AfterEach
+    void tearDown() {
+        SecurityContextHolder.clearContext();
+    }
+
     // =========================================================================
     // createSupplier
     // =========================================================================
 
     /**
      * Happy Path: RFC y razón social únicos → proveedor creado correctamente.
-     * Verifica que ambas validaciones pasan y save() se invoca exactamente una vez.
+     * Verifica que ambas validaciones pasan, save() se invoca exactamente una vez
+     * y createdBy queda asignado al usuario autenticado.
      */
     @Test
     @DisplayName("createSupplier: debe crear el proveedor cuando RFC y razón social son únicos")
@@ -99,6 +131,7 @@ class SupplierServiceImplTest {
         // ASSERT
         assertNotNull(result);
         assertEquals("ABC123456789A", result.getRfc());
+        assertEquals(user, entity.getCreatedBy());
         verify(supplierRepository, times(1)).save(entity);
     }
 
@@ -224,7 +257,7 @@ class SupplierServiceImplTest {
 
     /**
      * Happy Path: el proveedor actualiza sus propios datos sin cambiar RFC ni nombre.
-     * findByRfc y findByCompanyName devuelven el mismo proveedor (id=1L) → sin conflicto.
+     * Verifica que updatedAt y updatedBy quedan asignados tras la actualización.
      */
     @Test
     @DisplayName("updateSupplier: debe actualizar el proveedor exitosamente")
@@ -240,6 +273,8 @@ class SupplierServiceImplTest {
 
         // ASSERT
         assertNotNull(result);
+        assertNotNull(entity.getUpdatedAt());
+        assertEquals(user, entity.getUpdatedBy());
     }
 
     /**
@@ -295,8 +330,8 @@ class SupplierServiceImplTest {
     // =========================================================================
 
     /**
-     * Happy Path: sin órdenes activas → active=false aplicado (soft delete).
-     * Hibernate dirty-checking persistirá el cambio al cerrar la transacción.
+     * Happy Path: sin órdenes activas → active=false aplicado y updatedAt/updatedBy asignados.
+     * Hibernate dirty-checking persistirá los cambios al cerrar la transacción.
      */
     @Test
     @DisplayName("deactivateSupplier: debe desactivar el proveedor cuando no tiene órdenes activas")
@@ -309,8 +344,10 @@ class SupplierServiceImplTest {
         // ACT
         supplierService.deactivateSupplier(1L);
 
-        // ASSERT — setActive(false) fue aplicado sobre la entidad
+        // ASSERT
         assertFalse(entity.isActive());
+        assertNotNull(entity.getUpdatedAt());
+        assertEquals(user, entity.getUpdatedBy());
         verify(purchaseOrderRepository, times(1)).findActiveOrdersBySupplier(1L);
     }
 

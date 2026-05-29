@@ -50,4 +50,11 @@ public class StockMovementResponseDTO {
     /** Nombre del producto — evita que Angular tenga que hacer una segunda
      *  petición para resolver el nombre a partir del productId. */
     private String productName;
+
+    /** ID del usuario que registró el movimiento. Campo de auditoría. */
+    private Long createdById;
+
+    /** Username del usuario que registró el movimiento — aplanado para
+     *  mostrar directamente en el historial del Kardex sin petición adicional. */
+    private String createdByUsername;
 }

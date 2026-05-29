@@ -10,9 +10,12 @@ import com.codigo2enter.almacenes.modules.inventory.model.Category;
 import com.codigo2enter.almacenes.modules.inventory.model.MovementType;
 import com.codigo2enter.almacenes.modules.inventory.model.Product;
 import com.codigo2enter.almacenes.modules.inventory.model.StockMovement;
+import com.codigo2enter.almacenes.modules.auth.model.User;
+import com.codigo2enter.almacenes.modules.auth.repository.UserRepository;
 import com.codigo2enter.almacenes.modules.inventory.repository.CategoryRepository;
 import com.codigo2enter.almacenes.modules.inventory.repository.ProductRepository;
 import com.codigo2enter.almacenes.modules.inventory.repository.StockMovementRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -20,6 +23,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -31,6 +37,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -53,6 +61,7 @@ class ProductServiceImplTest {
     @Mock private ProductRepository       productRepository;
     @Mock private CategoryRepository      categoryRepository;
     @Mock private StockMovementRepository stockMovementRepository;
+    @Mock private UserRepository          userRepository;
     @Mock private ProductMapper           productMapper;
     @Mock private StockMovementMapper     stockMovementMapper;
 
@@ -65,6 +74,7 @@ class ProductServiceImplTest {
 
     private Category           category;
     private Product            product;
+    private User               user;
     private ProductRequestDTO  requestDTO;
     private ProductResponseDTO responseDTO;
 
@@ -75,6 +85,20 @@ class ProductServiceImplTest {
      */
     @BeforeEach
     void setUp() {
+        // SecurityContextHolder — lenient() porque los tests de solo lectura no lo usan
+        Authentication authentication = mock(Authentication.class);
+        lenient().when(authentication.getName()).thenReturn("operador01");
+        SecurityContext securityContext = mock(SecurityContext.class);
+        lenient().when(securityContext.getAuthentication()).thenReturn(authentication);
+        SecurityContextHolder.setContext(securityContext);
+
+        user = User.builder()
+                .id(1L).username("operador01").password("hashed").build();
+
+        // Stub para resolveAuthenticatedUser() en createProduct, updateProduct,
+        // deactivateProduct y registerStockMovement.
+        lenient().when(userRepository.findByUsername("operador01")).thenReturn(Optional.of(user));
+
         category = Category.builder()
                 .id(1L)
                 .name("Herramientas")
@@ -139,6 +163,7 @@ class ProductServiceImplTest {
         assertNotNull(result);
         assertEquals("TOOL-001", result.getSku());
         assertEquals("Herramientas", result.getCategoryName());
+        assertEquals(user, product.getCreatedBy());
         verify(productRepository, times(1)).save(product);
     }
 
@@ -200,6 +225,8 @@ class ProductServiceImplTest {
 
         // ASSERT
         assertNotNull(result);
+        assertNotNull(product.getUpdatedAt());
+        assertEquals(user, product.getUpdatedBy());
         verify(productMapper, times(1)).updateFromDTO(requestDTO, product);
     }
 
@@ -287,6 +314,7 @@ class ProductServiceImplTest {
                 .build();
 
         when(productRepository.findById(1L)).thenReturn(Optional.of(product));
+        when(userRepository.findByUsername("operador01")).thenReturn(Optional.of(user));
         when(productRepository.save(product)).thenReturn(product);
 
         // ACT
@@ -310,6 +338,7 @@ class ProductServiceImplTest {
                 .build();
 
         when(productRepository.findById(1L)).thenReturn(Optional.of(product));
+        when(userRepository.findByUsername("operador01")).thenReturn(Optional.of(user));
         when(productRepository.save(product)).thenReturn(product);
 
         // ACT
@@ -487,8 +516,10 @@ class ProductServiceImplTest {
         // ACT
         productService.deactivateProduct(1L);
 
-        // ASSERT — Hibernate dirty-checking persiste este cambio al cerrar la transacción
+        // ASSERT — Hibernate dirty-checking persiste estos cambios al cerrar la transacción
         assertFalse(product.isActive());
+        assertNotNull(product.getUpdatedAt());
+        assertEquals(user, product.getUpdatedBy());
     }
 
     /**

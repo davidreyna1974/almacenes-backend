@@ -37,8 +37,12 @@ public interface ProductMapper {
      * @param product entidad persistida con su relación Category cargada
      * @return ProductResponseDTO con categoryId y categoryName resueltos
      */
-    @Mapping(source = "category.id",   target = "categoryId")
-    @Mapping(source = "category.name", target = "categoryName")
+    @Mapping(source = "category.id",        target = "categoryId")
+    @Mapping(source = "category.name",      target = "categoryName")
+    @Mapping(source = "createdBy.id",       target = "createdById")
+    @Mapping(source = "createdBy.username", target = "createdByUsername")
+    @Mapping(source = "updatedBy.id",       target = "updatedById")
+    @Mapping(source = "updatedBy.username", target = "updatedByUsername")
     ProductResponseDTO toResponseDTO(Product product);
 
     /**
@@ -69,6 +73,9 @@ public interface ProductMapper {
     @Mapping(target = "id",        ignore = true)
     @Mapping(target = "active",    ignore = true)
     @Mapping(target = "createdAt", ignore = true)
+    @Mapping(target = "createdBy", ignore = true)
+    @Mapping(target = "updatedAt", ignore = true)
+    @Mapping(target = "updatedBy", ignore = true)
     @Mapping(target = "category",  ignore = true)
     Product toEntity(ProductRequestDTO dto);
 
@@ -84,6 +91,9 @@ public interface ProductMapper {
     @Mapping(target = "id",        ignore = true)
     @Mapping(target = "active",    ignore = true)
     @Mapping(target = "createdAt", ignore = true)
+    @Mapping(target = "createdBy", ignore = true)
+    @Mapping(target = "updatedAt", ignore = true)
+    @Mapping(target = "updatedBy", ignore = true)
     @Mapping(target = "category",  ignore = true)
     void updateFromDTO(ProductRequestDTO dto, @MappingTarget Product product);
 }

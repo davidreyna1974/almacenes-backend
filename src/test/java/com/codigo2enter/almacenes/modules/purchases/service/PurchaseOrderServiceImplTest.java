@@ -103,6 +103,10 @@ class PurchaseOrderServiceImplTest {
         user = User.builder()
                 .id(1L).username("operador01").password("hashed").build();
 
+        // Stub para resolveAuthenticatedUser() en approveOrder, receiveOrder y cancelOrder.
+        // lenient() porque solo lo usan esos tres métodos; los tests de consulta no lo invocan.
+        lenient().when(userRepository.findByUsername("operador01")).thenReturn(Optional.of(user));
+
         detail = PurchaseOrderDetail.builder()
                 .id(1L).quantity(10)
                 .unitPrice(new BigDecimal("89.99"))
@@ -416,6 +420,7 @@ class PurchaseOrderServiceImplTest {
         assertEquals(PurchaseOrderStatus.APPROVED, order.getStatus());
         assertNotNull(order.getApprovedAt());
         assertNotNull(order.getUpdatedAt());
+        assertEquals(user, order.getApprovedBy());
     }
 
     /**
@@ -476,6 +481,7 @@ class PurchaseOrderServiceImplTest {
         assertEquals(PurchaseOrderStatus.RECEIVED, approvedOrder.getStatus());
         assertNotNull(approvedOrder.getReceivedAt());
         assertNotNull(approvedOrder.getUpdatedAt());
+        assertEquals(user, approvedOrder.getReceivedBy());
 
         // Verifica contenido exacto del StockMovementRequestDTO enviado a inventory
         verify(productService, times(1)).registerStockMovement(
@@ -540,6 +546,7 @@ class PurchaseOrderServiceImplTest {
         // ASSERT
         assertEquals(PurchaseOrderStatus.CANCELLED, order.getStatus());
         assertNotNull(order.getCancelledAt());
+        assertEquals(user, order.getCancelledBy());
     }
 
     /**

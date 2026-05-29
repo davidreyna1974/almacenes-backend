@@ -6,6 +6,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import com.codigo2enter.almacenes.modules.auth.model.User;
 import com.codigo2enter.almacenes.modules.purchases.model.Supplier;
 
 import java.math.BigDecimal;
@@ -89,4 +90,21 @@ public class Product {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "supplier_id")
     private Supplier supplier;
+
+    /** Usuario que registró el producto en el catálogo.
+     *  updatable=false garantiza que Hibernate nunca modifique este campo
+     *  después de la inserción — el creador original es inmutable. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "created_by", updatable = false)
+    private User createdBy;
+
+    /** Fecha de la última modificación del producto. Null si nunca fue editado.
+     *  Actualizado en updateProduct y deactivateProduct. */
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
+
+    /** Usuario que realizó la última modificación. Null si el producto nunca fue editado. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "updated_by")
+    private User updatedBy;
 }

@@ -49,6 +49,22 @@ public class ProductResponseDTO {
 
     private LocalDateTime createdAt;
 
+    /** ID del usuario que registró el producto. Campo de auditoría. */
+    private Long   createdById;
+
+    /** Username del usuario que registró el producto — aplanado para
+     *  mostrar directamente sin petición adicional al servidor. */
+    private String createdByUsername;
+
+    /** Fecha de la última modificación. Null si el producto nunca fue editado. */
+    private LocalDateTime updatedAt;
+
+    /** ID del último usuario que modificó el producto. Null si nunca fue editado. */
+    private Long   updatedById;
+
+    /** Username del último editor — aplanado para el historial de cambios. */
+    private String updatedByUsername;
+
     /** ID de la categoría — útil para el frontend cuando necesita pre-seleccionar
      *  la categoría en formularios de edición. */
     private Long categoryId;

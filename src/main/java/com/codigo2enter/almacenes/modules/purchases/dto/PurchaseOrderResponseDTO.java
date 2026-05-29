@@ -67,6 +67,19 @@ public class PurchaseOrderResponseDTO {
     /** Asignado cuando la orden transiciona a CANCELLED. Null si no fue cancelada. */
     private LocalDateTime cancelledAt;
 
+    /** Usuario que aprobó la orden — aplanado para mostrar directamente en el
+     *  historial sin petición adicional. Null si la orden aún no fue aprobada. */
+    private Long   approvedById;
+    private String approvedByUsername;
+
+    /** Usuario que marcó la orden como recibida. Null si aún no fue recibida. */
+    private Long   receivedById;
+    private String receivedByUsername;
+
+    /** Usuario que canceló la orden. Null si la orden no fue cancelada. */
+    private Long   cancelledById;
+    private String cancelledByUsername;
+
     /** Líneas de detalle con productos, cantidades, precios y subtotales. */
     private List<PurchaseOrderDetailResponseDTO> details;
 }

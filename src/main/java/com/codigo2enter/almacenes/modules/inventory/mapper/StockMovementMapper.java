@@ -42,8 +42,10 @@ public interface StockMovementMapper {
      * @param movement entidad de movimiento con su relación Product cargada
      * @return DTO listo para serializar en el historial del Kardex
      */
-    @Mapping(source = "product.id",   target = "productId")
-    @Mapping(source = "product.name", target = "productName")
+    @Mapping(source = "product.id",        target = "productId")
+    @Mapping(source = "product.name",      target = "productName")
+    @Mapping(source = "createdBy.id",      target = "createdById")
+    @Mapping(source = "createdBy.username", target = "createdByUsername")
     StockMovementResponseDTO toResponseDTO(StockMovement movement);
 
     /**

@@ -107,4 +107,45 @@ public class Product {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "updated_by")
     private User updatedBy;
+
+    /** Unidades comprometidas con órdenes de venta en estado APPROVED no entregadas.
+     *  Se incrementa en approveOrder() y se decrementa en deliverOrder() o en
+     *  cancelOrder() cuando la orden estaba APPROVED al cancelarse.
+     *
+     *  Invariante que el código garantiza en todo momento:
+     *    0 <= reservedStock <= currentStock
+     *    availableStock = currentStock - reservedStock >= 0
+     *
+     *  @Builder.Default = 0 para que los tests que construyen Product con el
+     *  builder no necesiten especificar este campo explícitamente. */
+    @Builder.Default
+    @Column(name = "reserved_stock", nullable = false)
+    private int reservedStock = 0;
+
+    /** Campo de control de Optimistic Locking de Hibernate.
+     *  Hibernate lo incrementa automáticamente en cada UPDATE.
+     *  Si dos transacciones concurrentes intentan modificar el mismo producto
+     *  (e.g., dos approveOrder() simultáneos), la segunda recibe
+     *  OptimisticLockingFailureException → HTTP 409 con mensaje claro.
+     *
+     *  Sin @Builder.Default — null antes del primer persist es el comportamiento
+     *  correcto que Hibernate espera para el campo de versión. */
+    @Version
+    @Column(nullable = false)
+    private Long version;
+
+    /** Costo unitario de compra del producto.
+     *  Fuente para poblar SaleOrderDetail.unitCost al crear un detalle de venta:
+     *  el servicio copia este valor al detalle para preservar el costo histórico,
+     *  igual que unit_price preserva el precio pactado en la venta.
+     *
+     *  Nullable por diseño — captura progresiva:
+     *    a) Productos existentes no tienen costo definido aún.
+     *    b) Nuevos productos pueden registrarse sin costo y completarse después.
+     *    c) El futuro módulo financiero calculará margen solo donde != null.
+     *
+     *  Si el costo cambia (renegociación con proveedor), las ventas históricas
+     *  conservan su costo original en SaleOrderDetail.unitCost. */
+    @Column(name = "unit_cost")
+    private BigDecimal unitCost;
 }

@@ -183,12 +183,26 @@ public class ProductServiceImpl implements ProductService {
             );
         }
 
-        // Validar que una salida no genere stock negativo.
-        if (type == MovementType.OUT && product.getCurrentStock() - request.getQuantity() < 0) {
-            throw new RuntimeException(
-                "Stock insuficiente. Disponible: " + product.getCurrentStock()
-                + ", solicitado: " + request.getQuantity() + "."
-            );
+        // Validar que una salida no consuma stock reservado para órdenes de venta.
+        // Con la introducción de reservedStock, la validación compara contra el
+        // stock DISPONIBLE (físico - reservado), no el físico total.
+        //
+        // Justificación: un OUT manual (merma, ajuste) no puede consumir unidades
+        // que ya están comprometidas con órdenes APPROVED. Si se permitiera,
+        // deliverOrder() fallaría después por falta de stock físico.
+        //
+        // Los movimientos OUT generados por deliverOrder() también pasan por aquí,
+        // pero en ese flujo la reserva ya fue liberada ANTES de llamar a este método,
+        // por lo que available incluye las unidades liberadas y la validación pasa.
+        if (type == MovementType.OUT) {
+            int available = product.getCurrentStock() - product.getReservedStock();
+            if (available - request.getQuantity() < 0) {
+                throw new RuntimeException(
+                    "Stock disponible insuficiente. " +
+                    "Disponible (no reservado): " + available +
+                    ", solicitado: " + request.getQuantity() + "."
+                );
+            }
         }
 
         // Calcular y aplicar el nuevo nivel de stock según el tipo de movimiento.

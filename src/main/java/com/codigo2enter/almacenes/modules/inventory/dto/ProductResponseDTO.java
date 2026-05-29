@@ -49,6 +49,21 @@ public class ProductResponseDTO {
 
     private LocalDateTime createdAt;
 
+    /** Unidades comprometidas con órdenes de venta APPROVED no entregadas.
+     *  El operador de ventas debe consultar availableStock, no currentStock,
+     *  para saber cuánto puede realmente venderse. */
+    private int reservedStock;
+
+    /** currentStock - reservedStock: unidades disponibles para nueva venta.
+     *  Calculado por el mapper — nunca se almacena en BD.
+     *  Criterio de éxito: availableStock + reservedStock == currentStock. */
+    private int availableStock;
+
+    /** Costo unitario de compra. Null si no ha sido definido.
+     *  El futuro módulo financiero usa este campo junto con unit_price
+     *  de SaleOrderDetail para calcular margen = unitPrice - unitCost. */
+    private BigDecimal unitCost;
+
     /** ID del usuario que registró el producto. Campo de auditoría. */
     private Long   createdById;
 

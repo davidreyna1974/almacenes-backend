@@ -5,6 +5,7 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
+import jakarta.validation.constraints.PositiveOrZero;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -75,4 +76,11 @@ public class ProductRequestDTO {
      *  la entidad Supplier con su relación completa. */
     @NotNull(message = "El proveedor es obligatorio")
     private Long supplierId;
+
+    /** Costo unitario de compra del producto. Opcional — nullable para captura
+     *  progresiva. Un costo de 0.00 es válido (productos sin costo de adquisición).
+     *  Este valor se copia automáticamente a SaleOrderDetail.unitCost al crear
+     *  un detalle de venta, preservando el costo histórico para análisis futuros. */
+    @DecimalMin(value = "0.00", message = "El costo no puede ser negativo")
+    private BigDecimal unitCost;
 }

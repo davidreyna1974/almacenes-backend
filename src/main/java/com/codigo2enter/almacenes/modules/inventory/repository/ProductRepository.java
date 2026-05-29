@@ -51,18 +51,40 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     boolean existsBySku(String sku);
 
     /**
-     * Consulta JPQL personalizada que retorna todos los productos activos
-     * cuyo stock actual es menor o igual a su umbral mínimo configurado.
+     * Retorna productos activos cuyo stock DISPONIBLE (físico - reservado)
+     * es menor o igual al umbral mínimo configurado.
      *
-     * Se usa JPQL en lugar de un query method derivado porque la condición
-     * compara dos campos de la misma entidad (currentStock <= minimumStock),
-     * algo que la nomenclatura de Spring Data no puede expresar directamente.
+     * Se actualiza con la introducción de reservedStock: la alerta de
+     * reposición debe basarse en lo que realmente puede venderse, no en el
+     * stock físico total. Un producto con currentStock=12, reservedStock=10,
+     * minimumStock=5 tiene solo 2 disponibles — debe aparecer en la alerta
+     * aunque su stock físico supere el mínimo.
      *
-     * El resultado alimenta el endpoint GET /products/low-stock, que Angular
-     * usa para mostrar alertas visuales de productos que requieren reposición.
+     * Criterio de éxito: un producto con availableStock <= minimumStock
+     * aparece en el resultado aunque currentStock > minimumStock.
      *
-     * @return lista de productos activos con stock en nivel crítico
+     * @return lista de productos activos con stock disponible en nivel crítico
      */
-    @Query("SELECT p FROM Product p WHERE p.currentStock <= p.minimumStock AND p.active = true")
+    @Query("SELECT p FROM Product p " +
+           "WHERE (p.currentStock - p.reservedStock) <= p.minimumStock " +
+           "AND p.active = true")
     List<Product> findLowStockProducts();
+
+    /**
+     * Retorna todos los productos activos con reservas vigentes
+     * (reservedStock > 0), ordenados de mayor a menor reservedStock.
+     *
+     * Usado por ReservationServiceImpl para construir la vista de productos
+     * con stock comprometido. El índice parcial idx_products_reserved_stock
+     * (WHERE reserved_stock > 0) hace esta consulta eficiente.
+     *
+     * Criterio de éxito: la lista solo incluye productos donde reservedStock > 0.
+     * Si no hay reservas activas, retorna lista vacía.
+     *
+     * @return productos con reservas, ordenados de mayor a menor reservedStock
+     */
+    @Query("SELECT p FROM Product p " +
+           "WHERE p.reservedStock > 0 AND p.active = true " +
+           "ORDER BY p.reservedStock DESC")
+    List<Product> findProductsWithActiveReservations();
 }

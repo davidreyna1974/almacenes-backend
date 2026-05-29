@@ -15,6 +15,8 @@ import com.codigo2enter.almacenes.modules.inventory.model.StockMovement;
 import com.codigo2enter.almacenes.modules.inventory.repository.CategoryRepository;
 import com.codigo2enter.almacenes.modules.inventory.repository.ProductRepository;
 import com.codigo2enter.almacenes.modules.inventory.repository.StockMovementRepository;
+import com.codigo2enter.almacenes.modules.purchases.model.Supplier;
+import com.codigo2enter.almacenes.modules.purchases.repository.SupplierRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -40,6 +42,7 @@ public class ProductServiceImpl implements ProductService {
     private final CategoryRepository categoryRepository;
     private final StockMovementRepository stockMovementRepository;
     private final UserRepository userRepository;
+    private final SupplierRepository supplierRepository;
     private final ProductMapper productMapper;
     private final StockMovementMapper stockMovementMapper;
 
@@ -68,6 +71,7 @@ public class ProductServiceImpl implements ProductService {
         // a @Builder.Default de la entidad.
         Product product = productMapper.toEntity(dto);
         product.setCategory(category);
+        product.setSupplier(resolveSupplier(dto.getSupplierId()));
         product.setCreatedBy(resolveAuthenticatedUser());
 
         return productMapper.toResponseDTO(productRepository.save(product));
@@ -104,8 +108,9 @@ public class ProductServiceImpl implements ProductService {
         // minimumStock, status, supplierId. Ignora id, active, createdAt y category.
         productMapper.updateFromDTO(dto, product);
 
-        // Resuelve y asigna la categoría — si categoryId cambió, se aplica el nuevo.
+        // Resuelve y asigna categoría y proveedor — si cambiaron en el request, se aplican los nuevos.
         product.setCategory(resolveCategory(dto.getCategoryId()));
+        product.setSupplier(resolveSupplier(dto.getSupplierId()));
         product.setUpdatedAt(java.time.LocalDateTime.now());
         product.setUpdatedBy(resolveAuthenticatedUser());
 
@@ -315,6 +320,18 @@ public class ProductServiceImpl implements ProductService {
         return categoryRepository.findById(categoryId)
                 .orElseThrow(() -> new RuntimeException(
                     "Categoría con id " + categoryId + " no encontrada."
+                ));
+    }
+
+    /**
+     * Busca un proveedor por ID o lanza RuntimeException si no existe.
+     * Usado en createProduct y updateProduct para validar que el supplierId
+     * del DTO corresponde a un proveedor real antes de asignarlo al producto.
+     */
+    private Supplier resolveSupplier(Long supplierId) {
+        return supplierRepository.findById(supplierId)
+                .orElseThrow(() -> new RuntimeException(
+                    "Proveedor con id " + supplierId + " no encontrado."
                 ));
     }
 }

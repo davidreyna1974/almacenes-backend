@@ -11,6 +11,11 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+
+import java.util.List;
 
 /**
  * Configuración central de Spring Security para la aplicación.
@@ -62,6 +67,13 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
+            // 0. CORS — permite peticiones desde Postman Web y futuros clientes Angular.
+            //    Se habilita aquí para que Spring Security aplique los headers CORS
+            //    antes que cualquier otro filtro de seguridad (incluyendo el 403 por JWT).
+            //    Para desarrollo se permite cualquier origen; en producción se restringe
+            //    al dominio del frontend.
+            .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+
             // 1. DESHABILITAR CSRF
             //    CSRF (Cross-Site Request Forgery) es un mecanismo de protección basado
             //    en tokens de sesión. En APIs REST stateless con JWT, este mecanismo
@@ -105,5 +117,23 @@ public class SecurityConfig {
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
+    }
+
+    /**
+     * Configuración CORS para desarrollo — permite cualquier origen, método y header.
+     * Habilita el flujo OPTIONS (preflight) requerido por los navegadores antes de
+     * enviar peticiones cross-origin con headers personalizados como Authorization.
+     * En producción se reemplaza la lista de orígenes por el dominio del frontend.
+     */
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration config = new CorsConfiguration();
+        config.setAllowedOriginPatterns(List.of("*"));
+        config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
+        config.setAllowedHeaders(List.of("*"));
+        config.setAllowCredentials(true);
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", config);
+        return source;
     }
 }

@@ -112,21 +112,22 @@ public class PurchaseOrder {
     private LocalDateTime cancelledAt;
 
     /** Usuario que aprobó la orden. Null hasta que la orden pasa a APPROVED.
-     *  updatable=false: la aprobación es un evento inmutable — una vez registrada
-     *  no puede reasignarse a otro usuario. */
+     *  Sin updatable=false porque el campo comienza null y se establece por primera
+     *  vez en el UPDATE de aprobación. La inmutabilidad se garantiza a nivel de
+     *  negocio en PurchaseOrderServiceImpl (no se puede re-aprobar una orden). */
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "approved_by", updatable = false)
+    @JoinColumn(name = "approved_by")
     private User approvedBy;
 
     /** Usuario que marcó la orden como recibida físicamente.
-     *  Null hasta que la orden pasa a RECEIVED. updatable=false por misma razón. */
+     *  Null hasta que la orden pasa a RECEIVED. Mismo razonamiento que approvedBy. */
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "received_by", updatable = false)
+    @JoinColumn(name = "received_by")
     private User receivedBy;
 
     /** Usuario que canceló la orden. Null en órdenes no canceladas.
-     *  updatable=false: la cancelación es un evento inmutable de auditoría. */
+     *  Mismo razonamiento que approvedBy. */
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "cancelled_by", updatable = false)
+    @JoinColumn(name = "cancelled_by")
     private User cancelledBy;
 }

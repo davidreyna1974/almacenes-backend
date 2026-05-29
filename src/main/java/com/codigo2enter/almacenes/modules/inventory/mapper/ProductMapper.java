@@ -39,6 +39,7 @@ public interface ProductMapper {
      */
     @Mapping(source = "category.id",        target = "categoryId")
     @Mapping(source = "category.name",      target = "categoryName")
+    @Mapping(source = "supplier.id",        target = "supplierId")
     @Mapping(source = "createdBy.id",       target = "createdById")
     @Mapping(source = "createdBy.username", target = "createdByUsername")
     @Mapping(source = "updatedBy.id",       target = "updatedById")
@@ -77,13 +78,14 @@ public interface ProductMapper {
     @Mapping(target = "updatedAt", ignore = true)
     @Mapping(target = "updatedBy", ignore = true)
     @Mapping(target = "category",  ignore = true)
+    @Mapping(target = "supplier",  ignore = true)
     Product toEntity(ProductRequestDTO dto);
 
     /**
      * Actualiza una entidad Product existente con los datos del DTO.
      * Mismo conjunto de ignores que toEntity por las mismas razones.
-     * El servicio se encarga de resolver y actualizar la relación Category
-     * si categoryId cambió en el request.
+     * El servicio se encarga de resolver y actualizar Category y Supplier
+     * si sus IDs cambiaron en el request.
      *
      * @param dto     datos nuevos enviados por el cliente
      * @param product entidad existente recuperada de la base de datos
@@ -95,5 +97,6 @@ public interface ProductMapper {
     @Mapping(target = "updatedAt", ignore = true)
     @Mapping(target = "updatedBy", ignore = true)
     @Mapping(target = "category",  ignore = true)
+    @Mapping(target = "supplier",  ignore = true)
     void updateFromDTO(ProductRequestDTO dto, @MappingTarget Product product);
 }

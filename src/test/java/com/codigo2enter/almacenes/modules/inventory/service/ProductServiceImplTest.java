@@ -15,6 +15,8 @@ import com.codigo2enter.almacenes.modules.auth.repository.UserRepository;
 import com.codigo2enter.almacenes.modules.inventory.repository.CategoryRepository;
 import com.codigo2enter.almacenes.modules.inventory.repository.ProductRepository;
 import com.codigo2enter.almacenes.modules.inventory.repository.StockMovementRepository;
+import com.codigo2enter.almacenes.modules.purchases.model.Supplier;
+import com.codigo2enter.almacenes.modules.purchases.repository.SupplierRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -62,6 +64,7 @@ class ProductServiceImplTest {
     @Mock private CategoryRepository      categoryRepository;
     @Mock private StockMovementRepository stockMovementRepository;
     @Mock private UserRepository          userRepository;
+    @Mock private SupplierRepository      supplierRepository;
     @Mock private ProductMapper           productMapper;
     @Mock private StockMovementMapper     stockMovementMapper;
 
@@ -75,6 +78,7 @@ class ProductServiceImplTest {
     private Category           category;
     private Product            product;
     private User               user;
+    private Supplier           supplier;
     private ProductRequestDTO  requestDTO;
     private ProductResponseDTO responseDTO;
 
@@ -95,9 +99,12 @@ class ProductServiceImplTest {
         user = User.builder()
                 .id(1L).username("operador01").password("hashed").build();
 
-        // Stub para resolveAuthenticatedUser() en createProduct, updateProduct,
-        // deactivateProduct y registerStockMovement.
+        supplier = Supplier.builder()
+                .id(1L).rfc("FERN123456").companyName("Ferretería SA").active(true).build();
+
+        // Stubs para resolveAuthenticatedUser() y resolveSupplier() en métodos de escritura.
         lenient().when(userRepository.findByUsername("operador01")).thenReturn(Optional.of(user));
+        lenient().when(supplierRepository.findById(1L)).thenReturn(Optional.of(supplier));
 
         category = Category.builder()
                 .id(1L)

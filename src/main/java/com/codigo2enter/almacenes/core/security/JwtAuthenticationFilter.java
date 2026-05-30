@@ -72,10 +72,16 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         String token = authHeader.substring(7);
 
         // --- 4. Recuperar el username del payload del token ---
-        // extractUsername parsea el claim 'sub' del JWT sin verificar la firma aún.
-        // Si el token está malformado, lanzará una excepción que dejará
-        // el contexto sin autenticación, y Spring Security rechazará el acceso.
-        String username = jwtUtils.extractUsername(token);
+        // Si el token está malformado o su firma es inválida, extractUsername lanza
+        // una excepción. La capturamos y pasamos la petición sin autenticar —
+        // Spring Security la rechazará con 403 al llegar a la ruta protegida.
+        String username;
+        try {
+            username = jwtUtils.extractUsername(token);
+        } catch (Exception e) {
+            filterChain.doFilter(request, response);
+            return;
+        }
 
         // --- 5. Validar el token y registrar la autenticación ---
         // La doble condición evita sobreescribir una autenticación que ya

@@ -1,0 +1,990 @@
+================================================================================
+PROPUESTA DE REFACTORIZACIÓN — MÓDULO AUTH: ROLES Y PERMISOS (RBAC)
+Proyecto: Sistema de Gestión de Almacenes (almacen_db)
+Fecha: 2026-05-30
+================================================================================
+
+ÍNDICE
+------
+1.  Situación actual — análisis del estado de partida
+2.  Decisiones de diseño fundamentales
+3.  Roles del sistema — definición y justificación
+4.  Matriz de autorización por endpoint
+5.  Esquema de base de datos — cambios requeridos
+6.  Cambios por capa
+    6.1  JwtAuthenticationFilter (core/security)
+    6.2  SecurityConfig (core/security)
+    6.3  Entidad User
+    6.4  UserRepository
+    6.5  DTOs nuevos y modificados
+    6.6  UserService / UserServiceImpl
+    6.7  UserController
+7.  Plan de implementación por fases
+8.  Plan de pruebas
+9.  Criterios de éxito globales
+10. Riesgos y mitigaciones
+11. Impacto en módulos existentes
+
+
+================================================================================
+1. SITUACIÓN ACTUAL — ANÁLISIS DEL ESTADO DE PARTIDA
+================================================================================
+
+1.1  BASE DE DATOS
+------------------
+Tabla users (sin updated_at, sin updated_by):
+  id, username, password, email, active, created_at
+
+Tabla roles (ya tiene ROLE_ADMIN y ROLE_WAREHOUSEMAN):
+  id=1  ROLE_ADMIN        ← existe pero ningún usuario lo tiene asignado
+  id=2  ROLE_WAREHOUSEMAN ← único rol asignado actualmente
+
+Tabla user_roles: ON DELETE CASCADE en ambas FK. Correcta.
+
+Roles faltantes: ROLE_MANAGER, ROLE_SALES.
+
+1.2  CÓDIGO JAVA
+----------------
+JwtAuthenticationFilter:
+  - Extrae username del token → correcto.
+  - NO extrae roles del token → los carga como lista vacía (Collections.emptyList()).
+  - Consecuencia: `Authentication.getAuthorities()` siempre vacío → hasRole() siempre falla.
+
+SecurityConfig:
+  - Única regla: anyRequest().authenticated() → sin distinción por rol.
+  - Sin @EnableMethodSecurity → no se pueden usar @PreAuthorize en métodos.
+
+UserServiceImpl:
+  - registerUser(): público, asigna ROLE_WAREHOUSEMAN a cualquier nuevo usuario.
+  - login(): correcto.
+  - Sin gestión de usuarios (no hay CRUD de usuarios, ni cambio de roles).
+
+UserController:
+  - Solo POST /auth/register y POST /auth/login.
+  - Sin endpoints de gestión de usuarios.
+
+1.3  BRECHA CRÍTICA
+-------------------
+El sistema no puede diferenciar qué operaciones puede hacer cada usuario.
+Actualmente cualquier usuario autenticado puede:
+  - Aprobar órdenes de compra (debería requerir MANAGER o ADMIN)
+  - Crear productos (debería requerir MANAGER o ADMIN)
+  - Cancelar ventas (debería requerir control)
+  - Gestionar usuarios (no existe la funcionalidad)
+
+
+================================================================================
+2. DECISIONES DE DISEÑO FUNDAMENTALES
+================================================================================
+
+DECISIÓN 1 — Registro de usuarios: de público a administrado
+  ANTES: cualquiera puede registrarse en POST /auth/register → obtiene ROLE_WAREHOUSEMAN.
+  DESPUÉS: solo ADMIN puede crear usuarios con el rol que corresponda.
+  JUSTIFICACIÓN: un sistema de gestión de almacenes de producción no debe permitir
+  autoregistro. El inventario, las ventas y las compras son operaciones críticas
+  de negocio — el acceso debe ser administrado explícitamente.
+  MIGRACIÓN: POST /auth/register se convierte en POST /api/v1/auth/users (ADMIN only).
+  El endpoint de login permanece público.
+
+DECISIÓN 2 — Estrategia de autorización: URL-based en SecurityConfig
+  Se usarán reglas URL en SecurityConfig.authorizeHttpRequests() en lugar de
+  @PreAuthorize en métodos de servicio/controlador.
+  JUSTIFICACIÓN: las reglas centralizadas en SecurityConfig son auditables en
+  un solo lugar, más fáciles de testear con SecurityFilterTest (Tipo B*), y
+  no contaminan el código de negocio con anotaciones de seguridad.
+  @PreAuthorize se reserva para casos que no pueden expresarse con patrones URL.
+
+DECISIÓN 3 — Roles extraídos del JWT, no consultados en BD por request
+  El JwtAuthenticationFilter extrae los roles del claim 'roles' del token
+  y los convierte a GrantedAuthority. No se hace una consulta a users/roles
+  por cada request.
+  JUSTIFICACIÓN: el sistema es stateless (SessionCreationPolicy.STATELESS).
+  Consultar la BD en cada request afecta la latencia y no es compatible con
+  la arquitectura JWT. Si los roles de un usuario cambian, debe iniciar sesión
+  de nuevo para obtener un token actualizado — comportamiento estándar en JWT.
+
+DECISIÓN 4 — Soft delete para usuarios (active=false)
+  Los usuarios no se eliminan físicamente. La columna `active` ya existe en `users`.
+  JUSTIFICACIÓN: los usuarios tienen FK en created_by/updated_by de todos los
+  módulos. Una eliminación física violaría la integridad referencial. El soft
+  delete preserva el historial de auditoría.
+
+DECISIÓN 5 — users.updated_at (sin updated_by)
+  Se agrega updated_at a la tabla users. No se agrega updated_by.
+  JUSTIFICACIÓN: updated_by crearía una FK circular (users → users). Para
+  registrar quién modificó a quién, se puede usar el log de auditoría del
+  sistema operativo o una tabla de auditoría separada en el futuro.
+
+
+================================================================================
+3. ROLES DEL SISTEMA — DEFINICIÓN Y JUSTIFICACIÓN
+================================================================================
+
+Cuatro roles, de mayor a menor privilegio:
+
+┌─────────────────────┬──────────────────────────────────────────────────────┐
+│ Rol                 │ Descripción y responsabilidad                        │
+├─────────────────────┼──────────────────────────────────────────────────────┤
+│ ROLE_ADMIN          │ Administrador del sistema. Gestiona usuarios y roles. │
+│                     │ Acceso completo a todos los módulos. Puede hacer todo │
+│                     │ lo que los demás roles pueden hacer más la gestión    │
+│                     │ de usuarios.                                          │
+├─────────────────────┼──────────────────────────────────────────────────────┤
+│ ROLE_MANAGER        │ Gerente de almacén. Gestiona el catálogo (categorías, │
+│                     │ productos, proveedores), aprueba órdenes de compra y  │
+│                     │ ventas. No puede gestionar usuarios.                  │
+├─────────────────────┼──────────────────────────────────────────────────────┤
+│ ROLE_WAREHOUSEMAN   │ Operador de almacén. Registra movimientos de stock,  │
+│                     │ puede recibir órdenes de compra, consulta inventario. │
+│                     │ No puede aprobar órdenes ni modificar el catálogo.   │
+├─────────────────────┼──────────────────────────────────────────────────────┤
+│ ROLE_SALES          │ Vendedor. Gestiona clientes y órdenes de venta.      │
+│                     │ Puede crear/cancelar sus propias órdenes. No tiene   │
+│                     │ acceso a compras ni a modificar inventario.           │
+└─────────────────────┴──────────────────────────────────────────────────────┘
+
+Estado en BD:
+  - ROLE_ADMIN (id=1): EXISTS — asignar a tester01 en migración
+  - ROLE_WAREHOUSEMAN (id=2): EXISTS
+  - ROLE_MANAGER: INSERT requerido
+  - ROLE_SALES: INSERT requerido
+
+
+================================================================================
+4. MATRIZ DE AUTORIZACIÓN POR ENDPOINT
+================================================================================
+
+Leyenda: ✓ = permitido | ✗ = prohibido (403 Forbidden)
+
+4.1  MÓDULO AUTH
+----------------
+Endpoint                                    ADMIN   MANAGER  WHOUSE  SALES
+─────────────────────────────────────────── ─────── ──────── ─────── ─────
+POST   /auth/login                          público (sin JWT requerido)
+GET    /auth/users                          ✓       ✗        ✗       ✗
+POST   /auth/users (crear usuario)          ✓       ✗        ✗       ✗
+GET    /auth/users/{id}                     ✓       ✗        ✗       ✗
+PUT    /auth/users/{id}                     ✓       ✗        ✗       ✗
+DELETE /auth/users/{id} (soft delete)       ✓       ✗        ✗       ✗
+PUT    /auth/users/{id}/roles               ✓       ✗        ✗       ✗
+GET    /auth/me (perfil propio)             ✓       ✓        ✓       ✓
+PUT    /auth/me/password                    ✓       ✓        ✓       ✓
+
+4.2  MÓDULO INVENTORY
+---------------------
+Endpoint                                    ADMIN   MANAGER  WHOUSE  SALES
+─────────────────────────────────────────── ─────── ──────── ─────── ─────
+GET    /inventory/categories/active         ✓       ✓        ✓       ✓
+POST   /inventory/categories                ✓       ✓        ✗       ✗
+PUT    /inventory/categories/{id}           ✓       ✓        ✗       ✗
+DELETE /inventory/categories/{id}           ✓       ✓        ✗       ✗
+GET    /inventory/products/**               ✓       ✓        ✓       ✓
+POST   /inventory/products                  ✓       ✓        ✗       ✗
+PUT    /inventory/products/{id}             ✓       ✓        ✗       ✗
+DELETE /inventory/products/{id}             ✓       ✗        ✗       ✗
+POST   /inventory/products/movement         ✓       ✓        ✓       ✗
+
+Justificación:
+  - WAREHOUSEMAN puede registrar movimientos de stock (su función principal)
+    pero no modificar el catálogo de productos.
+  - Solo ADMIN puede desactivar productos (operación irreversible de negocio).
+  - SALES solo consulta el inventario para ver disponibilidad.
+
+4.3  MÓDULO PURCHASES
+---------------------
+Endpoint                                    ADMIN   MANAGER  WHOUSE  SALES
+─────────────────────────────────────────── ─────── ──────── ─────── ─────
+GET    /purchases/suppliers/**              ✓       ✓        ✓       ✗
+POST   /purchases/suppliers                 ✓       ✓        ✗       ✗
+PUT    /purchases/suppliers/{id}            ✓       ✓        ✗       ✗
+DELETE /purchases/suppliers/{id}            ✓       ✓        ✗       ✗
+GET    /purchases/orders/**                 ✓       ✓        ✓       ✗
+POST   /purchases/orders                    ✓       ✓        ✗       ✗
+PUT    /purchases/orders/{id}               ✓       ✓        ✗       ✗
+PATCH  /purchases/orders/{id}/approve       ✓       ✓        ✗       ✗
+PATCH  /purchases/orders/{id}/receive       ✓       ✓        ✓       ✗
+PATCH  /purchases/orders/{id}/cancel        ✓       ✓        ✗       ✗
+POST   /purchases/orders/{id}/details       ✓       ✓        ✗       ✗
+PUT    /purchases/orders/{id}/details/{did} ✓       ✓        ✗       ✗
+DELETE /purchases/orders/{id}/details/{did} ✓       ✓        ✗       ✗
+
+Justificación:
+  - WAREHOUSEMAN puede recibir órdenes (su función operativa: descargar mercancía)
+    pero no crearlas ni aprobarlas.
+  - SALES no tiene acceso a compras (módulo separado del área de ventas).
+
+4.4  MÓDULO SALES
+-----------------
+Endpoint                                    ADMIN   MANAGER  WHOUSE  SALES
+─────────────────────────────────────────── ─────── ──────── ─────── ─────
+GET    /sales/clients/**                    ✓       ✓        ✓       ✓
+POST   /sales/clients                       ✓       ✓        ✗       ✓
+PUT    /sales/clients/{id}                  ✓       ✓        ✗       ✓
+DELETE /sales/clients/{id}                  ✓       ✓        ✗       ✗
+GET    /sales/orders/**                     ✓       ✓        ✓       ✓
+POST   /sales/orders                        ✓       ✓        ✗       ✓
+PUT    /sales/orders/{id}                   ✓       ✓        ✗       ✓
+PATCH  /sales/orders/{id}/approve           ✓       ✓        ✗       ✗
+PATCH  /sales/orders/{id}/deliver           ✓       ✓        ✓       ✗
+PATCH  /sales/orders/{id}/cancel            ✓       ✓        ✗       ✓
+POST   /sales/orders/{id}/details           ✓       ✓        ✗       ✓
+PUT    /sales/orders/{id}/details/{did}     ✓       ✓        ✗       ✓
+DELETE /sales/orders/{id}/details/{did}     ✓       ✓        ✗       ✓
+GET    /sales/reservations/**               ✓       ✓        ✓       ✓
+
+Justificación:
+  - SALES puede crear y gestionar sus órdenes, pero no aprobarlas
+    (aprobación requiere validación del MANAGER).
+  - SALES puede cancelar sus propias órdenes (en PENDING).
+  - WAREHOUSEMAN puede entregar órdenes (operación física: despachar mercancía).
+  - DELETE /clients requiere MANAGER — es una baja lógica, no solo edición.
+
+
+================================================================================
+5. ESQUEMA DE BASE DE DATOS — CAMBIOS REQUERIDOS
+================================================================================
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- PASO 5.1 — Agregar columna updated_at a users
+-- (sin updated_by por decisión de diseño — ver sección 2, Decisión 5)
+-- ─────────────────────────────────────────────────────────────────────────
+ALTER TABLE users ADD COLUMN updated_at TIMESTAMP;
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- PASO 5.2 — Insertar roles faltantes
+-- ROLE_ADMIN (id=1) y ROLE_WAREHOUSEMAN (id=2) YA EXISTEN en la BD.
+-- ─────────────────────────────────────────────────────────────────────────
+INSERT INTO roles (name) VALUES ('ROLE_MANAGER');
+INSERT INTO roles (name) VALUES ('ROLE_SALES');
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- PASO 5.3 — Asignar ROLE_ADMIN al usuario tester01
+-- tester01 actualmente tiene ROLE_WAREHOUSEMAN.
+-- Se le agrega ROLE_ADMIN para que pueda gestionar el sistema.
+-- Se mantiene ROLE_WAREHOUSEMAN para que siga teniendo acceso a las
+-- operaciones de bodeguero.
+-- ─────────────────────────────────────────────────────────────────────────
+INSERT INTO user_roles (user_id, role_id)
+SELECT u.id, r.id
+FROM users u, roles r
+WHERE u.username = 'tester01'
+  AND r.name = 'ROLE_ADMIN'
+  AND NOT EXISTS (
+    SELECT 1 FROM user_roles ur
+    WHERE ur.user_id = u.id AND ur.role_id = r.id
+  );
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- PASO 5.4 — Verificar estado post-migración
+-- ─────────────────────────────────────────────────────────────────────────
+SELECT u.username, STRING_AGG(r.name, ', ') AS roles
+FROM users u
+JOIN user_roles ur ON ur.user_id = u.id
+JOIN roles r ON r.id = ur.role_id
+GROUP BY u.username;
+
+-- Resultado esperado:
+-- tester01 | ROLE_ADMIN, ROLE_WAREHOUSEMAN
+
+
+================================================================================
+6. CAMBIOS POR CAPA
+================================================================================
+
+─────────────────────────────────────────────────────────────────────────────
+6.1  JwtAuthenticationFilter (core/security) — MODIFICAR
+─────────────────────────────────────────────────────────────────────────────
+
+CAMBIO PRINCIPAL: extraer roles del claim 'roles' y cargarlos como GrantedAuthority.
+Actualmente se pasa Collections.emptyList() al constructor del authentication token.
+
+CÓDIGO ACTUAL:
+  UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
+      username,
+      null,
+      Collections.emptyList() ← siempre vacío → hasRole() siempre falla
+  );
+
+CÓDIGO NUEVO:
+  // Extraer roles del claim del JWT y convertir a GrantedAuthority
+  List<SimpleGrantedAuthority> authorities = jwtUtils.extractRoles(token)
+          .stream()
+          .map(SimpleGrantedAuthority::new)
+          .collect(Collectors.toList());
+
+  UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
+      username,
+      null,
+      authorities ← roles cargados desde el JWT
+  );
+
+NUEVO MÉTODO en JwtUtils — extractRoles():
+  @SuppressWarnings("unchecked")
+  public List<String> extractRoles(String token) {
+      Claims claims = parseClaims(token);
+      Object rolesObj = claims.get("roles");
+      if (rolesObj instanceof List<?> list) {
+          return list.stream()
+                  .filter(String.class::isInstance)
+                  .map(String.class::cast)
+                  .collect(Collectors.toList());
+      }
+      return List.of();
+  }
+
+IMPORTS adicionales en JwtAuthenticationFilter:
+  import org.springframework.security.core.authority.SimpleGrantedAuthority;
+  import java.util.List;
+  import java.util.stream.Collectors;
+
+─────────────────────────────────────────────────────────────────────────────
+6.2  SecurityConfig (core/security) — MODIFICAR
+─────────────────────────────────────────────────────────────────────────────
+
+AÑADIR @EnableMethodSecurity en la clase (habilitará @PreAuthorize si se necesita):
+  @EnableMethodSecurity
+
+REEMPLAZAR authorizeHttpRequests por reglas granulares:
+
+  .authorizeHttpRequests(auth -> auth
+      // ── RUTAS PÚBLICAS ────────────────────────────────────────────────
+      .requestMatchers("/api/v1/auth/login").permitAll()
+
+      // ── GESTIÓN DE USUARIOS (solo ADMIN) ─────────────────────────────
+      .requestMatchers("/api/v1/auth/users/**").hasRole("ADMIN")
+
+      // ── PERFIL Y CONTRASEÑA (cualquier autenticado) ───────────────────
+      .requestMatchers("/api/v1/auth/me/**").authenticated()
+
+      // ── INVENTORY: solo lectura para todos ───────────────────────────
+      .requestMatchers(HttpMethod.GET,
+          "/api/v1/inventory/**").hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN","SALES")
+
+      // ── INVENTORY: catálogo (ADMIN y MANAGER) ─────────────────────────
+      .requestMatchers(HttpMethod.POST,
+          "/api/v1/inventory/categories/**",
+          "/api/v1/inventory/products").hasAnyRole("ADMIN","MANAGER")
+      .requestMatchers(HttpMethod.PUT,
+          "/api/v1/inventory/categories/**",
+          "/api/v1/inventory/products/**").hasAnyRole("ADMIN","MANAGER")
+      .requestMatchers(HttpMethod.DELETE,
+          "/api/v1/inventory/categories/**").hasAnyRole("ADMIN","MANAGER")
+
+      // ── INVENTORY: desactivar producto (solo ADMIN) ───────────────────
+      .requestMatchers(HttpMethod.DELETE,
+          "/api/v1/inventory/products/**").hasRole("ADMIN")
+
+      // ── INVENTORY: movimientos de stock (ADMIN, MANAGER, WAREHOUSEMAN) ─
+      .requestMatchers(HttpMethod.POST,
+          "/api/v1/inventory/products/movement").hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN")
+
+      // ── PURCHASES: solo lectura (ADMIN, MANAGER, WAREHOUSEMAN) ────────
+      .requestMatchers(HttpMethod.GET,
+          "/api/v1/purchases/**").hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN")
+
+      // ── PURCHASES: gestión de proveedores (ADMIN y MANAGER) ───────────
+      .requestMatchers(HttpMethod.POST,
+          "/api/v1/purchases/suppliers/**").hasAnyRole("ADMIN","MANAGER")
+      .requestMatchers(HttpMethod.PUT,
+          "/api/v1/purchases/suppliers/**").hasAnyRole("ADMIN","MANAGER")
+      .requestMatchers(HttpMethod.DELETE,
+          "/api/v1/purchases/suppliers/**").hasAnyRole("ADMIN","MANAGER")
+
+      // ── PURCHASES: crear/modificar órdenes (ADMIN y MANAGER) ──────────
+      .requestMatchers(HttpMethod.POST,
+          "/api/v1/purchases/orders").hasAnyRole("ADMIN","MANAGER")
+      .requestMatchers(HttpMethod.PUT,
+          "/api/v1/purchases/orders/**").hasAnyRole("ADMIN","MANAGER")
+
+      // ── PURCHASES: transiciones de estado ─────────────────────────────
+      // receive: ADMIN, MANAGER, WAREHOUSEMAN (operación física de bodega)
+      .requestMatchers("/api/v1/purchases/orders/*/receive").hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN")
+      // approve/cancel: ADMIN y MANAGER
+      .requestMatchers(HttpMethod.PATCH,
+          "/api/v1/purchases/orders/**").hasAnyRole("ADMIN","MANAGER")
+
+      // ── PURCHASES: detalles (ADMIN y MANAGER) ─────────────────────────
+      .requestMatchers("/api/v1/purchases/orders/*/details/**").hasAnyRole("ADMIN","MANAGER")
+
+      // ── SALES: solo lectura para todos los autenticados ───────────────
+      .requestMatchers(HttpMethod.GET,
+          "/api/v1/sales/**").hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN","SALES")
+
+      // ── SALES: gestión de clientes ────────────────────────────────────
+      .requestMatchers(HttpMethod.POST,
+          "/api/v1/sales/clients/**").hasAnyRole("ADMIN","MANAGER","SALES")
+      .requestMatchers(HttpMethod.PUT,
+          "/api/v1/sales/clients/**").hasAnyRole("ADMIN","MANAGER","SALES")
+      .requestMatchers(HttpMethod.DELETE,
+          "/api/v1/sales/clients/**").hasAnyRole("ADMIN","MANAGER")
+
+      // ── SALES: crear/editar órdenes de venta ──────────────────────────
+      .requestMatchers(HttpMethod.POST,
+          "/api/v1/sales/orders").hasAnyRole("ADMIN","MANAGER","SALES")
+      .requestMatchers(HttpMethod.PUT,
+          "/api/v1/sales/orders/**").hasAnyRole("ADMIN","MANAGER","SALES")
+      .requestMatchers(HttpMethod.POST,
+          "/api/v1/sales/orders/*/details").hasAnyRole("ADMIN","MANAGER","SALES")
+      .requestMatchers(HttpMethod.PUT,
+          "/api/v1/sales/orders/*/details/**").hasAnyRole("ADMIN","MANAGER","SALES")
+      .requestMatchers(HttpMethod.DELETE,
+          "/api/v1/sales/orders/*/details/**").hasAnyRole("ADMIN","MANAGER","SALES")
+
+      // ── SALES: transiciones de estado ─────────────────────────────────
+      // deliver: ADMIN, MANAGER, WAREHOUSEMAN
+      .requestMatchers("/api/v1/sales/orders/*/deliver").hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN")
+      // approve/cancel: ADMIN, MANAGER, SALES (SALES solo puede cancelar propias)
+      .requestMatchers(HttpMethod.PATCH,
+          "/api/v1/sales/orders/**").hasAnyRole("ADMIN","MANAGER","SALES")
+
+      // ── CUALQUIER OTRA RUTA: autenticado ──────────────────────────────
+      .anyRequest().authenticated()
+  )
+
+NOTA IMPORTANTE sobre el orden de las reglas:
+  Spring Security evalúa las reglas en el orden en que se definen.
+  La primera que coincide gana. Las reglas más específicas (paths con *) deben
+  ir ANTES de las más generales. Por ejemplo:
+    - "/api/v1/purchases/orders/*/receive" antes de "/api/v1/purchases/orders/**"
+    - DELETE /inventory/products/** (ADMIN only) antes del GET /inventory/** (todos)
+
+─────────────────────────────────────────────────────────────────────────────
+6.3  Entidad User — MODIFICAR
+─────────────────────────────────────────────────────────────────────────────
+
+AÑADIR campo updated_at (sin updatable=false — puede cambiar en cada edición):
+  @Column(name = "updated_at")
+  private LocalDateTime updatedAt;
+
+El campo `active` YA existe en la entidad — correcto para soft delete.
+
+─────────────────────────────────────────────────────────────────────────────
+6.4  UserRepository — MODIFICAR
+─────────────────────────────────────────────────────────────────────────────
+
+NUEVOS MÉTODOS:
+
+  // Listar todos los usuarios activos (para el panel de administración)
+  List<User> findByActiveTrue();
+
+  // Verificar si hay otros usuarios con el mismo email al actualizar
+  // (mismo patrón que SupplierServiceImpl con RFC)
+  Optional<User> findByEmailAndIdNot(String email, Long id);
+
+  // Verificar si hay otros usuarios con el mismo username al actualizar
+  Optional<User> findByUsernameAndIdNot(String username, Long id);
+
+─────────────────────────────────────────────────────────────────────────────
+6.5  DTOs — NUEVOS Y MODIFICADOS
+─────────────────────────────────────────────────────────────────────────────
+
+NUEVO — UserCreateDTO (ADMIN crea usuarios):
+  @NotBlank String username
+  @NotBlank @Size(min=8) String password
+  @NotBlank @Email String email
+  @NotNull @Size(min=1) Set<String> roles  ← al menos un rol requerido
+
+  // El ADMIN decide el rol del nuevo usuario.
+  // Validación en el servicio: cada String debe corresponder a un rol existente.
+
+NUEVO — UserUpdateDTO (ADMIN actualiza datos de un usuario):
+  @NotBlank String username
+  @NotBlank @Email String email
+  // Sin password — hay un endpoint separado para cambio de contraseña.
+  // Sin roles — hay un endpoint separado para asignación de roles.
+  // Sin active — el soft delete tiene su propio endpoint (DELETE /{id}).
+
+NUEVO — UserRoleAssignDTO (ADMIN asigna roles):
+  @NotNull @Size(min=1) Set<String> roles  ← reemplaza TODOS los roles del usuario
+
+  // Justificación del reemplazo total vs. agregar/quitar individual:
+  // La asignación total es más simple, predecible y menos propensa a estados
+  // inconsistentes. El ADMIN envía la lista definitiva de roles que tendrá el usuario.
+
+NUEVO — ChangePasswordDTO (cualquier usuario cambia su propia contraseña):
+  @NotBlank String currentPassword   ← verificación de identidad
+  @NotBlank @Size(min=8) String newPassword
+  @NotBlank String confirmPassword   ← previene errores de tipeo
+
+  // Validación en el servicio: newPassword == confirmPassword.
+  // currentPassword se verifica con passwordEncoder.matches() antes de actualizar.
+
+MODIFICAR — UserResponseDTO (agregar updatedAt):
+  Agregar: LocalDateTime updatedAt
+
+─────────────────────────────────────────────────────────────────────────────
+6.6  UserService / UserServiceImpl — MODIFICAR y AMPLIAR
+─────────────────────────────────────────────────────────────────────────────
+
+INTERFAZ UserService — NUEVOS MÉTODOS:
+  List<UserResponseDTO> getAllUsers();
+  UserResponseDTO getUserById(Long id);
+  UserResponseDTO createUser(UserCreateDTO dto);          ← reemplaza registerUser()
+  UserResponseDTO updateUser(Long id, UserUpdateDTO dto);
+  void deactivateUser(Long id);
+  UserResponseDTO assignRoles(Long id, UserRoleAssignDTO dto);
+  UserResponseDTO getMyProfile();
+  void changePassword(ChangePasswordDTO dto);
+
+  // registerUser() y login() se mantienen pero registerUser() quedará obsoleto
+  // (el controlador ya no lo expone públicamente).
+
+IMPLEMENTACIÓN — lógica relevante por método:
+
+  createUser(UserCreateDTO dto):
+    1. Validar unicidad de username (existsByUsername)
+    2. Validar unicidad de email (existsByEmail)
+    3. Validar que cada rol en dto.getRoles() existe en RoleRepository
+    4. Cifrar contraseña con BCrypt
+    5. Crear User con active=true, createdAt=now()
+    6. Asignar roles encontrados
+    7. Persistir y retornar UserResponseDTO
+
+  updateUser(Long id, UserUpdateDTO dto):
+    1. findUserOrThrow(id) — verifica que existe y está activo
+    2. Validar que nuevo username no pertenezca a otro usuario diferente
+    3. Validar que nuevo email no pertenezca a otro usuario diferente
+    4. Actualizar campos escalares
+    5. updatedAt = now()
+    6. Hibernate dirty-checking persiste (sin save() explícito)
+
+  deactivateUser(Long id):
+    1. findUserOrThrow(id)
+    2. Verificar que no se está desactivando al propio usuario autenticado
+       (el ADMIN no puede suicidarse del sistema sin un segundo ADMIN)
+    3. active = false, updatedAt = now()
+    4. Hibernate dirty-checking persiste
+
+  assignRoles(Long id, UserRoleAssignDTO dto):
+    1. findUserOrThrow(id)
+    2. Validar que cada rol en dto.getRoles() existe en RoleRepository
+    3. user.getRoles().clear()  ← vaciar roles actuales
+    4. Agregar los nuevos roles
+    5. updatedAt = now()
+    6. save() explícito — la relación @ManyToMany requiere save() para
+       que Hibernate sincronice la tabla user_roles
+
+  getMyProfile():
+    1. resolveAuthenticatedUser()
+    2. Retornar UserResponseDTO sin password
+
+  changePassword(ChangePasswordDTO dto):
+    1. resolveAuthenticatedUser()
+    2. passwordEncoder.matches(dto.getCurrentPassword(), user.getPassword())
+       → si false, RuntimeException("Contraseña actual incorrecta.")
+    3. Validar dto.getNewPassword().equals(dto.getConfirmPassword())
+       → si false, RuntimeException("Las contraseñas nuevas no coinciden.")
+    4. user.setPassword(passwordEncoder.encode(dto.getNewPassword()))
+    5. updatedAt = now()
+    6. save() explícito
+
+  MÉTODO PRIVADO findUserOrThrow(Long id):
+    return userRepository.findById(id)
+            .filter(User::isActive)
+            .orElseThrow(() -> new RuntimeException(
+                "Usuario con id " + id + " no encontrado o inactivo."));
+
+─────────────────────────────────────────────────────────────────────────────
+6.7  UserController — MODIFICAR y AMPLIAR
+─────────────────────────────────────────────────────────────────────────────
+
+BASE URL: /api/v1/auth
+
+ENDPOINTS EXISTENTES (sin cambios funcionales):
+  POST /login                          → público, sin cambios
+
+ENDPOINTS MODIFICADOS:
+  POST /register → se ELIMINA como endpoint público.
+    Reemplazado por POST /users (ADMIN only, protegido por SecurityConfig).
+    El método registerUser() de UserServiceImpl permanece internamente
+    pero ya no se expone directamente.
+
+ENDPOINTS NUEVOS:
+
+  Gestión de usuarios (ADMIN — protegido por SecurityConfig):
+    GET    /users            → getAllUsers()         → 200 List<UserResponseDTO>
+    POST   /users            → createUser()          → 201 UserResponseDTO
+    GET    /users/{id}       → getUserById()         → 200 UserResponseDTO
+    PUT    /users/{id}       → updateUser()          → 200 UserResponseDTO
+    DELETE /users/{id}       → deactivateUser()      → 204 No Content
+    PUT    /users/{id}/roles → assignRoles()         → 200 UserResponseDTO
+
+  Perfil propio (cualquier autenticado — protegido por SecurityConfig):
+    GET    /me               → getMyProfile()        → 200 UserResponseDTO
+    PUT    /me/password      → changePassword()      → 204 No Content
+
+CONVENCIÓN HTTP:
+  PUT /users/{id}/roles usa PUT (no PATCH) porque reemplaza la lista completa
+  de roles, no modifica parcialmente. PUT = reemplazar el recurso completo.
+
+  DELETE /users/{id} retorna 204 (soft delete — no hay cuerpo de respuesta).
+
+
+================================================================================
+7. PLAN DE IMPLEMENTACIÓN POR FASES
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+FASE 0 — MIGRACIONES SQL (ejecutar ANTES de cualquier cambio en Java)
+────────────────────────────────────────────────────────────────────────────────
+
+Pasos en orden:
+  0.1 ALTER TABLE users ADD COLUMN updated_at TIMESTAMP;
+  0.2 INSERT INTO roles (name) VALUES ('ROLE_MANAGER'), ('ROLE_SALES');
+  0.3 INSERT INTO user_roles: asignar ROLE_ADMIN a tester01 (ver sección 5)
+  0.4 Verificar: SELECT usuarios con sus roles
+
+Criterio: app arranca sin SchemaValidationException.
+  Hibernate validate comprueba que la columna updated_at existe antes de
+  ejecutar cualquier operación de actualización de usuario.
+
+────────────────────────────────────────────────────────────────────────────────
+FASE 1 — JwtUtils: agregar extractRoles()
+────────────────────────────────────────────────────────────────────────────────
+
+  1.1 Agregar método extractRoles(String token) en JwtUtils.java
+  1.2 Verificar que generateToken() ya incluye el claim 'roles' → SÍ lo incluye.
+  1.3 Test unitario: añadir shouldExtractRolesFromToken() en JwtUtilsTest.
+
+Criterio: JwtUtils retorna correctamente la lista de roles del claim.
+
+────────────────────────────────────────────────────────────────────────────────
+FASE 2 — JwtAuthenticationFilter: cargar roles como GrantedAuthority
+────────────────────────────────────────────────────────────────────────────────
+
+  2.1 Modificar doFilterInternal() para extraer y cargar roles.
+  2.2 Reemplazar Collections.emptyList() por la lista de SimpleGrantedAuthority.
+  2.3 Agregar imports necesarios.
+
+Criterio: SecurityFilterTest sigue pasando (19/19).
+  Verificar adicionalmente con un test nuevo: usuario con ROLE_ADMIN puede
+  acceder a GET /auth/users, uno sin ese rol recibe 403.
+
+────────────────────────────────────────────────────────────────────────────────
+FASE 3 — SecurityConfig: reglas de autorización por rol
+────────────────────────────────────────────────────────────────────────────────
+
+  3.1 Añadir @EnableMethodSecurity en SecurityConfig.
+  3.2 Reemplazar anyRequest().authenticated() por las reglas de la sección 6.2.
+  3.3 Verificar orden de reglas (más específicas primero).
+
+Criterio de aceptación: ejecutar ./mvnw clean test → 239+ tests pasando.
+  Los tests de controlador existentes usan addFilters=false → no se ven afectados.
+  SecurityFilterTest Tipo B* → todos deben seguir pasando.
+  Agregar casos nuevos al SecurityFilterTest:
+    - ADMIN accede a /auth/users → 200
+    - WAREHOUSEMAN intenta acceder a /auth/users → 403
+    - Token con ROLE_SALES intenta aprobar orden de venta → 403
+
+────────────────────────────────────────────────────────────────────────────────
+FASE 4 — Entidad User y UserRepository
+────────────────────────────────────────────────────────────────────────────────
+
+  4.1 Agregar campo updatedAt en User.java
+  4.2 Agregar findByActiveTrue(), findByEmailAndIdNot(), findByUsernameAndIdNot()
+      en UserRepository.java
+
+Criterio: compilación OK, app arranca sin SchemaValidationException.
+
+────────────────────────────────────────────────────────────────────────────────
+FASE 5 — DTOs
+────────────────────────────────────────────────────────────────────────────────
+
+  5.1 Crear UserCreateDTO.java con validaciones Jakarta
+  5.2 Crear UserUpdateDTO.java
+  5.3 Crear UserRoleAssignDTO.java
+  5.4 Crear ChangePasswordDTO.java
+  5.5 Modificar UserResponseDTO.java: agregar updatedAt
+  5.6 Modificar UserMapper.java: incluir updatedAt en toResponseDTO()
+
+Criterio: compilación OK.
+
+────────────────────────────────────────────────────────────────────────────────
+FASE 6 — UserService y UserServiceImpl
+────────────────────────────────────────────────────────────────────────────────
+
+  6.1 Extender UserService.java con los nuevos métodos
+  6.2 Implementar en UserServiceImpl.java:
+      - createUser(), getAllUsers(), getUserById()
+      - updateUser(), deactivateUser(), assignRoles()
+      - getMyProfile(), changePassword()
+      - findUserOrThrow() (privado)
+  6.3 Mantener registerUser() y login() sin cambios
+
+Criterio: compilación OK, app arranca.
+  Verificar: ./mvnw clean test → 239+ tests pasando (tests existentes no rotos).
+
+────────────────────────────────────────────────────────────────────────────────
+FASE 7 — UserController
+────────────────────────────────────────────────────────────────────────────────
+
+  7.1 Agregar nuevos endpoints en UserController.java
+  7.2 Eliminar POST /register (o marcarlo @Deprecated y no exponer en producción)
+  7.3 Verificar que @Valid está en todos los @RequestBody nuevos
+
+Criterio: compilación OK. La app arranca y los endpoints responden.
+
+────────────────────────────────────────────────────────────────────────────────
+FASE 8 — TESTS
+────────────────────────────────────────────────────────────────────────────────
+
+Sub-paso 8.1 — UserServiceImplTest: nuevos casos (Tipo A, ~15 nuevos tests)
+  - createUser_rolesValidos_debeCrearConRoles
+  - createUser_usernameDuplicado_debeLanzarExcepcion
+  - createUser_rolInexistente_debeLanzarExcepcion
+  - updateUser_datosValidos_debeActualizarConAuditoria
+  - updateUser_usernameDuplicadoEnOtroUsuario_debeLanzarExcepcion
+  - deactivateUser_exitoso_debeSetearActiveEnFalse
+  - deactivateUser_propioUsuario_debeLanzarExcepcion (no puede desactivarse a sí mismo)
+  - assignRoles_reemplazaRolesCompletos
+  - assignRoles_rolInexistente_debeLanzarExcepcion
+  - changePassword_correcta_debeActualizar
+  - changePassword_passwordActualIncorrecto_debeLanzarExcepcion
+  - changePassword_confirmacionNoCoincide_debeLanzarExcepcion
+  - getMyProfile_debeRetornarUsuarioAutenticado
+  - getAllUsers_debeRetornarSoloActivos
+  - getUserById_noExistente_debeLanzarExcepcion
+
+Sub-paso 8.2 — UserControllerTest: nuevos casos (Tipo B, ~10 nuevos tests)
+  - createUser_bodyValido_retorna201
+  - createUser_sinRoles_retorna400 (@Valid en Set<String> roles)
+  - updateUser_retorna200
+  - deactivateUser_retorna204
+  - assignRoles_retorna200
+  - getMyProfile_retorna200
+  - changePassword_retorna204
+  - changePassword_sinCurrentPassword_retorna400
+  - getAllUsers_retorna200
+  - getUserById_retorna200
+
+Sub-paso 8.3 — SecurityFilterTest: casos de RBAC (Tipo B*, ~10 nuevos tests)
+  - adminEndpoint_conTokenAdmin_retorna200
+  - adminEndpoint_conTokenManager_retorna403
+  - adminEndpoint_conTokenWarehouseman_retorna403
+  - adminEndpoint_conTokenSales_retorna403
+  - crearProducto_conTokenWarehouseman_retorna403
+  - crearProducto_conTokenManager_noRetorna403
+  - aprobarOrdenCompra_conTokenWarehouseman_retorna403
+  - recibirOrdenCompra_conTokenWarehouseman_noRetorna403
+  - crearOrdenVenta_conTokenSales_noRetorna403
+  - aprobarOrdenVenta_conTokenSales_retorna403
+
+Sub-paso 8.4 — AuditAndConstraintIntegrationTest: nuevos casos (Tipo C, ~5 tests)
+  - crearUsuario_conRoles_rolesPersitenEnBD
+  - asignarRoles_reemplazaRolesEnBD
+  - desactivarUsuario_activeSetEnFalseEnBD
+  - changePassword_hashActualizadoEnBD
+  - adminCreaUsuarioManager_managerPuedeAccederInventario
+
+Criterio bloqueante: ./mvnw clean test → todos los tests pasando.
+
+────────────────────────────────────────────────────────────────────────────────
+FASE 9 — VALIDACIÓN E2E CON CURL
+────────────────────────────────────────────────────────────────────────────────
+
+Flujos a validar en orden:
+
+  1. Login con tester01 → obtener JWT con roles=[ROLE_ADMIN, ROLE_WAREHOUSEMAN]
+  2. Crear usuario MANAGER → POST /auth/users con token ADMIN
+  3. Login con el nuevo usuario MANAGER → obtener JWT con roles=[ROLE_MANAGER]
+  4. Crear usuario SALES → POST /auth/users
+  5. Crear usuario WAREHOUSEMAN → POST /auth/users
+  6. Verificar matriz de autorización:
+     a. MANAGER intenta GET /auth/users → 403
+     b. MANAGER crea categoría → 201
+     c. WAREHOUSEMAN intenta crear categoría → 403
+     d. WAREHOUSEMAN registra movimiento de stock → 204
+     e. SALES intenta registrar movimiento → 403
+     f. SALES crea orden de venta → 201
+     g. SALES intenta aprobar su propia orden de venta → 403
+     h. MANAGER aprueba la orden de venta → 200
+     i. WAREHOUSEMAN entrega la orden de venta → 200
+  7. Cambio de contraseña del MANAGER → PUT /auth/me/password → 204
+  8. Login con nueva contraseña → JWT válido
+  9. ADMIN desactiva el usuario WAREHOUSEMAN → 204
+  10. Login del usuario desactivado → 500 (credenciales incorrectas o usuario inactivo)
+  11. Asignación de rol: ADMIN asigna ROLE_MANAGER a WAREHOUSEMAN → 200
+  12. Verificar roles actualizados en JWT tras nuevo login
+
+Criterio: todos los flujos responden con el código HTTP esperado.
+
+
+================================================================================
+8. PLAN DE PRUEBAS
+================================================================================
+
+COBERTURA OBJETIVO (post-RBAC):
+  - Tests Maven: 239 actuales + ~40 nuevos ≈ 280 tests
+  - Cobertura de líneas auth/service: mantener 100% (actualmente 100%)
+  - SecurityFilterTest: agregar ~10 casos de autorización por rol
+
+TIPOS DE PRUEBA ESPECIALES PARA RBAC:
+
+  Tests de autorización (Tipo B*) — patrón para cada regla de negocio:
+    @Test
+    void crearProducto_rolWarehouseman_debeDevolover403() throws Exception {
+        // Simular token con ROLE_WAREHOUSEMAN (sin ROLE_MANAGER ni ROLE_ADMIN)
+        when(jwtUtils.extractUsername("wh.token")).thenReturn("bodeguero");
+        when(jwtUtils.validateToken("wh.token")).thenReturn(true);
+        when(jwtUtils.extractRoles("wh.token"))  // NUEVO MÉTODO
+                .thenReturn(List.of("ROLE_WAREHOUSEMAN"));
+
+        mockMvc.perform(post("/api/v1/inventory/products")
+                .header("Authorization", "Bearer wh.token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{...}"))
+                .andExpect(status().isForbidden());
+    }
+
+ESCENARIOS DE BORDE QUE DEBEN PROBARSE:
+  - Usuario con múltiples roles: si tiene ROLE_WAREHOUSEMAN Y ROLE_MANAGER,
+    debe tener acceso a todo lo que MANAGER puede hacer.
+  - Usuario sin roles (hipotético): todas las rutas protegidas → 403.
+  - Token de usuario desactivado: el token sigue siendo técnicamente válido
+    (firma OK, no expirado) pero el usuario ya no puede operar.
+    Nota: sin un mecanismo de revocación de JWT, el token desactivado sigue
+    funcionando hasta que expire (2 horas). Esta es una limitación conocida
+    de JWT stateless — documentar en CLAUDE.md para consideración futura.
+
+
+================================================================================
+9. CRITERIOS DE ÉXITO GLOBALES
+================================================================================
+
+SEGURIDAD:
+  ✓ Ningún endpoint protegido accesible sin JWT → todos retornan 403
+  ✓ ROLE_WAREHOUSEMAN no puede crear/modificar el catálogo de productos
+  ✓ ROLE_SALES no puede aprobar sus propias órdenes de venta
+  ✓ ROLE_MANAGER no puede gestionar usuarios
+  ✓ Solo ROLE_ADMIN puede crear/desactivar usuarios y asignar roles
+  ✓ Tokens con roles correctos tienen acceso a sus operaciones permitidas
+
+GESTIÓN DE USUARIOS:
+  ✓ ADMIN puede crear usuario con cualquier rol
+  ✓ ADMIN puede actualizar datos y roles de cualquier usuario
+  ✓ ADMIN no puede desactivar su propia cuenta (protección del sistema)
+  ✓ Soft delete preserva la integridad referencial (auditoría histórica)
+  ✓ updatedAt se actualiza en cada modificación de usuario
+
+CAMBIO DE CONTRASEÑA:
+  ✓ Cualquier usuario puede cambiar su propia contraseña
+  ✓ Se requiere la contraseña actual para confirmar identidad
+  ✓ La confirmación previene errores de tipeo
+  ✓ El hash actualizado en BD invalida efectivamente la contraseña anterior
+
+ROLES EN JWT:
+  ✓ El token contiene los roles actuales del usuario
+  ✓ Cambiar roles requiere nuevo login para que el token los refleje
+  ✓ hasRole() en SecurityConfig evalúa correctamente los roles del token
+
+AUDITORÍA:
+  ✓ Todos los usuarios creados tienen createdAt no nulo
+  ✓ updatedAt se actualiza al modificar datos o contraseña
+
+TESTS:
+  ✓ ~280 tests pasando, 0 fallos
+  ✓ SecurityFilterTest cubre todas las reglas críticas de la matriz
+  ✓ @SpringBootTest verifica que roles persisten en BD tras asignación
+
+
+================================================================================
+10. RIESGOS Y MITIGACIONES
+================================================================================
+
+RIESGO 1 — Orden de reglas en SecurityConfig causa conflictos
+  Probabilidad: alta (Spring Security evalúa la primera regla que coincide).
+  Síntoma: DELETE /inventory/products/{id} (ADMIN only) y
+           GET /inventory/products/{id} (todos) — el DELETE podría ser
+           bloqueado si la regla de DELETE está después de una regla
+           demasiado general.
+  Mitigación: ordenar siempre de más específico a más general. Agregar
+              test SecurityFilterTest para cada caso límite.
+
+RIESGO 2 — Token con roles obsoletos (usuario cuyo rol cambió)
+  Probabilidad: baja en desarrollo, real en producción.
+  Síntoma: usuario cuyo rol fue quitado sigue teniendo acceso durante
+           las 2 horas de vigencia del token.
+  Mitigación en esta iteración: documentar que cambiar roles requiere
+                                nuevo login. No implementar revocación
+                                de tokens (complejidad desproporcionada
+                                para esta fase).
+  Mitigación futura: lista negra de tokens (Redis) o tokens de vida corta
+                     (15 min) con refresh tokens.
+
+RIESGO 3 — tester01 pierde acceso durante la migración
+  Probabilidad: media (si la migración SQL falla parcialmente).
+  Síntoma: tester01 tiene ROLE_WAREHOUSEMAN pero los nuevos endpoints
+           requieren ROLE_ADMIN.
+  Mitigación: ejecutar el INSERT de ROLE_ADMIN a tester01 ANTES de
+              desplegar el código nuevo. Verificar con SELECT antes
+              de reiniciar la app.
+
+RIESGO 4 — Tests existentes (Tipo B, addFilters=false) siguen pasando
+           aunque la lógica de negocio sea incorrecta
+  Probabilidad: existente desde siempre.
+  Síntoma: un test de controlador pasa aunque el endpoint real rechace
+           la petición por falta de rol.
+  Mitigación: los tests Tipo B* de SecurityFilterTest cubren este gap.
+              Los tests Tipo C (@SpringBootTest) con flujos de múltiples
+              roles cubren el escenario end-to-end.
+
+RIESGO 5 — Regresión en módulos existentes por las nuevas reglas de SecurityConfig
+  Probabilidad: media (cualquier test Tipo C que envíe requests sin el rol correcto).
+  Síntoma: AuditAndConstraintIntegrationTest o SaleOrderConcurrencyTest
+           fallan con 403 porque el token usado no tiene el rol necesario.
+  Mitigación: los tests Tipo C usan tester01 (que tendrá ROLE_ADMIN tras la
+              migración) → tendrá acceso a todo. No requiere cambios en
+              los tests existentes.
+
+
+================================================================================
+11. IMPACTO EN MÓDULOS EXISTENTES
+================================================================================
+
+MÓDULO auth — impacto alto (es el módulo que se refactoriza)
+
+MÓDULO core/security — impacto alto:
+  - JwtAuthenticationFilter: modificar para cargar roles
+  - SecurityConfig: reemplazar regla de autorización
+
+MÓDULO inventory — impacto bajo:
+  - Sin cambios en código Java
+  - Los endpoints responden igual — solo cambia quién puede llamarlos
+
+MÓDULO purchases — impacto bajo: ídem inventory
+
+MÓDULO sales — impacto bajo: ídem inventory
+
+TESTS EXISTENTES — impacto mínimo:
+  - Tipos A (Mockito): sin impacto — no hay Spring Security
+  - Tipos B (WebMVC, addFilters=false): sin impacto — filtros deshabilitados
+  - Tipo B* (SecurityFilterTest): requiere agregar mock de extractRoles()
+    para los tests que configuran un token válido
+  - Tipos C (@SpringBootTest): tester01 tendrá ROLE_ADMIN → acceso total → sin impacto
+  - Tipos D (@DataJpaTest): sin impacto — no hay Spring Security
+
+RESUMEN DE ARCHIVOS MODIFICADOS:
+  core/security/JwtUtils.java              ← agregar extractRoles()
+  core/security/JwtAuthenticationFilter.java ← cargar roles como GrantedAuthority
+  core/security/SecurityConfig.java        ← reglas de autorización por rol
+  modules/auth/model/User.java             ← agregar updatedAt
+  modules/auth/repository/UserRepository.java ← nuevos métodos
+  modules/auth/dto/UserResponseDTO.java    ← agregar updatedAt
+  modules/auth/dto/UserCreateDTO.java      ← NUEVO
+  modules/auth/dto/UserUpdateDTO.java      ← NUEVO
+  modules/auth/dto/UserRoleAssignDTO.java  ← NUEVO
+  modules/auth/dto/ChangePasswordDTO.java  ← NUEVO
+  modules/auth/mapper/UserMapper.java      ← actualizar toResponseDTO con updatedAt
+  modules/auth/service/UserService.java    ← nuevos métodos
+  modules/auth/service/UserServiceImpl.java ← implementar nuevos métodos
+  modules/auth/controller/UserController.java ← nuevos endpoints
+
+RESUMEN DE ARCHIVOS NUEVOS:
+  modules/auth/dto/UserCreateDTO.java
+  modules/auth/dto/UserUpdateDTO.java
+  modules/auth/dto/UserRoleAssignDTO.java
+  modules/auth/dto/ChangePasswordDTO.java
+
+================================================================================
+FIN DE LA PROPUESTA — Módulo auth: Roles y Permisos
+================================================================================

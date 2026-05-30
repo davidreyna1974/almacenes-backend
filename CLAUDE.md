@@ -10,6 +10,7 @@ Backend REST API para gestión de almacenes. Proyecto Spring Boot 3.5.14 con Jav
 - `auth` — Autenticación y autorización (JWT/Spring Security)
 - `inventory` — Gestión de inventario (categorías, productos, movimientos de stock)
 - `purchases` — Gestión de compras (proveedores, órdenes de compra)
+- `sales` — Gestión de ventas (clientes, órdenes de venta, reservas de stock, analítica de costo)
 
 ## Comandos comunes
 
@@ -447,16 +448,238 @@ for (PurchaseOrderDetail detail : order.getDetails()) {
 
 ---
 
+## Estándares del módulo sales
+
+### Máquina de estados de SaleOrder
+
+```
+PENDING ──────────────────────────→ CANCELLED
+  │                                    ↑
+  ↓                                    │
+APPROVED ─────────────────────────→ CANCELLED
+  │
+  ↓
+DELIVERED (estado terminal positivo — no cancelable)
+```
+
+**Transiciones válidas:**
+- `PENDING → APPROVED`: vía `approveOrder()` — valida available stock para todos los productos (Fase 1), luego reserva (Fase 2). El two-phase approach evita reservas parciales.
+- `APPROVED → DELIVERED`: vía `deliverOrder()` — libera reserva + OUT en stock físico en la misma transacción.
+- `PENDING → CANCELLED`: sin impacto en stock.
+- `APPROVED → CANCELLED`: libera reservas (`reservedStock -= qty` por detalle).
+- `DELIVERED → cualquier`: **bloqueado** — estado terminal.
+- `CANCELLED → cualquier`: **bloqueado** — estado terminal.
+
+**Criterios de éxito por transición:**
+- `approve`: `reservedStock += qty`, `approvedAt`/`approvedBy` persistidos en BD, `currentStock` sin cambio.
+- `deliver`: `reservedStock -= qty`, `currentStock -= qty` (via `registerStockMovement(OUT)`), `deliveredAt`/`deliveredBy` persistidos, movimiento OUT en Kardex con `reason = "Entrega orden de venta OV-YYYY-NNNN"`.
+- `cancel desde APPROVED`: `reservedStock -= qty` por cada detalle, `cancelledAt`/`cancelledBy` persistidos.
+- `cancel desde PENDING`: sin cambio en stock, `cancelledAt`/`cancelledBy` persistidos.
+
+### Tres magnitudes de stock en Product
+
+```
+currentStock   = unidades físicas en el almacén (solo cambia con movimientos IN/OUT)
+reservedStock  = comprometido con órdenes APPROVED no entregadas
+availableStock = currentStock - reservedStock (calculado — no almacenado en BD)
+```
+
+**Regla crítica en deliverOrder()**: verificar `currentStock >= qty` (no `availableStock >= qty`). Cuando se entrega, la reserva de ESA orden ya está en `reservedStock` — usar `availableStock` causaría doble resta de las mismas unidades.
+
+**Regla crítica en OUT manual** (registerStockMovement): verificar `availableStock >= qty` para proteger las unidades ya reservadas para órdenes APPROVED.
+
+### Optimistic Locking en approveOrder()
+
+`Product` tiene `@Version Long version` — Hibernate incrementa este campo en cada UPDATE. Si dos `approveOrder()` simultáneos intentan reservar el mismo producto:
+- La primera transacción actualiza `version=0 → 1`.
+- La segunda intenta actualizar con `version=0`, Hibernate detecta que la BD tiene `version=1` → lanza `ObjectOptimisticLockingFailureException`.
+
+**Por qué `saveAndFlush()` en lugar de `save()`**: `save()` encola el UPDATE para el commit de la transacción. La excepción de versión se lanzaría fuera del try-catch de `approveOrder()`, llegando al `GlobalExceptionHandler` con el mensaje interno de Hibernate. `saveAndFlush()` fuerza el SQL inmediatamente, capturando la excepción dentro del try-catch y convirtiendo a mensaje de negocio claro.
+
+```java
+try {
+    for (SaleOrderDetail detail : order.getDetails()) {
+        product.setReservedStock(product.getReservedStock() + detail.getQuantity());
+        productRepository.saveAndFlush(product); // flush inmediato → @Version verificado aquí
+    }
+} catch (ObjectOptimisticLockingFailureException e) {
+    throw new RuntimeException("Stock modificado concurrentemente. Intente nuevamente.");
+}
+```
+
+### Captura de unitCost para analítica financiera
+
+`SaleOrderDetail.unitCost` captura `Product.unitCost` en el momento de crear o actualizar el detalle (mientras la orden está en PENDING). Una vez APPROVED, los detalles no son editables — el costo queda congelado implícitamente.
+
+**Por qué el cliente nunca envía unitCost**: si el frontend pudiera enviarlo, podría falsificar el costo histórico. El servicio lo toma automáticamente de `Product.unitCost`.
+
+**Por qué `unitCost` es nullable**: `Product.unitCost` puede no estar definido (captura progresiva). El flujo completo funciona sin excepción cuando `unitCost == null`.
+
+**Fórmula de margen** (módulo financiero futuro):
+```
+margen_unitario = unitPrice - unitCost   (si unitCost != null)
+margen_total    = margen_unitario × quantity
+```
+
+### Modelos JPA — sales
+
+- `Client`: RFC y email opcionales (no todos los clientes son personas morales). Ambos tienen constraint UNIQUE cuando se proporcionan.
+- `SaleOrder`: todos los campos de transición (`approvedBy`, `deliveredBy`, `cancelledBy`) **sin** `updatable=false` — misma regla que purchases. `createdBy` sí usa `updatable=false`.
+- `SaleOrderDetail`: `unitCost` sin `updatable=false` — el servicio lo re-lee del producto en cada actualización de detalle en PENDING. Una vez APPROVED, la inmovilidad la garantiza la lógica de negocio.
+- `SaleOrder.details` usa `cascade = CascadeType.ALL` + `orphanRemoval = true` — eliminar un detalle de la lista lo borra físicamente.
+
+### Repositorios — sales
+
+Queries JPQL que no pueden expresarse con query methods derivados:
+
+```java
+// findActiveOrdersByClient: usa IN con FQN del enum — sintaxis necesaria
+// para que el parser JPQL resuelva los literales sin ambigüedad
+@Query("SELECT so FROM SaleOrder so WHERE so.client.id = :clientId " +
+       "AND so.status IN (" +
+       "com.codigo2enter.almacenes.modules.sales.model.SaleOrderStatus.PENDING, " +
+       "com.codigo2enter.almacenes.modules.sales.model.SaleOrderStatus.APPROVED)")
+List<SaleOrder> findActiveOrdersByClient(@Param("clientId") Long clientId);
+
+// findByProductId: requiere JOIN a través de sale_order_details
+@Query("SELECT DISTINCT so FROM SaleOrder so JOIN so.details d " +
+       "WHERE d.product.id = :productId ORDER BY so.createdAt DESC")
+List<SaleOrder> findByProductId(@Param("productId") Long productId);
+
+// countByYear: YEAR() es función de dialecto — verificado en @DataJpaTest
+// contra PostgreSQL real. Si el dialecto cambia, el test lo detecta.
+@Query("SELECT COUNT(so) FROM SaleOrder so WHERE YEAR(so.createdAt) = :year")
+long countByYear(@Param("year") int year);
+```
+
+### DTOs — sales
+
+- **DTOs unificados no aplican aquí**: a diferencia de `CategoryDTO` y `SupplierDTO`, `SaleOrder` tiene flujos de request muy distintos (crear con detalles, actualizar solo notas/cliente), por lo que se usan DTOs separados.
+- `SaleOrderDetailRequestDTO` y `SaleOrderDetailUpdateRequestDTO` **no incluyen `unitCost`** — lo gestiona el servicio automáticamente.
+- `SaleOrderDetailResponseDTO` **sí incluye `unitCost`** — es dato de salida para el módulo financiero futuro.
+- Los 5 DTOs de reservas (`ReservationSummaryDTO`, `ReservedProductDTO`, etc.) se construyen directamente en `ReservationServiceImpl` sin mappers — son vistas agregadas que cruzan varias entidades.
+
+### Mappers — sales
+
+- `SaleOrderMapper` usa `uses = {SaleOrderDetailMapper.class}` para delegar el mapeo de la lista de detalles.
+- `SaleOrderDetailMapper.toEntity()` ignora `unitCost`, `subtotal`, `saleOrder` y `product` — el servicio los asigna.
+- El campo `status` (enum `SaleOrderStatus`) se mapea a String en `toResponseDTO()` con un método `@Named`:
+
+```java
+@Named("statusToString")
+default String statusToString(SaleOrderStatus status) {
+    return status == null ? null : status.name();
+}
+```
+
+### Servicios — sales
+
+**ClientServiceImpl**:
+- Valida unicidad de RFC y email (ambos opcionales pero únicos cuando se proporcionan).
+- `deactivateClient()` bloquea si `findActiveOrdersByClient()` retorna resultados — mismo patrón que `SupplierServiceImpl` con órdenes activas.
+
+**SaleOrderServiceImpl** — dependencias:
+```
+SaleOrderRepository, SaleOrderDetailRepository, ClientRepository,
+ProductRepository, ProductService, UserRepository,
+SaleOrderMapper, SaleOrderDetailMapper
+```
+
+Patrón de creación de orden con captura de `unitCost`:
+```java
+for (SaleOrderDetailRequestDTO detailDto : dto.getDetails()) {
+    Product product = findActiveProductOrThrow(detailDto.getProductId());
+    BigDecimal subtotal = detailDto.getUnitPrice()
+            .multiply(BigDecimal.valueOf(detailDto.getQuantity()));
+    SaleOrderDetail detail = saleOrderDetailMapper.toEntity(detailDto);
+    detail.setProduct(product);
+    detail.setSaleOrder(order);
+    detail.setSubtotal(subtotal);
+    detail.setUnitCost(product.getUnitCost()); // captura del costo histórico
+    order.getDetails().add(detail);
+}
+```
+
+**ReservationServiceImpl**: todos los métodos `@Transactional(readOnly=true)`. Sin `SecurityContextHolder`. Los DTOs se construyen directamente (sin mappers) cruzando `ProductRepository` y `SaleOrderRepository`.
+
+### Controladores — sales
+
+Rutas base:
+- `/api/v1/sales/clients` — CRUD de clientes
+- `/api/v1/sales/orders` — ciclo de vida de órdenes de venta
+- `/api/v1/sales/reservations` — consulta de reservas activas (solo lectura)
+
+`SaleOrderController` expone 14 endpoints incluyendo filtros combinados:
+- `GET /product/{productId}/status/{status}` — órdenes que contienen un producto específico en un estado dado
+- `GET /client/{clientId}/status/{status}` — filtro combinado cliente + estado
+
+### Integración inventory ↔ sales
+
+`deliverOrder()` en `SaleOrderServiceImpl` llama a `productService.registerStockMovement()` dentro de la misma transacción:
+```java
+// Liberar reserva PRIMERO, luego registrar movimiento OUT
+product.setReservedStock(product.getReservedStock() - detail.getQuantity());
+productRepository.save(product);
+// registerStockMovement decrementa currentStock — usa availableStock (ya sin la reserva liberada)
+productService.registerStockMovement(StockMovementRequestDTO.builder()
+        .productId(product.getId())
+        .quantity(detail.getQuantity())
+        .type("OUT")
+        .reason("Entrega orden de venta " + order.getOrderNumber())
+        .build());
+```
+
+**Por qué liberar la reserva ANTES de registerStockMovement**: `registerStockMovement` valida `availableStock = currentStock - reservedStock >= qty`. Si la reserva no se libera primero, las unidades a entregar siguen contadas como reservadas, haciendo que `availableStock` parezca menor de lo que realmente es, y la validación fallaría incorrectamente.
+
+### Columnas de auditoría — sales
+
+| Tabla | `created_at` | `created_by` | `updated_at` | `updated_by` | `approved_by` | `delivered_by` | `cancelled_by` |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| `clients` | ✓ | ✓ (NOT NULL) | ✓ | ✓ | — | — | — |
+| `sale_orders` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `sale_order_details` | — | — | — | — | — | — | — |
+
+**Nota sobre `clients.created_by`**: inicialmente el esquema SQL no tenía NOT NULL en esta columna — inconsistencia detectada durante la implementación. Se corrigió con `ALTER TABLE clients ALTER COLUMN created_by SET NOT NULL` antes de agregar la restricción en la entidad JPA.
+
+---
+
 ## Patrones de pruebas
 
-### Tests unitarios de servicios
+### Taxonomía de tests del proyecto
+
+El proyecto usa cinco tipos de test automatizados (A–D en Maven) más tests E2E manuales:
+
+| Tipo | Tecnología | BD | Spring Security | Velocidad | Detecta |
+|---|---|---|---|---|---|
+| **A** | `@ExtendWith(MockitoExtension.class)` | No | No | Muy rápida | Lógica de negocio |
+| **B** | `@WebMvcTest` + `addFilters=false` | No | No (deshabilitado) | Rápida | HTTP status, @Valid, JSON |
+| **B\*** | `@WebMvcTest` + `@Import(SecurityConfig)` | No | **Sí (activo)** | Rápida | Spring Security, 403s, JWT |
+| **C** | `@SpringBootTest(RANDOM_PORT)` | **PostgreSQL real** | **Sí** | Lenta | Hibernate, FK, auditoría en BD |
+| **D** | `@DataJpaTest` + `replace=NONE` | **PostgreSQL real** | No | Media | JPQL queries, constraints BD |
+| **E** | Scripts curl (fuera de Maven) | **PostgreSQL real** | **Sí** | Manual | Flujo completo de negocio |
+
+**Regla**: B* sustituye a B cuando se necesita verificar que Spring Security no bloquea rutas públicas o sí bloquea rutas protegidas. Todos los `@WebMvcTest` existentes mantienen `addFilters=false` para aislar la capa web; `SecurityFilterTest` es la única clase B* que verifica seguridad.
+
+### Tests unitarios de servicios (Tipo A)
 
 - `@ExtendWith(MockitoExtension.class)` — sin contexto Spring, instancia solo la clase bajo prueba.
 - `@Mock` para dependencias, `@InjectMocks` para la clase bajo prueba.
 - `@BeforeEach` reinicia los datos en cada test para garantizar independencia.
 - Patrón AAA: **Arrange** → **Act** → **Assert**.
 - Cubrir siempre: happy path + entidad no encontrada + reglas de negocio que lanzan excepción.
-- Verificar con `verify(repo, never()).save(any())` que operaciones costosas no se ejecutan cuando la validación falla.
+- `verify(repo, never()).save(any())` — verifica que operaciones costosas no se ejecutan cuando la validación falla.
+
+**Regla crítica — dirty-checking vs save()**: los servicios `@Transactional` que NO llaman `save()` explícitamente (usan dirty-checking de Hibernate) deben verificarse con aserciones sobre el estado de la entidad, NO con `verify(repository.save(...))`. En tests Mockito no hay Hibernate real — `save()` nunca se llama aunque el comportamiento en producción sea correcto.
+
+```java
+// INCORRECTO para servicios con dirty-checking:
+verify(supplierRepository).save(entity); // falla porque save() no se llama
+
+// CORRECTO:
+assertDoesNotThrow(() -> supplierService.updateSupplier(1L, dto));
+assertNotNull(entity.getUpdatedAt()); // el servicio sí llama setUpdatedAt()
+assertEquals(user, entity.getUpdatedBy());
+```
 
 **Servicios con `SecurityContextHolder` (categorías, productos, proveedores, órdenes)**:
 
@@ -492,7 +715,7 @@ supplier = Supplier.builder().id(1L).rfc("FERN123456").companyName("Ferretería 
 lenient().when(supplierRepository.findById(1L)).thenReturn(Optional.of(supplier));
 ```
 
-### Tests de integración de controladores
+### Tests de integración de controladores (Tipo B)
 
 - `@WebMvcTest(XxxController.class)` + `@AutoConfigureMockMvc(addFilters = false)`.
 - `@MockBean XxxService` para aislar la capa web.
@@ -501,53 +724,124 @@ lenient().when(supplierRepository.findById(1L)).thenReturn(Optional.of(supplier)
 - `jsonPath("$.campo").value(...)` para verificar el body de respuesta.
 - Métodos `void` del servicio no requieren `when/thenReturn` — Mockito los ignora por defecto.
 
-### Limitaciones conocidas de los tests actuales y qué no detectan
+### Tests de seguridad (Tipo B*)
 
-Los tests unitarios (Mockito) y de controlador (`@WebMvcTest`) **no detectan**:
-
-| Tipo de bug | Por qué los tests actuales no lo ven | Ejemplo de lo que pasó |
-|---|---|---|
-| Mapper sin `@Mapping(target="x", ignore=true)` para relación `@ManyToOne` | El mapper está mockeado — nunca corre el código MapStruct real | `supplier` llegaba null a Hibernate → NOT NULL constraint violation |
-| Campo de respuesta sin `@Mapping(source="x.id", target="xId")` | `toResponseDTO()` está mockeado — el test devuelve lo que configuró | `supplierId` siempre null en respuesta |
-| `updatable=false` en campo que empieza null | El repositorio está mockeado — nunca hay Hibernate ni SQL real | `approvedBy` nunca se persistía en BD |
-| DB constraints (NOT NULL, UNIQUE, FK) | No hay BD real en los tests | Solo se detectan con curl o `@SpringBootTest` |
-
-### Tests `@SpringBootTest` pendientes de implementar
-
-Estos tests son **críticos** y deben agregarse para cubrir los gaps detectados. Usan el contexto completo de Spring + Hibernate + PostgreSQL (o H2 en modo test).
-
-**Criterios de éxito que deben verificar:**
-
-1. **Crear producto con proveedor**: el `INSERT` en `products` incluye `supplier_id` no nulo. Verificar que `GET /products/{id}` devuelve `supplierId` correcto en el response.
-
-2. **Flujo completo de orden de compra**:
-   - `POST /orders` → `POST /orders/{id}/details` → `PATCH /orders/{id}/approve` → `PATCH /orders/{id}/receive`
-   - Verificar que `approvedById`, `receivedById` persisten en BD y aparecen en consultas posteriores
-   - Verificar que el stock del producto se incrementa en `receive`
-   - Verificar que aparece el movimiento en `GET /products/{id}/movements`
-
-3. **Columnas de auditoría persistidas**:
-   - Crear categoría → `GET /categories/active` → verificar `createdById != null`
-   - Actualizar categoría → `GET /categories/active` → verificar `updatedById != null` y `updatedAt != null`
-
-4. **Constraint NOT NULL en auditoría**: intentar crear un producto sin autenticación JWT → verificar `403`, no `500` (el campo `createdBy` no debe llegar null a Hibernate)
+`SecurityFilterTest` verifica que Spring Security aplica correctamente las reglas de autorización. Se diferencia de los Tipo B en que los filtros están ACTIVOS:
 
 ```java
-// Estructura base de un @SpringBootTest de integración
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@TestPropertySource(properties = {"spring.jpa.hibernate.ddl-auto=create-drop"})
-class ProductIntegrationTest {
+@WebMvcTest({UserController.class, CategoryController.class, /* todos los controllers */})
+@Import(SecurityConfig.class)
+// SIN @AutoConfigureMockMvc(addFilters = false)
+class SecurityFilterTest {
+    @MockBean JwtUtils jwtUtils; // controla qué tokens se consideran válidos
 
-    @Autowired TestRestTemplate restTemplate;
-
-    @Test
-    void crearProducto_conProveedorValido_debeGuardarSupplierId() {
-        // ARRANGE: crear proveedor, obtener JWT, preparar request
-        // ACT: POST /api/v1/inventory/products
-        // ASSERT: status 201, supplierId en response != null,
-        //         GET /products/{id} también devuelve supplierId != null
+    private void autenticar() {
+        when(jwtUtils.extractUsername("valid.test.token")).thenReturn("tester01");
+        when(jwtUtils.validateToken("valid.test.token")).thenReturn(true);
     }
 }
+```
+
+Cubre tres bloques:
+1. Rutas públicas (`/auth/**`) accesibles sin JWT.
+2. Rutas protegidas sin JWT → 403.
+3. Rutas protegidas con JWT válido → no 403.
+4. Token con firma manipulada o expirado → 403.
+
+**Regla**: la aserción para "no debe ser 403" usa un `ResultMatcher` personalizado porque MockMvc no tiene `status().isNot(403)`:
+```java
+.andExpect(result -> assertNotEquals(HttpStatus.FORBIDDEN.value(),
+    result.getResponse().getStatus(), "mensaje explicativo"))
+```
+
+### Tests de repositorio (Tipo D)
+
+```java
+@DataJpaTest
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+@Transactional // rollback automático después de cada test
+class ProductRepositoryTest { ... }
+```
+
+- `replace=NONE` es **obligatorio** — el esquema usa características de PostgreSQL (IDENTITY, NUMERIC, CHECK) que H2 no soporta. Sin esta anotación, Spring Boot intenta configurar H2 y falla con SchemaValidationException.
+- `@Transactional` heredado de `@DataJpaTest` hace rollback automático — los datos de prueba no persisten entre tests ni contaminan la BD de desarrollo.
+- Solo carga la capa JPA — sin Spring MVC, sin servicios, sin controladores.
+- Setup en `@BeforeEach`: crear el grafo mínimo de entidades (User → Category → Supplier → Product → Client) con sufijos únicos basados en `System.currentTimeMillis()` para evitar colisiones entre ejecuciones.
+
+### Tests @SpringBootTest con BD real (Tipo C)
+
+```java
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
+class AuditAndConstraintIntegrationTest {
+    @Autowired TestRestTemplate restTemplate;
+}
+```
+
+- Levanta el contexto completo en un puerto aleatorio — sin conflicto con la app corriendo en 8080.
+- `@TestMethodOrder` + `@Order(n)` para tests que comparten estado (IDs de entidades creadas).
+- Tests que usan entidades propias (no comparten estado) no necesitan `@Order`.
+- `TestRestTemplate` envía requests HTTP reales — Spring Security activo, Hibernate activo, PostgreSQL real.
+- **Patrón de doble verificación**: verificar el campo tanto en la respuesta inmediata (memoria) como en un GET posterior (BD persistida). La respuesta inmediata puede reflejar el valor en memoria antes del rollback/commit; el GET posterior confirma que llegó a la BD.
+
+```java
+// Verificación en memoria (inmediata):
+assertNotNull(approveResp.getBody().get("approvedById"));
+
+// Verificación en BD (GET posterior):
+ResponseEntity<Map> getAfterApprove = restTemplate.exchange(
+    base + "/purchases/orders/" + id, HttpMethod.GET, ...);
+assertNotNull(getAfterApprove.getBody().get("approvedById"),
+    "approvedById debe persistir en BD — verifica updatable=false");
+```
+
+### Qué detecta cada tipo de test
+
+| Tipo de bug | A (Mockito) | B (@WebMVC) | B* (Seguridad) | C (@SpringBootTest) | D (@DataJpaTest) |
+|---|---|---|---|---|---|
+| Lógica de negocio del servicio | ✓ | ~ | ~ | ✓ | ✗ |
+| Validaciones Jakarta (@Valid) | ✗ | ✓ | ✓ | ✓ | ✗ |
+| Spring Security (403, JWT) | ✗ | ✗ | ✓ | ✓ | ✗ |
+| MapStruct: mapeos faltantes | ✗ | ✗ | ✗ | ✓ | ✗ |
+| Hibernate: updatable=false incorrecto | ✗ | ✗ | ✗ | ✓ | ✗ |
+| FK constraints (NOT NULL en BD) | ✗ | ✗ | ✗ | ✓ | ✓ |
+| Queries JPQL (sintaxis, dialecto) | ✗ | ✗ | ✗ | ✓ | ✓ |
+| Auditoría persistida en BD real | ✗ | ✗ | ✗ | ✓ | ✗ |
+| Concurrencia / Optimistic Locking | ✗ | ✗ | ✗ | ✓ | ✗ |
+
+### JaCoCo — cobertura de código
+
+Plugin configurado en `pom.xml`. Genera reporte en `target/site/jacoco/index.html` al ejecutar `./mvnw test`.
+
+```bash
+# Ver reporte en el navegador (macOS)
+open target/site/jacoco/index.html
+
+# Ejecutar y verificar umbral (fase verify)
+./mvnw verify
+```
+
+**Umbrales configurados**: 70% de cobertura de líneas por paquete (excluyendo paquetes `dto`, `model`, `mapper` — son código auto-generado por MapStruct o solo campos sin lógica).
+
+**Métricas actuales** (v3 — 239 tests):
+- Líneas: 82.4% ✓ (umbral: 70%)
+- Métodos: 88.1% ✓
+- Ramas: 58.7% ~ (área de mejora — sin umbral configurado aún)
+
+**Regla de exclusión en JaCoCo**: los paquetes `*.mapper` contienen solo interfaces — las implementaciones (`*MapperImpl`) son auto-generadas por MapStruct en `target/generated-sources`. JaCoCo los instrumenta pero los tests Mockito los mockean, resultando en 0% de cobertura. Estos paquetes están excluidos del check para evitar falsos negativos.
+
+### Tests de seguridad — JwtUtils
+
+**Test de token expirado**: construir directamente un token JJWT con `expiration` en el pasado usando la misma clave secreta que `JwtUtils`. La clave está hardcodeada en el código fuente — reproducirla en el test no es una violación porque ya es conocida en el repositorio. En producción, externalizar a variable de entorno.
+
+```java
+SecretKey key = Keys.hmacShaKeyFor("4a8f...".getBytes(StandardCharsets.UTF_8));
+String expiredToken = Jwts.builder()
+        .subject("usuario")
+        .expiration(new Date(System.currentTimeMillis() - 1_000)) // ya expiró
+        .signWith(key)
+        .compact();
+assertFalse(jwtUtils.validateToken(expiredToken));
 ```
 
 ---
@@ -561,46 +855,85 @@ class ProductIntegrationTest {
 - Mapper: `UserMapper`
 - Servicio: `UserServiceImpl` (registro y login con JWT)
 - Controlador: `UserController` — `POST /api/v1/auth/register`, `POST /api/v1/auth/login`
-- Seguridad: `JwtAuthenticationFilter`, `SecurityConfig` (con CORS habilitado), `JwtUtils`
-- Tests: `JwtUtilsTest` (3), `UserControllerTest` (2)
+- Seguridad: `JwtAuthenticationFilter` (con try-catch en `extractUsername` para tokens malformados), `SecurityConfig` (con CORS habilitado), `JwtUtils`
+- Tests (Tipo A): `JwtUtilsTest` (4 — incluye token expirado), `UserServiceImplTest` (8)
+- Tests (Tipo B): `UserControllerTest` (2)
+- Tests (Tipo B*): `SecurityFilterTest` (19 — Spring Security activo, verifica 403s y rutas públicas)
 
 ### Módulo `inventory` — completo
 
 - Entidades: `Category`, `Product`, `StockMovement`, enum `MovementType`
-  - `Category` y `Product`: columnas de auditoría `created_at`, `created_by`, `updated_at`, `updated_by`
-  - `StockMovement`: columnas `created_at`, `created_by` (inmutable por diseño)
-  - `Product`: relación `@ManyToOne Supplier supplier` — el servicio la resuelve desde `dto.getSupplierId()` via `SupplierRepository`
-- Repositorios: `CategoryRepository`, `ProductRepository`, `StockMovementRepository`
-- DTOs: `CategoryDTO`, `ProductRequestDTO`, `ProductResponseDTO`, `StockMovementRequestDTO`, `StockMovementResponseDTO`
-- Mappers: `CategoryMapper`, `ProductMapper` (con ignore de `supplier` en `toEntity`/`updateFromDTO` y mapping de `supplier.id` en `toResponseDTO`), `StockMovementMapper`
-- Servicios: `CategoryServiceImpl`, `ProductServiceImpl` (con `SupplierRepository` inyectado)
+  - `Product`: `reservedStock` (int, default 0), `@Version Long version` (Optimistic Locking), `unitCost` (BigDecimal, nullable)
+  - Todos con columnas de auditoría `created_at`/`created_by`; `updated_at`/`updated_by` donde aplica
+- Repositorios: `CategoryRepository`, `ProductRepository` (con `findLowStockProducts` usando `availableStock`), `StockMovementRepository`
+- DTOs: `CategoryDTO`, `ProductRequestDTO` (con `unitCost` opcional), `ProductResponseDTO` (con `reservedStock`, `availableStock`, `unitCost`), `StockMovementRequestDTO`, `StockMovementResponseDTO`
+- Mappers: `CategoryMapper`, `ProductMapper` (con `calcAvailableStock @Named`, ignores de `reservedStock`/`version` en `toEntity`)
+- Servicios: `CategoryServiceImpl`, `ProductServiceImpl` (validación OUT contra `availableStock`)
 - Controladores:
   - `CategoryController` — `POST /`, `GET /active`, `PUT /{id}`, `DELETE /{id}`
-  - `ProductController` — `POST /`, `PUT /{id}`, `DELETE /{id}`, `GET /sku/{sku}`, `GET /category/{id}`, `GET /low-stock`, `POST /movement`, `GET /{id}/movements`
-- Tests unitarios: `CategoryServiceImplTest` (9), `ProductServiceImplTest` (20, incluye mock de `SupplierRepository`)
-- Tests de integración: `CategoryControllerTest` (6), `ProductControllerTest` (10)
-- **Tests `@SpringBootTest` pendientes**: flujo completo crear producto, auditoría persistida
+  - `ProductController` — `POST /`, `GET /{id}`, `PUT /{id}`, `DELETE /{id}`, `GET /sku/{sku}`, `GET /category/{id}`, `GET /low-stock`, `POST /movement`, `GET /{id}/movements`
+- Tests (Tipo A): `CategoryServiceImplTest` (9), `ProductServiceImplTest` (20)
+- Tests (Tipo B): `CategoryControllerTest` (6), `ProductControllerTest` (10)
+- Tests (Tipo D): `ProductRepositoryTest` (4 — `findLowStockProducts` con `availableStock`, `findProductsWithActiveReservations`)
 
 ### Módulo `purchases` — completo
 
 - Entidades: `Supplier`, `PurchaseOrder`, `PurchaseOrderDetail`, enum `PurchaseOrderStatus`
-  - `Supplier`: columnas de auditoría `created_at`, `created_by`, `updated_at`, `updated_by`
-  - `PurchaseOrder`: columnas `created_at`, `created_by`, `updated_at`, más `approved_by`, `received_by`, `cancelled_by` (sin `updatable=false`)
-  - `PurchaseOrderDetail`: sin columnas de auditoría propias (hereda trazabilidad del padre)
+  - `PurchaseOrder`: `approved_by`, `received_by`, `cancelled_by` sin `updatable=false`
 - Repositorios: `SupplierRepository`, `PurchaseOrderRepository`, `PurchaseOrderDetailRepository`
-- DTOs: `SupplierDTO`, `PurchaseOrderRequestDTO`, `PurchaseOrderUpdateRequestDTO`, `PurchaseOrderResponseDTO`, `PurchaseOrderDetailRequestDTO`, `PurchaseOrderDetailUpdateRequestDTO`, `PurchaseOrderDetailResponseDTO`
+- DTOs: 7 DTOs (request, update, response para orden y detalles; SupplierDTO unificado)
 - Mappers: `SupplierMapper`, `PurchaseOrderMapper`, `PurchaseOrderDetailMapper`
 - Servicios: `SupplierServiceImpl`, `PurchaseOrderServiceImpl`
+- Controladores: `SupplierController` (5 endpoints), `PurchaseOrderController` (13 endpoints)
+- Tests (Tipo A): `SupplierServiceImplTest` (14 — incluye RFC propio permitido), `PurchaseOrderServiceImplTest` (29)
+- Tests (Tipo B): `SupplierControllerTest` (7), `PurchaseOrderControllerTest` (18)
+
+### Módulo `sales` — completo
+
+- Entidades: `Client`, `SaleOrder`, `SaleOrderDetail`, enum `SaleOrderStatus`
+  - `SaleOrder`: `approved_by`, `delivered_by`, `cancelled_by` sin `updatable=false`
+  - `SaleOrderDetail`: `unitCost` nullable (capturado de `Product.unitCost`)
+- Repositorios: `ClientRepository`, `SaleOrderRepository` (con queries JPQL: `findActiveOrdersByClient`, `findByProductId`, `countByYear`), `SaleOrderDetailRepository`
+- DTOs: 12 DTOs incluyendo 5 DTOs de reservas (`ReservationSummaryDTO`, `ReservedProductDTO`, `ReservedProductOrderDTO`, `ReservedClientDTO`, `ReservedClientOrderDTO`)
+- Mappers: `ClientMapper`, `SaleOrderDetailMapper`, `SaleOrderMapper` (usa `SaleOrderDetailMapper`)
+- Servicios: `ClientServiceImpl`, `SaleOrderServiceImpl` (con `saveAndFlush` en `approveOrder`), `ReservationServiceImpl` (readOnly, sin mappers)
 - Controladores:
-  - `SupplierController` — `POST /`, `GET /active`, `GET /{id}`, `PUT /{id}`, `DELETE /{id}`
-  - `PurchaseOrderController` — `POST /`, `GET /{id}`, `GET /status/{status}`, `GET /supplier/{id}`, `GET /supplier/{id}/status/{status}`, `GET /product/{id}`, `PUT /{id}`, `PATCH /{id}/approve`, `PATCH /{id}/receive`, `PATCH /{id}/cancel`, `POST /{id}/details`, `PUT /{id}/details/{did}`, `DELETE /{id}/details/{did}`
-- Tests unitarios: `SupplierServiceImplTest` (13), `PurchaseOrderServiceImplTest` (29)
-- Tests de integración: `SupplierControllerTest` (7), `PurchaseOrderControllerTest` (18)
-- **Tests `@SpringBootTest` pendientes**: flujo completo de orden (create→approve→receive con verificación de stock)
+  - `ClientController` — 5 endpoints (`/api/v1/sales/clients`)
+  - `SaleOrderController` — 14 endpoints (`/api/v1/sales/orders`)
+  - `ReservationController` — 5 endpoints GET (`/api/v1/sales/reservations`)
+- Tests (Tipo A): `ClientServiceImplTest` (11), `SaleOrderServiceImplTest` (24), `ReservationServiceImplTest` (12)
+- Tests (Tipo B): `ClientControllerTest` (6), `SaleOrderControllerTest` (14), `ReservationControllerTest` (5)
+- Tests (Tipo C): `SaleOrderConcurrencyTest` (3 — Optimistic Locking con threads reales)
+- Tests (Tipo D): `SaleOrderRepositoryTest` (5 — `countByYear`, `findActiveOrdersByClient`, `findByProductId`)
 
-### Suite de tests actual: 118 tests — 0 fallos
+### Tests de integración transversales
 
-Rama activa de desarrollo: `feature/auth`
+- `AuditAndConstraintIntegrationTest` (8 tests, Tipo C): verifica en BD real que los bugs históricos no regresan:
+  1. Sin JWT → 403 (Spring Security intercepta antes que Hibernate)
+  2. `supplierId` persiste en BD al crear producto (Bug 1)
+  3. `createdBy`/`updatedBy` persisten en categorías
+  4. `approvedBy`/`receivedBy` persisten en orden de compra (Bug 3)
+  5. `unitCost` capturado y congelado en orden de venta
+  6. Ciclo completo PENDING→APPROVED→DELIVERED con `reservedStock`/`currentStock`
+  7. Cancelación de orden de venta desde APPROVED: `reservedStock` liberado
+  8. Cancelación de orden de compra desde APPROVED: `cancelledBy` persistido
+
+### Suite de tests actual: 239 tests — 0 fallos
+
+```
+Tipo A (Mockito):            131 tests
+Tipo B (@WebMvcTest):         68 tests
+Tipo B* (con seguridad):      19 tests
+Tipo C (@SpringBootTest):     14 tests  (8 integración + 3 concurrencia + 3 otros @SpringBootTest)
+Tipo D (@DataJpaTest):         9 tests
+─────────────────────────────────────
+TOTAL MAVEN:                 239 tests
+Tests E2E curl:              103 tests  (fuera del pipeline Maven)
+```
+
+Cobertura JaCoCo: **82.4% líneas · 88.1% métodos · 58.7% ramas**
+
+Rama activa de desarrollo: `feature/sales`
 
 ---
 
@@ -636,10 +969,41 @@ Durante las pruebas con curl (end-to-end) se descubrieron bugs que los tests uni
 
 **Corrección**: eliminar `updatable = false` de `approvedBy`, `receivedBy`, `cancelledBy`. La inmutabilidad se garantiza con lógica de negocio. Patrón: **`updatable = false` solo para campos que se escriben en el INSERT y nunca cambian (como `created_at`, `created_by`). Campos que comienzan null y se asignan en un UPDATE posterior NO deben tener `updatable = false`**.
 
-### Regla general para prevenir estos bugs
+### Bug 4: JwtAuthenticationFilter sin manejo de excepciones
 
-Antes de dar por terminado cualquier nuevo endpoint, verificar con **curl real** (no solo tests unitarios):
-1. El endpoint devuelve el código HTTP esperado
-2. Todos los campos del response tienen valores correctos (no null inesperado)
-3. Una consulta GET posterior devuelve los mismos datos (la BD persistió correctamente)
-4. Los campos de auditoría (`createdById`, `updatedById`, etc.) tienen valor
+**Síntoma**: un cliente con token malformado provoca comportamiento indefinido del servidor (500 o error de Tomcat) en lugar de 403.
+
+**Causa**: `JwtAuthenticationFilter.doFilterInternal()` llamaba a `jwtUtils.extractUsername(token)` sin try-catch. Si el token estaba malformado, la excepción propagaba por la cadena de filtros.
+
+**Por qué los tests no lo detectaron**: todos los tests de controlador usaban `addFilters=false` — el filtro nunca se ejecutaba. Solo `SecurityFilterTest` (Tipo B*) lo detectó porque activa los filtros reales.
+
+**Corrección**: envolver `extractUsername()` en try-catch; si lanza, llamar `filterChain.doFilter()` y `return` — la request pasa sin autenticar y Spring Security devuelve 403 para rutas protegidas.
+
+```java
+String username;
+try {
+    username = jwtUtils.extractUsername(token);
+} catch (Exception e) {
+    filterChain.doFilter(request, response);
+    return;
+}
+```
+
+### Bug 5: save() vs saveAndFlush() con Optimistic Locking
+
+**Síntoma**: `ObjectOptimisticLockingFailureException` se lanzaba con el mensaje interno de Hibernate ("Row was updated or deleted by another transaction") en lugar del mensaje de negocio "Stock modificado concurrentemente."
+
+**Causa**: `save()` encola el UPDATE para el commit de la transacción. El try-catch alrededor de `save()` en `approveOrder()` nunca capturaba la excepción porque ocurría fuera de su alcance (al cerrar la transacción). El `SaleOrderConcurrencyTest` (Tipo C) lo detectó.
+
+**Corrección**: cambiar a `saveAndFlush()` para forzar el SQL inmediatamente dentro del try-catch.
+
+### Regla general para prevenir bugs de integración
+
+Ante cualquier nuevo endpoint, verificar con **curl real** O con **@SpringBootTest** antes de dar por terminado:
+1. El endpoint devuelve el código HTTP esperado.
+2. Todos los campos del response tienen valores correctos (no null inesperado).
+3. Un GET posterior devuelve los mismos datos (la BD persistió correctamente).
+4. Los campos de auditoría (`createdById`, `updatedById`, `approvedById`, etc.) tienen valor.
+5. Los campos calculados (`availableStock`, `totalAmount`) son coherentes con los datos de BD.
+
+Los @SpringBootTest de `AuditAndConstraintIntegrationTest` automatizan exactamente estas verificaciones para los flujos críticos — no son necesarias manualmente si el test ya las cubre.

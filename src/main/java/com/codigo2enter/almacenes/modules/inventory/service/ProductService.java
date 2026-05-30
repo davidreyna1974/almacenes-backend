@@ -55,6 +55,14 @@ public interface ProductService {
     void registerStockMovement(StockMovementRequestDTO request);
 
     /**
+     * Busca un producto por su ID.
+     *
+     * @param id identificador del producto
+     * @return ProductResponseDTO si existe
+     */
+    ProductResponseDTO getById(Long id);
+
+    /**
      * Busca un producto por su SKU.
      *
      * @param sku código único del producto

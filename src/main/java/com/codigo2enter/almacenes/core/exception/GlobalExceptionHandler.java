@@ -2,6 +2,7 @@ package com.codigo2enter.almacenes.core.exception;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -41,6 +42,25 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(RuntimeException.class)
     public ResponseEntity<Map<String, Object>> handleRuntimeException(RuntimeException ex) {
         return buildResponse(HttpStatus.INTERNAL_SERVER_ERROR, ex.getMessage());
+    }
+
+    /**
+     * Defensa en profundidad para colisiones de Optimistic Locking.
+     *
+     * SaleOrderServiceImpl.approveOrder() usa saveAndFlush() para que esta excepción
+     * se lance dentro del try-catch del servicio y sea convertida a un RuntimeException
+     * con mensaje de negocio claro ("concurrentemente"). Este handler cubre el caso
+     * en que el flush ocurra fuera del try-catch (p.ej. si otro código llama save()
+     * sin flush explícito) y la excepción llegue sin convertir al controlador.
+     *
+     * Se retorna 409 Conflict en lugar de 500 porque la operación falló por contención
+     * externa, no por un error interno del servidor — el cliente puede reintentar.
+     */
+    @ExceptionHandler(ObjectOptimisticLockingFailureException.class)
+    public ResponseEntity<Map<String, Object>> handleOptimisticLocking(
+            ObjectOptimisticLockingFailureException ex) {
+        return buildResponse(HttpStatus.CONFLICT,
+            "Stock modificado concurrentemente. Intente nuevamente.");
     }
 
     /**

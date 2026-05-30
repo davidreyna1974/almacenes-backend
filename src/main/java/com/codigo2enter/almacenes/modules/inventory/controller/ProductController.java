@@ -89,6 +89,21 @@ public class ProductController {
     }
 
     /**
+     * GET /api/v1/inventory/products/{id}
+     *
+     * Consulta un producto por su ID. Usado principalmente por el módulo de
+     * concurrencia y por el frontend cuando necesita el estado actual de stock
+     * (currentStock, reservedStock, availableStock) de un producto concreto.
+     *
+     * @param id identificador del producto
+     * @return 200 OK con el ProductResponseDTO
+     */
+    @GetMapping("/{id}")
+    public ResponseEntity<ProductResponseDTO> getById(@PathVariable Long id) {
+        return ResponseEntity.ok(productService.getById(id));
+    }
+
+    /**
      * GET /api/v1/inventory/products/sku/{sku}
      *
      * Busca un producto por su código SKU.

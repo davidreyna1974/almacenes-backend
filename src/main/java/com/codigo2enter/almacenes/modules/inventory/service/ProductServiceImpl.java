@@ -228,6 +228,12 @@ public class ProductServiceImpl implements ProductService {
         stockMovementRepository.save(movement);
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public ProductResponseDTO getById(Long id) {
+        return productMapper.toResponseDTO(findProductOrThrow(id));
+    }
+
     /**
      * {@inheritDoc}
      */

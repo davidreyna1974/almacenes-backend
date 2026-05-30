@@ -64,7 +64,7 @@ public class Client {
      * Contrasta con updatedBy que sí puede cambiar en cada edición.
      */
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "created_by", updatable = false)
+    @JoinColumn(name = "created_by", nullable = false, updatable = false)
     private User createdBy;
 
     @Column(name = "updated_at")

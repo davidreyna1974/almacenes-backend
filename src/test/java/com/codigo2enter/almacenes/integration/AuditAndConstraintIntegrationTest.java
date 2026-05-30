@@ -376,6 +376,130 @@ class AuditAndConstraintIntegrationTest {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // TEST 7 — Cancelación de orden de venta desde APPROVED: reservedStock liberado
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Verifica que al cancelar una orden de venta desde APPROVED,
+     * el reservedStock del producto se libera correctamente en BD.
+     *
+     * Este escenario estaba cubierto por los tests E2E con curl pero NO por
+     * ningún @SpringBootTest. Sin este test, una regresión en cancelOrder()
+     * que dejara de liberar el reservedStock pasaría desapercibida — el stock
+     * quedaría comprometido permanentemente para un producto libre de órdenes.
+     *
+     * Usa un producto propio (no el productId compartido) porque Tests 5 y 6
+     * pueden haber modificado el stock del producto compartido.
+     */
+    @Test
+    @Order(7)
+    @SuppressWarnings("unchecked")
+    void saleOrder_cancelDesdeApproved_liberaReservedStock_enBD() {
+        // Producto fresco con stock controlado
+        Long catId  = categoryId != null ? categoryId : crearCategoria("Cat-Cancel-" + suffix);
+        Long supId  = supplierId  != null ? supplierId  : crearProveedor("CAN" + suffix.substring(0, 5));
+        Long prodId = crearProducto("SKU-CANCEL-" + suffix, catId, supId);
+        Long cliId  = clientId   != null ? clientId   : crearCliente("Cliente Cancel " + suffix);
+
+        int stockInicial    = getProductField(prodId, "currentStock");
+        int reservadoInicial = getProductField(prodId, "reservedStock");
+
+        // Crear orden de venta con 4 unidades
+        Map<String, Object> detail = Map.of("productId", prodId, "quantity", 4, "unitPrice", 999.00);
+        Map<String, Object> body   = Map.of("clientId", cliId, "details", List.of(detail));
+        ResponseEntity<Map> createResp = restTemplate.postForEntity(
+            base + "/sales/orders", new HttpEntity<>(body, authHeaders), Map.class);
+        assertEquals(HttpStatus.CREATED, createResp.getStatusCode());
+        Long soId = ((Number) createResp.getBody().get("id")).longValue();
+
+        // Aprobar — reservedStock debe incrementar en 4
+        restTemplate.exchange(base + "/sales/orders/" + soId + "/approve",
+            HttpMethod.PATCH, new HttpEntity<>(authHeaders), Map.class);
+
+        int reservadoPostApprove = getProductField(prodId, "reservedStock");
+        assertEquals(reservadoInicial + 4, reservadoPostApprove,
+            "reservedStock debe ser " + (reservadoInicial + 4) + " después de aprobar");
+        assertEquals(stockInicial, getProductField(prodId, "currentStock"),
+            "currentStock NO debe cambiar al aprobar — solo reservedStock");
+
+        // Cancelar desde APPROVED
+        ResponseEntity<Map> cancelResp = restTemplate.exchange(
+            base + "/sales/orders/" + soId + "/cancel",
+            HttpMethod.PATCH, new HttpEntity<>(authHeaders), Map.class);
+        assertEquals(HttpStatus.OK, cancelResp.getStatusCode());
+        assertEquals("CANCELLED", cancelResp.getBody().get("status"),
+            "El status debe ser CANCELLED");
+        assertNotNull(cancelResp.getBody().get("cancelledById"),
+            "cancelledById debe persistir en BD al cancelar");
+        assertNotNull(cancelResp.getBody().get("cancelledAt"),
+            "cancelledAt debe tener valor");
+
+        // Verificar en BD que reservedStock volvió al valor inicial
+        int reservadoPostCancel = getProductField(prodId, "reservedStock");
+        assertEquals(reservadoInicial, reservadoPostCancel,
+            "reservedStock debe liberarse (volver a " + reservadoInicial + ") al cancelar desde APPROVED. " +
+            "Valor actual: " + reservadoPostCancel + ". " +
+            "Si es " + reservadoPostApprove + ", la reserva no fue liberada.");
+
+        // currentStock no debe haber cambiado (la cancelación no mueve stock físico)
+        assertEquals(stockInicial, getProductField(prodId, "currentStock"),
+            "currentStock NO debe cambiar al cancelar — solo se libera la reserva");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // TEST 8 — Cancelación de orden de compra desde APPROVED: cancelledBy persiste
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Verifica que al cancelar una orden de compra desde APPROVED,
+     * cancelledBy y cancelledAt persisten correctamente en BD.
+     *
+     * Complementa el Test 4 que cubre PENDING→APPROVED→RECEIVED.
+     * La ruta APPROVED→CANCELLED era la única transición de PurchaseOrder
+     * sin cobertura @SpringBootTest para los campos de auditoría.
+     */
+    @Test
+    @Order(8)
+    @SuppressWarnings("unchecked")
+    void purchaseOrder_cancelDesdeApproved_cancelledBy_persiste_enBD() {
+        Long supId  = supplierId  != null ? supplierId  : crearProveedor("POCA" + suffix.substring(0, 4));
+        Long prodId = productId   != null ? productId   : crearProducto("SKU-POCA-" + suffix,
+                          categoryId != null ? categoryId : crearCategoria("Cat-POCA-" + suffix), supId);
+
+        // Crear orden de compra
+        Map<String, Object> detail  = Map.of("productId", prodId, "quantity", 3, "unitPrice", 100.00);
+        Map<String, Object> poBody  = Map.of("supplierId", supId, "notes", "Test cancel PO", "details", List.of(detail));
+        ResponseEntity<Map> createResp = restTemplate.postForEntity(
+            base + "/purchases/orders", new HttpEntity<>(poBody, authHeaders), Map.class);
+        assertEquals(HttpStatus.CREATED, createResp.getStatusCode());
+        Long poId = ((Number) createResp.getBody().get("id")).longValue();
+
+        // Aprobar
+        restTemplate.exchange(base + "/purchases/orders/" + poId + "/approve",
+            HttpMethod.PATCH, new HttpEntity<>(authHeaders), Map.class);
+
+        // Cancelar desde APPROVED
+        ResponseEntity<Map> cancelResp = restTemplate.exchange(
+            base + "/purchases/orders/" + poId + "/cancel",
+            HttpMethod.PATCH, new HttpEntity<>(authHeaders), Map.class);
+        assertEquals(HttpStatus.OK, cancelResp.getStatusCode());
+        assertEquals("CANCELLED", cancelResp.getBody().get("status"));
+
+        // Verificar en BD con GET posterior (no solo en memoria)
+        ResponseEntity<Map> getResp = restTemplate.exchange(
+            base + "/purchases/orders/" + poId,
+            HttpMethod.GET, new HttpEntity<>(authHeaders), Map.class);
+
+        assertNotNull(getResp.getBody().get("cancelledById"),
+            "cancelledById debe persistir en BD — verifica que el campo no tiene updatable=false incorrecto");
+        assertNotNull(getResp.getBody().get("cancelledAt"),
+            "cancelledAt debe persistir en BD");
+        // approvedBy debe seguir presente (cancelar no borra la aprobación)
+        assertNotNull(getResp.getBody().get("approvedById"),
+            "approvedById debe seguir visible después de cancelar");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Helpers de creación de entidades
     // ─────────────────────────────────────────────────────────────────────────
 

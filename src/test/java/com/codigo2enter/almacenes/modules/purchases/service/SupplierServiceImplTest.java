@@ -25,6 +25,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -306,6 +307,30 @@ class SupplierServiceImplTest {
         // ACT + ASSERT
         assertThrows(RuntimeException.class,
                 () -> supplierService.updateSupplier(1L, inputDTO));
+    }
+
+    /**
+     * Happy path: actualizar RFC al mismo valor que ya tiene el proveedor debe permitirse.
+     * La condición !existing.getId().equals(id) garantiza que un proveedor puede
+     * mantener su propio RFC sin que se lance la excepción de "RFC en uso por otro".
+     */
+    @Test
+    @DisplayName("updateSupplier: debe permitir conservar el mismo RFC propio al actualizar")
+    void shouldAllowKeepingOwnRfcOnUpdate() {
+        // ARRANGE — findByRfc retorna el MISMO proveedor (mismo id=1L), no uno diferente
+        when(supplierRepository.findById(1L)).thenReturn(Optional.of(entity));
+        when(supplierRepository.findByRfc("ABC123456789A")).thenReturn(Optional.of(entity));
+        when(supplierRepository.findByCompanyName("Ferretería SA")).thenReturn(Optional.of(entity));
+        when(supplierMapper.toDTO(entity)).thenReturn(outputDTO);
+
+        // ACT + ASSERT — no debe lanzar excepción al mantener el RFC propio
+        // updateSupplier usa Hibernate dirty-checking (no llama a save() explícitamente),
+        // por lo que solo se verifica que el método completa sin excepción y que
+        // los campos de auditoría se asignan correctamente en la entidad.
+        assertDoesNotThrow(() -> supplierService.updateSupplier(1L, inputDTO),
+                "Un proveedor debe poder conservar su propio RFC al actualizarse");
+        assertNotNull(entity.getUpdatedAt(), "updatedAt debe asignarse al actualizar");
+        assertEquals(user, entity.getUpdatedBy(), "updatedBy debe ser el usuario autenticado");
     }
 
     /**

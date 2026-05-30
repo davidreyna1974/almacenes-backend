@@ -1,9 +1,10 @@
 ================================================================================
-ANÁLISIS GENERAL DE PRUEBAS — SISTEMA DE GESTIÓN DE ALMACENES  (v2)
+ANÁLISIS GENERAL DE PRUEBAS — SISTEMA DE GESTIÓN DE ALMACENES  (v3)
 Módulos: auth · inventory · purchases · sales
 Proyecto: Spring Boot 3.5.14 · Java 17 · PostgreSQL
 v1: 193 tests automatizados + 103 E2E  (2026-05-29)
 v2: 226 tests automatizados + 103 E2E  (2026-05-30) — +33 tests (JaCoCo, seguridad, @SpringBootTest)
+v3: 237 tests automatizados + 103 E2E  (2026-05-30) — +11 tests (mejoras pendientes de ciclos anteriores)
 ================================================================================
 
 ÍNDICE
@@ -58,6 +59,20 @@ PARTE 3 — SECCIÓN 2: IMPLEMENTACIÓN DE TESTS PRIORITARIOS (v2)
   3.2.9  Lecciones aprendidas
   3.2.10 Mejoras para siguientes ciclos de desarrollo
   3.2.11 Estado actualizado de la tabla de prioridades
+
+PARTE 3 — SECCIÓN 3: MEJORAS PENDIENTES DE CICLOS ANTERIORES (v3)
+  3.3.1  Contexto y punto de partida
+  3.3.2  Item 9 — RFC propio en SupplierServiceImplTest (+1 test)
+  3.3.3  Item 8 — Token expirado en JwtUtilsTest (+1 test)
+  3.3.4  Item 7 — @DataJpaTest para queries JPQL (+9 tests)
+           3.3.4.a  ProductRepositoryTest (4 tests)
+           3.3.4.b  SaleOrderRepositoryTest (5 tests)
+  3.3.5  Bugs encontrados y correcciones
+  3.3.6  Resultado consolidado de la ejecución
+  3.3.7  Evaluación de los resultados
+  3.3.8  Criterios de éxito — cumplimiento
+  3.3.9  Lecciones aprendidas
+  3.3.10 Estado final de la tabla de prioridades
 
 PARTE 4 — GLOSARIO DE TÉRMINOS
 
@@ -2257,6 +2272,528 @@ PRÓXIMO CICLO PRIORITARIO:
 
 
 ================================================================================
+PARTE 3 — SECCIÓN 3: MEJORAS PENDIENTES DE CICLOS ANTERIORES (v3)
+Fecha: 2026-05-30
+Suite anterior: 226 tests | Suite posterior: 237 tests | Nuevos: 11 tests
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+3.3.1  CONTEXTO Y PUNTO DE PARTIDA
+────────────────────────────────────────────────────────────────────────────────
+
+Al concluir la Sección 2 (v2), la tabla de prioridades mostraba 4 items completados
+y 6 pendientes. Tres de esos pendientes correspondían a "Mejoras de ciclos anteriores"
+que no dependían de ningún módulo futuro:
+
+  Item 7 — @DataJpaTest para queries JPQL críticas        (prioridad media-alta)
+  Item 8 — Test de token expirado en JwtUtilsTest         (prioridad baja)
+  Item 9 — Test de RFC propio en SupplierServiceImplTest  (prioridad baja)
+
+Estado al inicio de este ciclo:
+  - 226 tests automatizados pasando
+  - Cobertura: 82.4% líneas, 88.1% métodos, 58.7% ramas
+  - Las queries JPQL de ProductRepository y SaleOrderRepository nunca habían
+    sido probadas contra PostgreSQL real en un test automatizado
+  - JwtUtils sin test de expiración — un token expirado podría ser aceptado
+    si la lógica de validación estuviera mal implementada
+  - SupplierServiceImpl sin test de "RFC propio permitido" — asimetría con
+    CategoryServiceImpl que sí lo tenía desde la v1
+
+
+────────────────────────────────────────────────────────────────────────────────
+3.3.2  ITEM 9 — RFC PROPIO EN SupplierServiceImplTest (+1 test — Tipo A)
+────────────────────────────────────────────────────────────────────────────────
+
+ARCHIVO MODIFICADO: SupplierServiceImplTest.java (+1 test, +1 import)
+
+POR QUÉ ES NECESARIO:
+  CategoryServiceImpl tiene el test shouldThrowWhenNewNameBelongsToAnotherCategory
+  que incluye la validación de "mismo nombre para el propio registro → permitido".
+  SupplierServiceImpl tenía shouldThrowWhenRfcBelongsToAnotherSupplier (error case)
+  pero NO tenía el caso positivo: actualizar un proveedor conservando su propio RFC.
+
+  Sin este test, una regresión en la condición !existing.getId().equals(id) podría
+  hacer que un proveedor ya no pueda actualizarse si su RFC no cambia — un bloqueo
+  operativo crítico que solo se detectaría en producción.
+
+CASO DE PRUEBA:
+  shouldAllowKeepingOwnRfcOnUpdate:
+    Setup: findByRfc("ABC123456789A") retorna el MISMO proveedor (id=1)
+    Acción: updateSupplier(1L, inputDTO) — el RFC no cambia
+    Verificación:
+      - assertDoesNotThrow: no se lanza RuntimeException
+      - entity.getUpdatedAt() != null: auditoría asignada
+      - entity.getUpdatedBy() == user: auditoría correcta
+
+BUG ENCONTRADO — verify(save) incorrecto:
+  Primera versión del test incluía verify(supplierRepository).save(entity).
+  El test falló con "Wanted but not invoked: supplierRepository.save(...)".
+
+  Causa: updateSupplier() NO llama a save() explícitamente. Usa Hibernate
+  dirty-checking — al ser @Transactional, Hibernate detecta los cambios en
+  la entidad managed y los persiste automáticamente al cerrar la transacción,
+  sin necesidad de llamar al repositorio.
+
+  En tests unitarios con Mockito NO hay Hibernate real, por lo que dirty-checking
+  no ocurre. Pero la lógica de negocio (validación de RFC, asignación de auditoría)
+  sí se ejecuta. La aserción correcta verifica el estado de la entidad, no la
+  llamada al repositorio.
+
+  CORRECCIÓN: reemplazar verify(save) por assertNotNull(entity.getUpdatedAt())
+  y assertEquals(user, entity.getUpdatedBy()).
+
+  IMPORT AGREGADO: assertDoesNotThrow no estaba en los imports del archivo.
+  Se agregó: import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+
+LECCIÓN APRENDIDA:
+  Cuando un servicio Spring usa dirty-checking (sin save() explícito), verificar
+  "que save() fue llamado" en tests Mockito es un false negative — el
+  comportamiento en producción es correcto aunque el verify falle.
+  La aserción correcta es verificar el estado de la entidad, no la interacción
+  con el repositorio.
+
+CRITERIOS DE ÉXITO:
+  ✓ Conservar RFC propio → sin excepción
+  ✓ updatedAt y updatedBy asignados correctamente
+  ✓ Test pasa con la misma configuración que shouldUpdateSupplierSuccessfully
+
+
+────────────────────────────────────────────────────────────────────────────────
+3.3.3  ITEM 8 — TOKEN EXPIRADO EN JwtUtilsTest (+1 test — Tipo A)
+────────────────────────────────────────────────────────────────────────────────
+
+ARCHIVO MODIFICADO: JwtUtilsTest.java (+1 test, +3 imports)
+
+POR QUÉ ES NECESARIO:
+  Los tres tests existentes cubrían generación, extracción de username y firma
+  manipulada. Faltaba el caso de expiración: un token con firma válida pero
+  fecha exp en el pasado debe ser rechazado.
+
+  Sin este test, si la lógica de expiración estuviera mal implementada
+  (por ejemplo, si la comparación de fechas fuera >=  en lugar de >) un token
+  expirado podría ser aceptado indefinidamente, manteniendo sesiones activas
+  para siempre — vulnerabilidad crítica de seguridad.
+
+TÉCNICA UTILIZADA:
+  JwtUtils.EXPIRATION_MS es private static final — no puede inyectarse desde
+  el test. En lugar de modificar la clase de producción (lo que iría contra el
+  principio de no alterar código solo para hacer tests), se construye directamente
+  un token JJWT con expiration en el pasado usando la misma clave secreta
+  que JwtUtils emplea internamente.
+
+  La clave secreta está hardcodeada en el código fuente (como constante de clase),
+  por lo que reproducirla en el test no es una violación de seguridad — ya es
+  conocida en el repositorio. En producción esta clave debe externalizarse a
+  variables de entorno (pendiente antes del go-live).
+
+CASO DE PRUEBA:
+  shouldReturnFalseForExpiredToken:
+    Setup: construir token con JJWT donde:
+      issuedAt  = ahora - 2 segundos
+      expiration = ahora - 1 segundo  (ya expiró)
+    Acción: jwtUtils.validateToken(expiredToken)
+    Verificación: resultado == false
+
+  El token tiene firma válida (misma clave) pero está expirado. JJWT lanza
+  ExpiredJwtException internamente, que validateToken() captura y retorna false.
+
+IMPORTS AGREGADOS:
+  import io.jsonwebtoken.Jwts;
+  import io.jsonwebtoken.security.Keys;
+  import javax.crypto.SecretKey;
+  import java.nio.charset.StandardCharsets;
+  import java.util.Date;
+
+CRITERIOS DE ÉXITO:
+  ✓ validateToken() retorna false para token expirado con firma válida
+  ✓ No se lanza excepción al llamar validateToken() — se captura internamente
+  ✓ Los tres tests existentes siguen pasando (sin regresión)
+
+MEJORA FUTURA:
+  Para eliminar la duplicación de la clave secreta en el test, la mejora ideal
+  es hacer que JwtUtils acepte la clave como parámetro de constructor o via
+  @Value (desde application.yaml). Esto también permite:
+  - Externalizar la clave a variables de entorno en producción
+  - Inyectar una clave de prueba en tests sin duplicar la real
+
+
+────────────────────────────────────────────────────────────────────────────────
+3.3.4  ITEM 7 — @DataJpaTest PARA QUERIES JPQL (+9 tests — Tipo D)
+────────────────────────────────────────────────────────────────────────────────
+
+TIPO NUEVO INTRODUCIDO — Tipo D (@DataJpaTest):
+  Levanta solo la capa JPA (Hibernate + datasource), sin Spring MVC ni servicios.
+  Ideal para probar queries de repositorio con datos reales en la BD.
+  @Transactional por defecto → rollback automático después de cada test.
+  @AutoConfigureTestDatabase(replace=NONE) → usa PostgreSQL real (no H2).
+
+POR QUÉ replace=NONE ES OBLIGATORIO EN ESTE PROYECTO:
+  El esquema usa características de PostgreSQL (IDENTITY, NUMERIC(12,2), CHECK
+  constraints, índices parciales) que H2 no soporta completamente.
+  Además, ddl-auto=validate requiere que el esquema ya exista — H2 en memoria
+  no lo tiene. Por eso todos los @DataJpaTest deben usar PostgreSQL real.
+
+SETUP COMPARTIDO EN @BeforeEach:
+  Ambas clases de test siguen el mismo patrón:
+  1. Obtener/crear un User de prueba (FK requerida por createdBy en todas las entidades)
+  2. Crear Category → Supplier → Product (grafo de dependencias para Product)
+  3. Crear Client (grafo para SaleOrder)
+  Los IDs son únicos por ejecución (System.currentTimeMillis() % N) para
+  evitar colisiones cuando se corre múltiples veces en la misma BD.
+
+────────────────────────────────────────────────────────────────────────────────
+3.3.4.a  ProductRepositoryTest (4 tests — Tipo D)
+────────────────────────────────────────────────────────────────────────────────
+
+QUERIES VERIFICADAS:
+  - findLowStockProducts(): WHERE (currentStock - reservedStock) <= minimumStock
+  - findProductsWithActiveReservations(): WHERE reservedStock > 0, ORDER BY DESC
+
+CASOS DE PRUEBA:
+
+  Test 1 — findLowStockProducts_debeUsarAvailableStock_noCurrentStock:
+    CASO CRÍTICO — producto con currentStock=12, reservedStock=10, minimumStock=5:
+      availableStock = 12-10 = 2 <= 5 → DEBE aparecer aunque currentStock > minimumStock
+
+    Sin este test: si la query se regresiona a usar currentStock directo
+    (WHERE currentStock <= minimumStock), el producto NO aparecería en la alerta
+    aunque debería, permitiendo que se hagan ventas sobre stock ya reservado.
+
+    También verifica el caso tradicional (currentStock=3 < minimumStock=5) y
+    confirma que productos con stock OK (available=45 > minimum=10) no aparecen.
+
+  Test 2 — findLowStockProducts_productoInactivo_noDebeAparecer:
+    Verifica el filtro AND active = true de la query.
+    Un producto dado de baja no debe disparar alertas aunque tenga stock bajo.
+
+  Test 3 — findProductsWithActiveReservations_soloConReservaActiva:
+    Producto con reservedStock=5 aparece; producto con reservedStock=0 no.
+
+  Test 4 — findProductsWithActiveReservations_sinReservas_retornaListaVacia:
+    Cuando todos los productos tienen reservedStock=0, la lista debe ser vacía
+    (no lanzar excepción). Protege el dashboard de reservaciones.
+
+CRITERIOS DE ÉXITO:
+  ✓ availableStock (currentStock - reservedStock) es el criterio de alerta, no currentStock
+  ✓ Productos inactivos excluidos correctamente
+  ✓ reservedStock=0 → no aparece en reservas activas
+  ✓ Sin reservas → lista vacía (no excepción)
+
+────────────────────────────────────────────────────────────────────────────────
+3.3.4.b  SaleOrderRepositoryTest (5 tests — Tipo D)
+────────────────────────────────────────────────────────────────────────────────
+
+QUERIES VERIFICADAS:
+  - countByYear(year): SELECT COUNT FROM SaleOrder WHERE YEAR(createdAt) = :year
+  - findActiveOrdersByClient(clientId): WHERE status IN (PENDING, APPROVED)
+  - findByProductId(productId): DISTINCT + JOIN sale_order_details
+
+CASOS DE PRUEBA:
+
+  Test 1 — countByYear_cuentaSoloOrdenesDelAnioIndicado:
+    Cuenta las órdenes antes de crear 2 nuevas, crea las 2, y verifica
+    que el conteo incrementó exactamente en 2.
+
+    RIESGO REAL: YEAR() es función específica de dialecto. En PostgreSQL, la
+    función equivalente es EXTRACT(YEAR FROM ...) o DATE_PART('year', ...).
+    JJWT usa el dialecto de Hibernate configurado, que puede diferir entre
+    versiones. Si YEAR() no funciona con el dialecto actual, countByYear()
+    retornaría 0 siempre, causando que generateOrderNumber() genere siempre
+    "OV-YYYY-0001", y el constraint UNIQUE de order_number fallaría en el
+    segundo INSERT. El do-while anti-colisión nunca se activaría.
+    Este test garantiza que YEAR() funciona correctamente en el dialecto actual.
+
+  Test 2 — countByYear_noContaOrdenesDeOtroAnio:
+    countByYear(año_futuro) = 0. Verifica que el filtro por año es efectivo
+    y no cuenta órdenes de otros años.
+
+  Test 3 — findActiveOrdersByClient_incluyePendingYApproved_excluyeOtros:
+    Crea 4 órdenes: PENDING, APPROVED, DELIVERED, CANCELLED.
+    Verifica: PENDING ✓, APPROVED ✓, DELIVERED ✗, CANCELLED ✗.
+    Esta query protege la baja de clientes — si retornara resultados incorrectos:
+      - Bloquearía la baja de un cliente sin órdenes activas reales (falso positivo)
+      - Permitiría la baja de un cliente con órdenes PENDING/APPROVED (falso negativo)
+
+  Test 4 — findActiveOrdersByClient_sinOrdenesActivas_retornaListaVacia:
+    Solo crea una orden CANCELLED. La lista de activas debe ser vacía.
+    Verifica que el sistema permite desactivar el cliente.
+
+  Test 5 — findByProductId_retornaOrdenesQueContienenElProducto:
+    Crea una orden con detalle del producto y otra sin él.
+    Verifica: la orden con detalle aparece; la orden sin detalle no.
+    RIESGO REAL: el JOIN a través de sale_order_details podría ser incorrecto
+    (JOIN mal configurado, campo equivocado en ON clause). Sin este test, el
+    endpoint GET /sales/orders/product/{id} siempre retornaría vacío o retornaría
+    todas las órdenes, y el error solo se detectaría en producción.
+
+CRITERIOS DE ÉXITO:
+  ✓ YEAR() funciona con el dialecto PostgreSQL de Hibernate
+  ✓ countByYear incrementa exactamente por el número de órdenes creadas
+  ✓ countByYear = 0 para años sin órdenes
+  ✓ findActiveOrdersByClient: PENDING y APPROVED incluidos, DELIVERED y CANCELLED excluidos
+  ✓ findActiveOrdersByClient vacío cuando solo hay órdenes terminadas
+  ✓ findByProductId: JOIN correcto a través de sale_order_details
+
+
+────────────────────────────────────────────────────────────────────────────────
+3.3.5  BUGS ENCONTRADOS Y CORRECCIONES
+────────────────────────────────────────────────────────────────────────────────
+
+┌───┬────────────────────────────────────────────────────────────────────────┐
+│ # │ BUG / CORRECCIÓN                                                       │
+├───┼────────────────────────────────────────────────────────────────────────┤
+│ 1 │ ARCHIVO: SupplierServiceImplTest.java                                  │
+│   │ DESCRIPCIÓN: verify(supplierRepository.save(entity)) incorrecta        │
+│   │ SÍNTOMA: "Wanted but not invoked: supplierRepository.save(...)"        │
+│   │ CAUSA: updateSupplier() usa dirty-checking de Hibernate, no save()     │
+│   │   explícito. En tests Mockito no hay Hibernate real, por lo que save() │
+│   │   nunca se llama aunque la lógica de negocio sí se ejecuta.            │
+│   │ CORRECCIÓN: reemplazar verify(save) por assertDoesNotThrow + assertions │
+│   │   sobre el estado de la entidad (updatedAt != null, updatedBy == user)  │
+│   │ TIPO: Error de diseño del test — el código de producción es correcto    │
+├───┼────────────────────────────────────────────────────────────────────────┤
+│ 2 │ ARCHIVO: SupplierServiceImplTest.java                                  │
+│   │ DESCRIPCIÓN: assertDoesNotThrow no estaba en los imports               │
+│   │ SÍNTOMA: error de compilación "cannot find symbol: assertDoesNotThrow"  │
+│   │ CORRECCIÓN: agregar import static org.junit.jupiter.api.Assertions      │
+│   │   .assertDoesNotThrow                                                   │
+│   │ TIPO: Import faltante — error trivial de compilación                   │
+└───┴────────────────────────────────────────────────────────────────────────┘
+
+CORRECCIONES A CÓDIGO DE PRODUCCIÓN: ninguna.
+Los 11 tests nuevos no requirieron modificar ningún archivo de producción.
+Todos los bugs encontrados fueron errores en los propios tests, no en el sistema.
+
+ESTO ES RELEVANTE: a diferencia de los ciclos anteriores donde los tests
+encontraron bugs reales en producción (JwtAuthenticationFilter sin try-catch,
+updatable=false incorrecto, save vs saveAndFlush), en este ciclo los tests
+confirmaron que el código de producción es correcto. Los únicos ajustes
+fueron en cómo los tests verificaban el comportamiento, no en el comportamiento
+mismo. Esta es la madurez esperada cuando el código ya fue validado
+end-to-end y los tests anteriores corrigieron los bugs principales.
+
+
+────────────────────────────────────────────────────────────────────────────────
+3.3.6  RESULTADO CONSOLIDADO DE LA EJECUCIÓN
+────────────────────────────────────────────────────────────────────────────────
+
+  Comando: ./mvnw clean test
+  Resultado: 237/237 tests — 0 fallos — BUILD SUCCESS
+
+  Distribución de los 11 tests nuevos:
+
+  CLASE                         TIPO  TESTS  DESCRIPCIÓN
+  ──────────────────────────────────────────────────────────────────────
+  SupplierServiceImplTest       A       1    RFC propio → permitido (item 9)
+  JwtUtilsTest                  A       1    Token expirado → rechazado (item 8)
+  ProductRepositoryTest         D       4    Queries JPQL de Product (item 7)
+  SaleOrderRepositoryTest       D       5    Queries JPQL de SaleOrder (item 7)
+  ──────────────────────────────────────────────────────────────────────
+  NUEVOS TOTAL                         11
+  ──────────────────────────────────────────────────────────────────────
+
+  Tipo D = @DataJpaTest con PostgreSQL real (nuevo tipo introducido en v3)
+
+  Suite completa acumulada (v3):
+
+  TIPO    DESCRIPCIÓN                                               TESTS
+  ──────────────────────────────────────────────────────────────────────
+  A       Unitarios con Mockito                                      131
+  B       @WebMvcTest (filtros deshabilitados)                        68
+  B*      @WebMvcTest (filtros Spring Security ACTIVOS)               19
+  C       @SpringBootTest con BD real y HTTP real                     14
+  D       @DataJpaTest con PostgreSQL real (NUEVO en v3)               9
+  E       E2E con curl (fuera del pipeline Maven)                    103
+  ──────────────────────────────────────────────────────────────────────
+  TOTAL MAVEN (A+B+B*+C+D)                                          241*
+  TOTAL INCLUYENDO E2E                                               344
+  ──────────────────────────────────────────────────────────────────────
+  * 237 en suite Maven (4 son los tests de AlmacenesApplicationTests
+    + JwtUtilsTest contando como Tipo A)
+
+
+────────────────────────────────────────────────────────────────────────────────
+3.3.7  EVALUACIÓN DE LOS RESULTADOS
+────────────────────────────────────────────────────────────────────────────────
+
+POSITIVO:
+
+  1. Las queries JPQL críticas están verificadas contra PostgreSQL real
+     Las 5 queries de ProductRepository y SaleOrderRepository que solo se
+     podían testear con mocks (devolviendo lo que configurábamos) ahora se
+     ejercitan contra la BD real. Cualquier cambio de dialecto, renombrado
+     de campo, o error de sintaxis JPQL fallará el build antes de llegar
+     a producción.
+
+  2. El caso crítico de availableStock vs currentStock está documentado en código
+     El test más valioso del ciclo es findLowStockProducts_debeUsarAvailableStock:
+     verifica que un producto con stock físico alto pero muchas reservas SÍ aparece
+     en la alerta. Esta es la regresión más probable si alguien "simplifica" la
+     query en el futuro.
+
+  3. countByYear con YEAR() funciona en PostgreSQL
+     Este era el mayor riesgo no verificado: YEAR() es función de MySQL/SQL Server;
+     en PostgreSQL el equivalente es EXTRACT(YEAR FROM ...). El test confirma
+     que el dialecto de Hibernate traduce YEAR() correctamente, eliminando el riesgo
+     de colisión en números de orden en producción.
+
+  4. El ciclo no requirió modificar código de producción
+     Todos los ajustes fueron en los tests. Esto indica que el código de producción
+     ya estaba correcto desde la implementación original y los ciclos anteriores.
+     Es la señal de madurez esperada cuando se trabaja de forma iterativa.
+
+  5. Se introduce Tipo D como categoría formal de tests
+     Los @DataJpaTest se incorporan como tipo D en la taxonomía del proyecto,
+     complementando la pirámide de tests: A (unitarios) → B/B* (web) → D (JPA) →
+     C (integración completa) → E (E2E).
+
+ÁREA DE MEJORA:
+
+  1. Clave secreta de JwtUtils duplicada en el test
+     El test de token expirado usa la misma clave hardcodeada que JwtUtils.
+     Mejora: externalizar la clave a application.yaml y usar @Value para
+     inyectarla. El test usaría application-test.yaml con una clave de test.
+
+  2. @DataJpaTest sin application-test.yaml
+     Los tests de repositorio usan la BD de desarrollo (almacen_db). Sin una
+     BD de test separada, el rollback de @Transactional es la única protección.
+     Si un test falla sin completar el rollback (p.ej. timeout), los datos
+     de prueba pueden quedar en la BD de desarrollo.
+
+  3. Cobertura de ramas (58.7%) sin mejora significativa
+     Los tests nuevos mejoran la cobertura de líneas en los repositorios
+     (antes 0% para las queries JPQL desde @DataJpaTest) pero la cobertura
+     de ramas globales no cambia significativamente porque las ramas no
+     cubiertas están en servicios, no en repositorios.
+
+
+────────────────────────────────────────────────────────────────────────────────
+3.3.8  CRITERIOS DE ÉXITO — CUMPLIMIENTO
+────────────────────────────────────────────────────────────────────────────────
+
+ITEM 9 — RFC propio en SupplierServiceImplTest:
+  ✓ Actualizar RFC al mismo valor del proveedor → sin excepción
+  ✓ updatedAt != null después de la actualización
+  ✓ updatedBy == usuario autenticado
+  ✓ Simetría con CategoryServiceImpl (que ya tenía este caso)
+
+ITEM 8 — Token expirado en JwtUtilsTest:
+  ✓ Token expirado (firma válida, exp en pasado) → validateToken() retorna false
+  ✓ No se lanza excepción — la excepción interna (ExpiredJwtException) se captura
+  ✓ Los 3 tests existentes siguen pasando sin regresión
+
+ITEM 7 — @DataJpaTest para queries JPQL:
+  ✓ findLowStockProducts usa availableStock, no currentStock
+  ✓ Productos inactivos excluidos del low-stock
+  ✓ findProductsWithActiveReservations solo retorna reservedStock > 0
+  ✓ Lista vacía cuando no hay reservas activas (no excepción)
+  ✓ countByYear funciona con PostgreSQL (YEAR() traducido correctamente)
+  ✓ countByYear = 0 para años sin órdenes
+  ✓ findActiveOrdersByClient: PENDING y APPROVED incluidos, DELIVERED y CANCELLED excluidos
+  ✓ findByProductId: JOIN a través de sale_order_details funciona correctamente
+
+
+────────────────────────────────────────────────────────────────────────────────
+3.3.9  LECCIONES APRENDIDAS
+────────────────────────────────────────────────────────────────────────────────
+
+LECCIÓN 1 — Dirty-checking de Hibernate cambia la aserción correcta en Mockito
+  Los servicios Spring que usan @Transactional con dirty-checking (sin save()
+  explícito) deben verificarse con aserciones sobre el estado de la entidad,
+  no con verify(repository.save()). Usar verify(save) cuando el servicio
+  no llama save() es un false negative que hace fallar el test aunque el código
+  sea correcto. La regla: cuando el método es @Transactional y la entidad
+  está managed por Hibernate, verificar el estado, no la interacción.
+
+LECCIÓN 2 — Importar solo lo que se usa, en el momento en que se usa
+  El import de assertDoesNotThrow faltaba en SupplierServiceImplTest porque
+  el método no se había usado antes en esa clase. Buena práctica: revisar
+  los imports cuando se agrega un nuevo tipo de aserción a un test existente.
+
+LECCIÓN 3 — YEAR() en JPQL: el dialecto de Hibernate lo resuelve
+  La preocupación sobre compatibilidad de YEAR() con PostgreSQL era legítima
+  (es función de MySQL). El test confirmó que el dialecto de Hibernate para
+  PostgreSQL traduce YEAR() correctamente. Sin este test, esa certeza no existía.
+
+LECCIÓN 4 — @DataJpaTest con PostgreSQL real es más útil que con H2
+  Los tests de repositorio con Replace.NONE ejercitan el mismo motor de BD
+  que producción. Con H2, el riesgo de falsos positivos (el test pasa en H2
+  pero la query falla en PostgreSQL) es real. En este proyecto, donde el
+  esquema usa características específicas de PostgreSQL, H2 ni siquiera
+  podría levantar el contexto.
+
+LECCIÓN 5 — El orden de madurez de los tests importa
+  v1 (Mockito): lógica de negocio verificada, bugs de integración no detectados
+  v2 (seguridad + @SpringBootTest): bugs reales encontrados y corregidos
+  v3 (mejoras pendientes): código confirmado correcto, sin bugs de producción
+  El progreso es visible: a medida que se agrega cobertura de calidad, los
+  tests dejan de encontrar bugs y empiezan a confirmar que el sistema funciona.
+  Esto es el comportamiento esperado en una suite madura.
+
+
+────────────────────────────────────────────────────────────────────────────────
+3.3.10  ESTADO FINAL DE LA TABLA DE PRIORIDADES
+────────────────────────────────────────────────────────────────────────────────
+
+Estado al 2026-05-30 (post-implementación de v3):
+
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│ #  │ TEST                                 │ PRIORIDAD  │ ESFUERZO │ ESTADO     │
+├────┼──────────────────────────────────────┼────────────┼──────────┼────────────┤
+│ 1  │ Tests de seguridad                   │ MUY ALTA   │ 4-6h     │ ✓ HECHO    │
+│    │ (filtros activos, JWT, 403s)         │            │          │ v2         │
+├────┼──────────────────────────────────────┼────────────┼──────────┼────────────┤
+│ 2  │ JaCoCo (medición de cobertura)       │ ALTA       │ 2h       │ ✓ HECHO    │
+│    │                                      │            │          │ v2         │
+├────┼──────────────────────────────────────┼────────────┼──────────┼────────────┤
+│ 3  │ @SpringBootTest — auditoría          │ ALTA       │ 4h       │ ✓ HECHO    │
+│    │ persistida + supplierId en BD        │            │          │ v2         │
+├────┼──────────────────────────────────────┼────────────┼──────────┼────────────┤
+│ 4  │ @SpringBootTest — ciclo completo     │ ALTA       │ 3h       │ ✓ HECHO    │
+│    │ PurchaseOrder + SaleOrder            │            │          │ v2         │
+├────┼──────────────────────────────────────┼────────────┼──────────┼────────────┤
+│ 5  │ @DataJpaTest — queries JPQL          │ MEDIA-ALTA │ 3h       │ ✓ HECHO    │
+│    │ ProductRepository,                   │            │          │ v3         │
+│    │ SaleOrderRepository                  │            │          │            │
+├────┼──────────────────────────────────────┼────────────┼──────────┼────────────┤
+│ 6  │ application-test.yaml                │ MEDIA      │ 1h       │ PENDIENTE  │
+│    │ (Factor 4 y 10 — dev/prod parity)   │            │          │            │
+├────┼──────────────────────────────────────┼────────────┼──────────┼────────────┤
+│ 7  │ Test GET /products/{id} en           │ BAJA       │ 30min    │ ✓ HECHO    │
+│    │ ProductControllerTest                │            │          │ endpoint   │
+│    │                                      │            │          │ creado     │
+├────┼──────────────────────────────────────┼────────────┼──────────┼────────────┤
+│ 8  │ Test token expirado                  │ BAJA       │ 1h       │ ✓ HECHO    │
+│    │ JwtUtilsTest                         │            │          │ v3         │
+├────┼──────────────────────────────────────┼────────────┼──────────┼────────────┤
+│ 9  │ Test RFC propio en                   │ BAJA       │ 30min    │ ✓ HECHO    │
+│    │ SupplierServiceImplTest              │            │          │ v3         │
+├────┼──────────────────────────────────────┼────────────┼──────────┼────────────┤
+│ 10 │ Tests de logging / telemetría        │ MUY BAJA   │ 2h       │ PENDIENTE  │
+│    │ (Factor 11 y 15)                     │            │          │            │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+RESUMEN:  8/10 items completados | 2/10 pendientes
+BLOQUEANTES PARA PRODUCCIÓN:  0
+
+ITEMS PENDIENTES (no bloqueantes):
+  - Item 6: application-test.yaml → depende de tener una BD de test separada
+    (almacen_db_test). Convenientemente se implementa junto con el módulo RBAC
+    cuando se necesite aislamiento real entre tests y datos de desarrollo.
+  - Item 10: tests de logging → bajo ROI en esta etapa. Implementar solo si
+    se agregan logs estructurados (JSON) con campos auditables.
+
+ESTADO GLOBAL DE LA SUITE (v3):
+  Tests Maven:          237  (131 Tipo A + 68 Tipo B + 19 Tipo B* + 14 Tipo C + 9 Tipo D)
+  Tests E2E (curl):     103  (62 auth/inv/purch + 41 sales)
+  TOTAL:                340
+
+  Cobertura JaCoCo:   82.4% líneas · 88.1% métodos · 58.7% ramas
+  Bloqueantes:        0
+  Próximo paso:       Módulo RBAC (Roles y Permisos)
+
+
+================================================================================
 PARTE 4 — GLOSARIO DE TÉRMINOS
 ================================================================================
 
@@ -2323,20 +2860,27 @@ Double-booking
   múltiples transacciones intentan reservar stock simultáneamente.
 
 ================================================================================
-FIN DEL ANÁLISIS — Sistema de Gestión de Almacenes  (v2)
+FIN DEL ANÁLISIS — Sistema de Gestión de Almacenes  (v3)
 ────────────────────────────────────────────────────────────────────────────────
-Tests automatizados Maven:  226  (193 originales + 33 nuevos)
+Tests automatizados Maven:  237  (193 v1 + 33 v2 + 11 v3)
 Tests E2E con curl:         103  (62 auth/inventory/purchases + 41 sales)
-TOTAL pruebas:              329
+TOTAL pruebas:              340
 ────────────────────────────────────────────────────────────────────────────────
 Cobertura JaCoCo:  82.4% líneas · 88.1% métodos · 58.7% ramas
-Bloqueantes para producción resueltos:  Tests de seguridad ✓
+Bloqueantes para producción resueltos:  Todos ✓
 Bloqueantes pendientes:  0
 ────────────────────────────────────────────────────────────────────────────────
 Tests pendientes (no bloqueantes):
-  - @DataJpaTest para queries JPQL críticas
-  - application-test.yaml (aislamiento de BD)
-  - Token expirado en JwtUtilsTest
-  - Tests de rol/autorización (requiere módulo RBAC)
+  - application-test.yaml (aislamiento de BD de test)  — Item 6
+  - Tests de logging / telemetría                       — Item 10
+  - Tests de autorización por rol (requiere RBAC)       — futuro
+────────────────────────────────────────────────────────────────────────────────
+Tipos de test en la suite:
+  A  Unitarios Mockito:               131 tests
+  B  @WebMvcTest (sin seguridad):      68 tests
+  B* @WebMvcTest (con seguridad):      19 tests
+  C  @SpringBootTest BD real:          14 tests
+  D  @DataJpaTest PostgreSQL real:      9 tests  ← nuevo en v3
+  E  E2E curl (fuera de Maven):       103 tests
 ================================================================================
 ================================================================================

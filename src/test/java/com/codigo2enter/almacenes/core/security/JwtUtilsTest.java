@@ -1,9 +1,14 @@
 package com.codigo2enter.almacenes.core.security;
 
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.security.Keys;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import javax.crypto.SecretKey;
+import java.nio.charset.StandardCharsets;
+import java.util.Date;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -122,5 +127,41 @@ class JwtUtilsTest {
         // acepta tokens falsificados — una vulnerabilidad crítica de seguridad.
         assertFalse(result,
                 "Un token con la firma manipulada debe ser rechazado por validateToken");
+    }
+
+    /**
+     * Verifica que un token expirado sea rechazado por validateToken.
+     *
+     * Técnica: construimos directamente un token JJWT con la misma clave secreta
+     * que usa JwtUtils, pero con expiration en el PASADO (1 segundo antes de ahora).
+     * La clave se duplica aquí intencionalmente — en producción es una constante
+     * conocida en el código fuente; en tests, reproducirla permite construir tokens
+     * con condiciones específicas sin modificar la clase bajo prueba.
+     *
+     * Por qué este test es importante:
+     * Sin él, un token emitido hace más de 2 horas podría ser aceptado si la
+     * lógica de expiración estuviera mal implementada. Verificar la expiración
+     * es tan crítico como verificar la firma.
+     */
+    @Test
+    @DisplayName("Debe retornar false para un token que ya expiró")
+    void shouldReturnFalseForExpiredToken() {
+        // La misma clave que usa JwtUtils internamente
+        SecretKey signingKey = Keys.hmacShaKeyFor(
+            "4a8f3b2e9c1d7f6a0b5e2c8d4f1a9b3e7c0d6f2a5b8e3c1d9f4a7b0e2c6d8f1"
+                .getBytes(StandardCharsets.UTF_8));
+
+        // Construir un token con expiración en el pasado (expiró hace 1 segundo)
+        String expiredToken = Jwts.builder()
+                .subject(TEST_USERNAME)
+                .issuedAt(new Date(System.currentTimeMillis() - 2_000))
+                .expiration(new Date(System.currentTimeMillis() - 1_000))
+                .signWith(signingKey)
+                .compact();
+
+        Boolean result = jwtUtils.validateToken(expiredToken);
+
+        assertFalse(result,
+                "Un token expirado debe ser rechazado aunque su firma sea válida");
     }
 }

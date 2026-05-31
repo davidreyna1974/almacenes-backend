@@ -4,11 +4,13 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -27,11 +29,13 @@ import java.util.Set;
 public class JwtUtils {
 
     /**
-     * Clave secreta de al menos 256 bits (64 caracteres hex) requerida por HMAC-SHA256.
-     * En producción este valor debe externalizarse a una variable de entorno
-     * o a un gestor de secretos (Vault, AWS Secrets Manager, etc.).
+     * Clave secreta inyectada desde la variable de entorno JWT_SECRET (vía application.yaml).
+     * Debe tener al menos 256 bits (64 caracteres hex) para HMAC-SHA256.
+     * En producción nunca debe usarse el valor por defecto del yaml —
+     * establecer JWT_SECRET con: export JWT_SECRET=$(openssl rand -hex 32)
      */
-    private static final String SECRET = "4a8f3b2e9c1d7f6a0b5e2c8d4f1a9b3e7c0d6f2a5b8e3c1d9f4a7b0e2c6d8f1";
+    @Value("${jwt.secret}")
+    private String secret;
 
     /**
      * Tiempo de vida del token: 2 horas expresadas en milisegundos (2 * 60 * 60 * 1000).
@@ -44,7 +48,7 @@ public class JwtUtils {
      * compatible con HMAC-SHA256. JJWT requiere este tipo para firmar y verificar.
      */
     private SecretKey getSigningKey() {
-        return Keys.hmacShaKeyFor(SECRET.getBytes(StandardCharsets.UTF_8));
+        return Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
     }
 
     /**
@@ -68,6 +72,29 @@ public class JwtUtils {
                 .expiration(new Date(System.currentTimeMillis() + EXPIRATION_MS))
                 .signWith(getSigningKey())
                 .compact();
+    }
+
+    /**
+     * Extrae la lista de roles almacenada en el claim 'roles' del token.
+     *
+     * El claim 'roles' se almacena como una lista de Strings (ej. ["ROLE_ADMIN","ROLE_WAREHOUSEMAN"]).
+     * Se usa en JwtAuthenticationFilter para construir las GrantedAuthority del usuario
+     * sin necesidad de consultar la BD en cada request.
+     *
+     * @param token JWT compacto del que extraer los roles
+     * @return lista de nombres de roles; lista vacía si el claim no existe o no es una lista
+     */
+    @SuppressWarnings("unchecked")
+    public List<String> extractRoles(String token) {
+        Claims claims = parseClaims(token);
+        Object rolesObj = claims.get("roles");
+        if (rolesObj instanceof List<?> list) {
+            return list.stream()
+                    .filter(String.class::isInstance)
+                    .map(String.class::cast)
+                    .toList();
+        }
+        return List.of();
     }
 
     /**

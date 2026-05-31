@@ -23,5 +23,6 @@ public class UserResponseDTO {
     private String email;
     private Boolean active;
     private LocalDateTime createdAt;
-    private Set<String> roles; // Simplifica el objeto Role enviando solo el texto del rol (ej. "ROLE_ADMIN")
+    private LocalDateTime updatedAt;
+    private Set<String> roles;
 }

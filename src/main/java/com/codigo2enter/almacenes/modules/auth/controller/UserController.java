@@ -1,73 +1,92 @@
 package com.codigo2enter.almacenes.modules.auth.controller;
 
-import com.codigo2enter.almacenes.modules.auth.dto.AuthRequestDTO;
-import com.codigo2enter.almacenes.modules.auth.dto.AuthResponseDTO;
-import com.codigo2enter.almacenes.modules.auth.dto.UserRequestDTO;
-import com.codigo2enter.almacenes.modules.auth.dto.UserResponseDTO;
+import com.codigo2enter.almacenes.modules.auth.dto.*;
 import com.codigo2enter.almacenes.modules.auth.service.UserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 /**
- * Controlador REST que expone los endpoints públicos del módulo de autenticación.
+ * Controlador REST para autenticación y gestión de usuarios.
  *
- * Prefijo base: /api/v1/auth
- * Todos los endpoints de esta clase están declarados como permitAll() en
- * SecurityConfig, por lo que no requieren token JWT para ser consumidos.
+ * Tres grupos de endpoints con distintos niveles de acceso
+ * (reglas definidas en SecurityConfig, no aquí):
  *
- * Responsabilidad del controlador: recibir la petición HTTP, delegar al
- * servicio y devolver la respuesta con el código HTTP apropiado.
- * No contiene lógica de negocio.
+ *   1. Autenticación pública: POST /login (permitAll)
+ *   2. Gestión de usuarios: /users/** (hasRole ADMIN)
+ *   3. Perfil propio: /me/** (authenticated)
  */
 @RestController
 @RequestMapping("/api/v1/auth")
 @RequiredArgsConstructor
 public class UserController {
 
-    // UserService es una interfaz — Spring inyecta la implementación UserServiceImpl.
-    // Depender de la interfaz y no de la clase concreta facilita los tests y
-    // el intercambio de implementaciones sin tocar el controlador.
     private final UserService userService;
 
-    /**
-     * POST /api/v1/auth/register
-     *
-     * Registra un nuevo usuario en el sistema.
-     * @Valid activa las validaciones de Jakarta definidas en UserRequestDTO
-     * (@NotBlank, @Email, @Size) antes de que el método sea ejecutado.
-     * Si alguna validación falla, Spring retorna automáticamente HTTP 400 Bad Request.
-     *
-     * @param request cuerpo JSON con username, email y password
-     * @return 201 Created con el DTO público del usuario creado (sin contraseña)
-     */
-    @PostMapping("/register")
-    public ResponseEntity<UserResponseDTO> registerUser(@Valid @RequestBody UserRequestDTO request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(userService.registerUser(request));
-    }
+    // ── Autenticación pública ─────────────────────────────────────────────
 
-    /**
-     * POST /api/v1/auth/login
-     *
-     * Autentica a un usuario existente y devuelve un JWT firmado.
-     * @Valid activa las validaciones de AuthRequestDTO (@NotBlank en username y password)
-     * antes de invocar al servicio.
-     *
-     * ResponseEntity.ok() es equivalente a ResponseEntity.status(HttpStatus.OK).body(...)
-     * y se usa aquí porque un login exitoso es una operación de consulta, no de creación,
-     * por lo que HTTP 200 OK es el código semánticamente correcto (a diferencia del
-     * registro que devuelve 201 Created).
-     *
-     * @param request cuerpo JSON con username y password
-     * @return 200 OK con el DTO que contiene el token JWT listo para usar
-     */
     @PostMapping("/login")
     public ResponseEntity<AuthResponseDTO> login(@Valid @RequestBody AuthRequestDTO request) {
         return ResponseEntity.ok(userService.login(request));
+    }
+
+    // ── Gestión de usuarios (ADMIN only — protegido en SecurityConfig) ────
+
+    @GetMapping("/users")
+    public ResponseEntity<List<UserResponseDTO>> getAllUsers() {
+        return ResponseEntity.ok(userService.getAllUsers());
+    }
+
+    @PostMapping("/users")
+    public ResponseEntity<UserResponseDTO> createUser(@Valid @RequestBody UserCreateDTO dto) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(userService.createUser(dto));
+    }
+
+    @GetMapping("/users/{id}")
+    public ResponseEntity<UserResponseDTO> getUserById(@PathVariable Long id) {
+        return ResponseEntity.ok(userService.getUserById(id));
+    }
+
+    @PutMapping("/users/{id}")
+    public ResponseEntity<UserResponseDTO> updateUser(@PathVariable Long id,
+                                                       @Valid @RequestBody UserUpdateDTO dto) {
+        return ResponseEntity.ok(userService.updateUser(id, dto));
+    }
+
+    @DeleteMapping("/users/{id}")
+    public ResponseEntity<Void> deactivateUser(@PathVariable Long id) {
+        userService.deactivateUser(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * PUT /users/{id}/roles — reemplaza TODOS los roles del usuario.
+     * Semántica PUT: el ADMIN envía la lista definitiva de roles.
+     */
+    @PutMapping("/users/{id}/roles")
+    public ResponseEntity<UserResponseDTO> assignRoles(@PathVariable Long id,
+                                                        @Valid @RequestBody UserRoleAssignDTO dto) {
+        return ResponseEntity.ok(userService.assignRoles(id, dto));
+    }
+
+    // ── Perfil propio (cualquier autenticado — protegido en SecurityConfig) ─
+
+    @GetMapping("/me")
+    public ResponseEntity<UserResponseDTO> getMyProfile() {
+        return ResponseEntity.ok(userService.getMyProfile());
+    }
+
+    /**
+     * PUT /me/password — cambia la contraseña del usuario autenticado.
+     * 204 sin body — la contraseña no se expone en la respuesta.
+     */
+    @PutMapping("/me/password")
+    public ResponseEntity<Void> changePassword(@Valid @RequestBody ChangePasswordDTO dto) {
+        userService.changePassword(dto);
+        return ResponseEntity.noContent().build();
     }
 }

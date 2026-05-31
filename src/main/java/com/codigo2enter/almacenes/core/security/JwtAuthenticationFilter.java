@@ -12,8 +12,11 @@ import org.springframework.security.web.authentication.WebAuthenticationDetailsS
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+
 import java.io.IOException;
-import java.util.Collections;
+import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * Filtro de seguridad que intercepta cada petición HTTP para validar el JWT.
@@ -93,18 +96,22 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             // validateToken verifica la firma HMAC-SHA256 y que el token no haya expirado.
             if (jwtUtils.validateToken(token)) {
 
-                // UsernamePasswordAuthenticationToken es el objeto estándar de Spring Security
-                // para representar a un usuario autenticado dentro del contexto.
-                //
-                // Constructor de 3 parámetros (token ya autenticado):
-                //   - principal   : identidad del usuario (username)
-                //   - credentials : null — no se necesitan las credenciales después de validar el JWT
-                //   - authorities : lista de roles/permisos — vacía por ahora; en la siguiente
-                //                   fase se extraerán los roles del claim del token.
+                // Extraer roles del claim 'roles' del JWT y convertirlos a GrantedAuthority.
+                // SimpleGrantedAuthority(roleName) es el estándar de Spring Security para
+                // representar un rol. Spring espera el prefijo "ROLE_" en el nombre
+                // (ej. "ROLE_ADMIN") para que hasRole("ADMIN") funcione correctamente.
+                List<SimpleGrantedAuthority> authorities = jwtUtils.extractRoles(token)
+                        .stream()
+                        .map(SimpleGrantedAuthority::new)
+                        .collect(Collectors.toList());
+
+                // Constructor de 3 parámetros: principal, credentials, authorities.
+                // Al pasar la lista de authorities, Spring Security puede evaluar
+                // hasRole(), hasAnyRole() y @PreAuthorize en los endpoints protegidos.
                 UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
                         username,
                         null,
-                        Collections.emptyList()
+                        authorities
                 );
 
                 // Enriquece el token de autenticación con detalles de la petición HTTP

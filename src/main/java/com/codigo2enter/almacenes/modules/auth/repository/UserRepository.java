@@ -4,6 +4,7 @@ import com.codigo2enter.almacenes.modules.auth.model.User;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -36,4 +37,20 @@ public interface UserRepository extends JpaRepository<User, Long> {
      * Previene la duplicidad de registros en el formulario de inscripción.
      */
     Boolean existsByEmail(String email);
+
+    /** Retorna todos los usuarios activos para el panel de administración. */
+    List<User> findByActiveTrue();
+
+    /**
+     * Busca un usuario por email excluyendo un ID específico.
+     * Usado en updateUser() para validar que el nuevo email no pertenece
+     * a otro usuario diferente al que se está editando.
+     */
+    Optional<User> findByEmailAndIdNot(String email, Long id);
+
+    /**
+     * Busca un usuario por username excluyendo un ID específico.
+     * Mismo patrón que findByEmailAndIdNot — para validar unicidad en update.
+     */
+    Optional<User> findByUsernameAndIdNot(String username, Long id);
 }

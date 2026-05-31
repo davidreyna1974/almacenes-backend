@@ -5,6 +5,7 @@ import io.jsonwebtoken.security.Keys;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
@@ -21,29 +22,40 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * Son pruebas UNITARIAS puras: no levantan el contexto de Spring (@SpringBootTest),
  * no conectan a la base de datos y no usan mocks — JwtUtils es una clase sin
- * dependencias externas que solo necesita la librería JJWT, por lo que se puede
- * instanciar directamente con 'new'.
+ * dependencias externas que solo necesita la librería JJWT.
  *
- * Esto hace que las pruebas sean muy rápidas (< 100 ms cada una) y completamente
- * aisladas del resto del sistema.
+ * Desde que 'secret' se inyecta via @Value, no puede usarse 'new JwtUtils()' directamente
+ * (Spring no ejecuta la inyección). ReflectionTestUtils.setField() reemplaza esa inyección
+ * para tests unitarios sin necesidad de levantar un contexto Spring.
+ *
+ * TEST_SECRET es la clave de desarrollo — es aceptable en archivos de test porque:
+ *   a) Ya existe en el historial de git desde el commit original de JwtUtils.
+ *   b) Los archivos de test nunca se despliegan a producción.
+ *   c) La clave de producción real va en JWT_SECRET (variable de entorno), no aquí.
  */
 class JwtUtilsTest {
 
     // Instancia real de la clase bajo prueba (no un mock).
     private JwtUtils jwtUtils;
 
-    // Datos de prueba reutilizados en los tres tests.
+    // Clave de desarrollo usada en tests — la misma que el valor por defecto de application.yaml.
+    // No representa riesgo de seguridad: es solo para el entorno local, nunca va a producción.
+    private static final String TEST_SECRET =
+            "4a8f3b2e9c1d7f6a0b5e2c8d4f1a9b3e7c0d6f2a5b8e3c1d9f4a7b0e2c6d8f1";
+
+    // Datos de prueba reutilizados en los tests.
     private static final String TEST_USERNAME = "bodeguero01";
     private static final Set<String> TEST_ROLES = Set.of("ROLE_WAREHOUSEMAN");
 
     /**
      * @BeforeEach se ejecuta antes de cada método @Test.
-     * Crea una instancia fresca de JwtUtils para garantizar que los tests
-     * son independientes entre sí — ninguno hereda estado del anterior.
+     * Crea una instancia fresca de JwtUtils e inyecta la clave de prueba manualmente,
+     * reproduciendo lo que Spring haría con @Value en un contexto real.
      */
     @BeforeEach
     void setUp() {
         jwtUtils = new JwtUtils();
+        ReflectionTestUtils.setField(jwtUtils, "secret", TEST_SECRET);
     }
 
     /**
@@ -146,10 +158,8 @@ class JwtUtilsTest {
     @Test
     @DisplayName("Debe retornar false para un token que ya expiró")
     void shouldReturnFalseForExpiredToken() {
-        // La misma clave que usa JwtUtils internamente
-        SecretKey signingKey = Keys.hmacShaKeyFor(
-            "4a8f3b2e9c1d7f6a0b5e2c8d4f1a9b3e7c0d6f2a5b8e3c1d9f4a7b0e2c6d8f1"
-                .getBytes(StandardCharsets.UTF_8));
+        // Misma clave que se inyectó en setUp() — así el token expirado es reconocible por JwtUtils
+        SecretKey signingKey = Keys.hmacShaKeyFor(TEST_SECRET.getBytes(StandardCharsets.UTF_8));
 
         // Construir un token con expiración en el pasado (expiró hace 1 segundo)
         String expiredToken = Jwts.builder()

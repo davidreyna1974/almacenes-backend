@@ -5,6 +5,7 @@ import com.codigo2enter.almacenes.modules.auth.dto.UserResponseDTO;
 import com.codigo2enter.almacenes.modules.auth.model.Role;
 import com.codigo2enter.almacenes.modules.auth.model.User;
 
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -24,10 +25,13 @@ public interface UserMapper {
     @Mapping(target = "roles", source = "roles", qualifiedByName = "mapRolesToStrings")
     UserResponseDTO toResponseDTO(User user);
 
-    @Mapping(target = "id", ignore = true)
-    @Mapping(target = "active", ignore = true)
+    List<UserResponseDTO> toResponseDTOList(List<User> users);
+
+    @Mapping(target = "id",        ignore = true)
+    @Mapping(target = "active",    ignore = true)
     @Mapping(target = "createdAt", ignore = true)
-    @Mapping(target = "roles", ignore = true)
+    @Mapping(target = "updatedAt", ignore = true)
+    @Mapping(target = "roles",     ignore = true)
     User toEntity(UserRequestDTO dto);
 
     @Mapping(target = "id", ignore = true)

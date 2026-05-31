@@ -39,6 +39,14 @@ public class User {
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt = LocalDateTime.now();
 
+    /**
+     * Sin updatable=false — se actualiza cada vez que el admin modifica
+     * los datos del usuario o cuando el usuario cambia su contraseña.
+     * Sin updated_by — evita FK circular (users → users).
+     */
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
+
     @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(
             name = "user_roles",

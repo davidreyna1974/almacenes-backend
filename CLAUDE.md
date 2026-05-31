@@ -57,6 +57,7 @@ modules/<modulo>/
 ```
 
 El paquete `core/` contiene configuración transversal:
+- `core/config/` — Configuración de arranque (`DataInitializer` — crea el admin inicial)
 - `core/exception/` — Manejo centralizado de excepciones
 - `core/security/` — Configuración de Spring Security, utilidades JWT y CORS
 
@@ -132,9 +133,32 @@ El compilador incremental de VS Code puede sobreescribir clases generadas por Ma
 ### Tokens JWT
 
 - Los tokens se generan en `core/security/JwtUtils.java` con HMAC-SHA256, vigentes **2 horas**.
-- Claims del payload: `sub` (username), `roles`, `iat`, `exp`.
-- `JwtAuthenticationFilter` valida el token en cada petición antes de llegar al controlador.
-- Rutas públicas: `/api/v1/auth/**`. Todo lo demás requiere `Authorization: Bearer <token>`.
+- Claims del payload: `sub` (username), `roles` (lista de strings), `iat`, `exp`.
+- `JwtAuthenticationFilter` valida el token y carga los roles como `SimpleGrantedAuthority` en cada petición.
+- La clave secreta se lee de la variable de entorno `JWT_SECRET` vía `@Value("${jwt.secret}")` en `application.yaml`. En desarrollo usa un valor por defecto; en producción `JWT_SECRET` debe establecerse explícitamente.
+- Ruta pública: `POST /api/v1/auth/login`. Todo lo demás requiere `Authorization: Bearer <token>`.
+
+### RBAC — Roles y permisos
+
+El sistema implementa 4 roles con acceso diferenciado por URL en `SecurityConfig.java`:
+
+| Rol | Descripción |
+|---|---|
+| `ROLE_ADMIN` | Acceso total incluyendo gestión de usuarios |
+| `ROLE_MANAGER` | Inventario, compras y ventas completos; sin gestión de usuarios |
+| `ROLE_WAREHOUSEMAN` | Lectura de inventario, recepción de compras, entrega de ventas |
+| `ROLE_SALES` | Crear y gestionar órdenes de venta; lectura de inventario |
+
+`SecurityConfig.java` usa `@EnableMethodSecurity` y reglas `hasRole()` / `hasAnyRole()` por URL. El orden de las reglas importa: las más específicas van antes que las generales.
+
+**DataInitializer**: `core/config/DataInitializer.java` crea el usuario `admin`/`Admin123!` con `ROLE_ADMIN` + `ROLE_WAREHOUSEMAN` al arrancar si la tabla `users` está vacía. Resuelve el problema chicken-and-egg de no tener un admin inicial sin registro público.
+
+**Gestión de usuarios — solo ADMIN**:
+- `POST /api/v1/auth/login` — público
+- `GET/POST/PUT/DELETE /api/v1/auth/users/**` — solo `ROLE_ADMIN`
+- `GET/PUT /api/v1/auth/me/**` — cualquier autenticado
+
+**`users.updated_by` no implementado**: existe `updated_at` en la tabla pero no `updated_by`. La FK `users → users` crearía una referencia circular que complica la carga JPA. La inmutabilidad del auditor se garantiza a nivel de negocio.
 
 ### CORS
 
@@ -152,7 +176,7 @@ El compilador incremental de VS Code puede sobreescribir clases generadas por Ma
 
 | Tabla | `created_at` | `created_by` | `updated_at` | `updated_by` | `approved_by` | `received_by` | `cancelled_by` |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| `users` | ✓ | — | — | — | — | — | — |
+| `users` | ✓ | — | ✓ | — | — | — | — |
 | `roles` | — | — | — | — | — | — | — |
 | `user_roles` | — | — | — | — | — | — | — |
 | `categories` | ✓ | ✓ | ✓ | ✓ | — | — | — |
@@ -163,8 +187,8 @@ El compilador incremental de VS Code puede sobreescribir clases generadas por Ma
 | `purchase_order_details` | — | — | — | — | — | — | — |
 
 **Decisiones de diseño:**
-- `roles` y `user_roles`: catálogos/configuración estática, sin auditoría (pendiente cuando se implemente gestión dinámica de roles)
-- `users.updated_by`: pendiente — depende de implementar el endpoint de actualización de usuarios
+- `roles` y `user_roles`: catálogos de configuración estática, sin auditoría
+- `users.updated_by`: no implementado — FK `users → users` crearía referencia circular que complica la carga JPA. Solo se registra `updated_at`
 - `purchase_order_details`: hereda la auditoría del padre (`purchase_orders`) — los detalles solo existen mientras la orden está en PENDING y el mismo usuario los gestiona
 - `stock_movements`: inmutables por diseño (Kardex) — `updated_at`/`updated_by` no aplican
 
@@ -513,11 +537,11 @@ try {
 
 **Por qué el cliente nunca envía unitCost**: si el frontend pudiera enviarlo, podría falsificar el costo histórico. El servicio lo toma automáticamente de `Product.unitCost`.
 
-**Por qué `unitCost` es nullable**: `Product.unitCost` puede no estar definido (captura progresiva). El flujo completo funciona sin excepción cuando `unitCost == null`.
+**`unitCost` es NOT NULL**: `Product.unitCost` es obligatorio (`@NotNull` en DTO, `NOT NULL` en BD). La captura progresiva se eliminó antes de implementar el módulo `reports` para garantizar integridad en los cálculos de COGS.
 
-**Fórmula de margen** (módulo financiero futuro):
+**Fórmula de margen** (módulo `reports`):
 ```
-margen_unitario = unitPrice - unitCost   (si unitCost != null)
+margen_unitario = unitPrice - unitCost
 margen_total    = margen_unitario × quantity
 ```
 
@@ -525,7 +549,7 @@ margen_total    = margen_unitario × quantity
 
 - `Client`: RFC y email opcionales (no todos los clientes son personas morales). Ambos tienen constraint UNIQUE cuando se proporcionan.
 - `SaleOrder`: todos los campos de transición (`approvedBy`, `deliveredBy`, `cancelledBy`) **sin** `updatable=false` — misma regla que purchases. `createdBy` sí usa `updatable=false`.
-- `SaleOrderDetail`: `unitCost` sin `updatable=false` — el servicio lo re-lee del producto en cada actualización de detalle en PENDING. Una vez APPROVED, la inmovilidad la garantiza la lógica de negocio.
+- `SaleOrderDetail`: `unitCost` NOT NULL, sin `updatable=false` — el servicio lo re-lee del producto en cada actualización de detalle en PENDING. Una vez APPROVED, la inmovilidad la garantiza la lógica de negocio.
 - `SaleOrder.details` usa `cascade = CascadeType.ALL` + `orphanRemoval = true` — eliminar un detalle de la lista lo borra físicamente.
 
 ### Repositorios — sales
@@ -735,18 +759,22 @@ lenient().when(supplierRepository.findById(1L)).thenReturn(Optional.of(supplier)
 class SecurityFilterTest {
     @MockBean JwtUtils jwtUtils; // controla qué tokens se consideran válidos
 
-    private void autenticar() {
-        when(jwtUtils.extractUsername("valid.test.token")).thenReturn("tester01");
-        when(jwtUtils.validateToken("valid.test.token")).thenReturn(true);
+    // autenticarConRol() mockea extractUsername, validateToken Y extractRoles —
+    // los tres son llamados por JwtAuthenticationFilter tras la refactorización RBAC
+    private void autenticarConRol(String... roles) {
+        when(jwtUtils.extractUsername(TOKEN)).thenReturn("tester01");
+        when(jwtUtils.validateToken(TOKEN)).thenReturn(true);
+        when(jwtUtils.extractRoles(TOKEN)).thenReturn(List.of(roles));
     }
 }
 ```
 
-Cubre tres bloques:
-1. Rutas públicas (`/auth/**`) accesibles sin JWT.
+Cubre cinco bloques:
+1. Rutas públicas (`/auth/login`) accesibles sin JWT.
 2. Rutas protegidas sin JWT → 403.
 3. Rutas protegidas con JWT válido → no 403.
 4. Token con firma manipulada o expirado → 403.
+5. Reglas RBAC: MANAGER/WAREHOUSEMAN/SALES → 403 en rutas de solo ADMIN.
 
 **Regla**: la aserción para "no debe ser 403" usa un `ResultMatcher` personalizado porque MockMvc no tiene `status().isNot(403)`:
 ```java
@@ -832,13 +860,26 @@ open target/site/jacoco/index.html
 
 ### Tests de seguridad — JwtUtils
 
-**Test de token expirado**: construir directamente un token JJWT con `expiration` en el pasado usando la misma clave secreta que `JwtUtils`. La clave está hardcodeada en el código fuente — reproducirla en el test no es una violación porque ya es conocida en el repositorio. En producción, externalizar a variable de entorno.
+`JwtUtils` usa `@Value("${jwt.secret}")` para leer la clave desde `application.yaml`. Como `JwtUtilsTest` es un test unitario puro (sin Spring context), `@Value` no se inyecta automáticamente. Se usa `ReflectionTestUtils.setField()` para simular la inyección:
 
 ```java
-SecretKey key = Keys.hmacShaKeyFor("4a8f...".getBytes(StandardCharsets.UTF_8));
+private static final String TEST_SECRET =
+        "4a8f3b2e9c1d7f6a0b5e2c8d4f1a9b3e7c0d6f2a5b8e3c1d9f4a7b0e2c6d8f1";
+
+@BeforeEach
+void setUp() {
+    jwtUtils = new JwtUtils();
+    ReflectionTestUtils.setField(jwtUtils, "secret", TEST_SECRET);
+}
+```
+
+**Test de token expirado**: construir un token JJWT con `expiration` en el pasado usando `TEST_SECRET`. Tener la clave de desarrollo en el archivo de test es aceptable — los archivos de test no se despliegan a producción y la clave real de producción se inyecta vía variable de entorno `JWT_SECRET`.
+
+```java
+SecretKey key = Keys.hmacShaKeyFor(TEST_SECRET.getBytes(StandardCharsets.UTF_8));
 String expiredToken = Jwts.builder()
         .subject("usuario")
-        .expiration(new Date(System.currentTimeMillis() - 1_000)) // ya expiró
+        .expiration(new Date(System.currentTimeMillis() - 1_000))
         .signWith(key)
         .compact();
 assertFalse(jwtUtils.validateToken(expiredToken));
@@ -848,25 +889,32 @@ assertFalse(jwtUtils.validateToken(expiredToken));
 
 ## Estado actual del proyecto
 
-### Módulo `auth` — completo
+### Módulo `auth` — completo (incluye RBAC)
 
-- Entidades: `User`, `Role` con relación `@ManyToMany`
-- Repositorios: `UserRepository`, `RoleRepository`
-- Mapper: `UserMapper`
-- Servicio: `UserServiceImpl` (registro y login con JWT)
-- Controlador: `UserController` — `POST /api/v1/auth/register`, `POST /api/v1/auth/login`
-- Seguridad: `JwtAuthenticationFilter` (con try-catch en `extractUsername` para tokens malformados), `SecurityConfig` (con CORS habilitado), `JwtUtils`
-- Tests (Tipo A): `JwtUtilsTest` (4 — incluye token expirado), `UserServiceImplTest` (8)
-- Tests (Tipo B): `UserControllerTest` (2)
-- Tests (Tipo B*): `SecurityFilterTest` (19 — Spring Security activo, verifica 403s y rutas públicas)
+- Entidades: `User` (con `updated_at`), `Role` con relación `@ManyToMany`
+- Repositorios: `UserRepository` (con `findByActiveTrue`, `findByUsernameAndIdNot`, `findByEmailAndIdNot`), `RoleRepository`
+- Mapper: `UserMapper` (con `toResponseDTOList`)
+- DTOs: `AuthRequestDTO`, `AuthResponseDTO`, `UserCreateDTO`, `UserUpdateDTO`, `UserRoleAssignDTO`, `ChangePasswordDTO`, `UserResponseDTO`
+- Servicio: `UserServiceImpl` — login, `getAllUsers`, `getUserById`, `createUser`, `updateUser`, `deactivateUser`, `assignRoles`, `getMyProfile`, `changePassword`
+- Controlador: `UserController` — 9 endpoints organizados en 3 grupos (público / ADMIN / autenticado)
+- Seguridad:
+  - `JwtAuthenticationFilter` — carga roles como `SimpleGrantedAuthority`; try-catch para tokens malformados
+  - `SecurityConfig` — `@EnableMethodSecurity`; 34 reglas RBAC por URL para los 4 módulos
+  - `JwtUtils` — `generateToken`, `validateToken`, `extractUsername`, `extractRoles`; clave vía `@Value("${jwt.secret}")`
+  - `DataInitializer` — crea `admin`/`Admin123!` al arrancar si la tabla `users` está vacía
+- 4 roles en BD: `ROLE_ADMIN`, `ROLE_WAREHOUSEMAN`, `ROLE_MANAGER`, `ROLE_SALES`
+- Tests (Tipo A): `JwtUtilsTest` (4), `UserServiceImplTest` (20)
+- Tests (Tipo B): `UserControllerTest` (12)
+- Tests (Tipo B*): `SecurityFilterTest` (33 — verifica 403s, rutas públicas y reglas RBAC por rol)
+- Tests (Tipo C): `RbacIntegrationTest` (17 — tokens JWT reales, flujo completo MANAGER, firma manipulada)
 
 ### Módulo `inventory` — completo
 
 - Entidades: `Category`, `Product`, `StockMovement`, enum `MovementType`
-  - `Product`: `reservedStock` (int, default 0), `@Version Long version` (Optimistic Locking), `unitCost` (BigDecimal, nullable)
+  - `Product`: `reservedStock` (int, default 0), `@Version Long version` (Optimistic Locking), `unitCost` (BigDecimal, **NOT NULL**)
   - Todos con columnas de auditoría `created_at`/`created_by`; `updated_at`/`updated_by` donde aplica
 - Repositorios: `CategoryRepository`, `ProductRepository` (con `findLowStockProducts` usando `availableStock`), `StockMovementRepository`
-- DTOs: `CategoryDTO`, `ProductRequestDTO` (con `unitCost` opcional), `ProductResponseDTO` (con `reservedStock`, `availableStock`, `unitCost`), `StockMovementRequestDTO`, `StockMovementResponseDTO`
+- DTOs: `CategoryDTO`, `ProductRequestDTO` (con `unitCost` obligatorio — `@NotNull`), `ProductResponseDTO` (con `reservedStock`, `availableStock`, `unitCost`), `StockMovementRequestDTO`, `StockMovementResponseDTO`
 - Mappers: `CategoryMapper`, `ProductMapper` (con `calcAvailableStock @Named`, ignores de `reservedStock`/`version` en `toEntity`)
 - Servicios: `CategoryServiceImpl`, `ProductServiceImpl` (validación OUT contra `availableStock`)
 - Controladores:
@@ -892,7 +940,7 @@ assertFalse(jwtUtils.validateToken(expiredToken));
 
 - Entidades: `Client`, `SaleOrder`, `SaleOrderDetail`, enum `SaleOrderStatus`
   - `SaleOrder`: `approved_by`, `delivered_by`, `cancelled_by` sin `updatable=false`
-  - `SaleOrderDetail`: `unitCost` nullable (capturado de `Product.unitCost`)
+  - `SaleOrderDetail`: `unitCost` **NOT NULL** (capturado de `Product.unitCost` al crear el detalle)
 - Repositorios: `ClientRepository`, `SaleOrderRepository` (con queries JPQL: `findActiveOrdersByClient`, `findByProductId`, `countByYear`), `SaleOrderDetailRepository`
 - DTOs: 12 DTOs incluyendo 5 DTOs de reservas (`ReservationSummaryDTO`, `ReservedProductDTO`, `ReservedProductOrderDTO`, `ReservedClientDTO`, `ReservedClientOrderDTO`)
 - Mappers: `ClientMapper`, `SaleOrderDetailMapper`, `SaleOrderMapper` (usa `SaleOrderDetailMapper`)
@@ -918,22 +966,29 @@ assertFalse(jwtUtils.validateToken(expiredToken));
   7. Cancelación de orden de venta desde APPROVED: `reservedStock` liberado
   8. Cancelación de orden de compra desde APPROVED: `cancelledBy` persistido
 
-### Suite de tests actual: 239 tests — 0 fallos
+- `RbacIntegrationTest` (17 tests, Tipo C): verifica reglas RBAC con tokens JWT reales:
+  1. Admin crea usuarios MANAGER, WAREHOUSEMAN, SALES y obtiene JWT reales (sin mock de JwtUtils)
+  2. Accesos denegados (403) por rol insuficiente en /auth/users, inventory write, purchases approve, sales approve, clients delete
+  3. Accesos permitidos: lectura de inventario para WAREHOUSEMAN y SALES; /auth/me para todos
+  4. Flujo completo MANAGER: crea categoría, producto, orden de compra y la aprueba — verifica en BD que `approvedByUsername` es el usuario MANAGER
+  5. Token con firma manipulada → 403 (verifica try-catch real del filtro JWT)
+
+### Suite de tests actual: 292 tests — 0 fallos
 
 ```
 Tipo A (Mockito):            131 tests
 Tipo B (@WebMvcTest):         68 tests
-Tipo B* (con seguridad):      19 tests
-Tipo C (@SpringBootTest):     14 tests  (8 integración + 3 concurrencia + 3 otros @SpringBootTest)
+Tipo B* (con seguridad):      33 tests
+Tipo C (@SpringBootTest):     51 tests  (8 auditoría + 17 RBAC + 3 concurrencia + 23 otros)
 Tipo D (@DataJpaTest):         9 tests
-─────────────────────────────────────
-TOTAL MAVEN:                 239 tests
-Tests E2E curl:              103 tests  (fuera del pipeline Maven)
+──────────────────────────────────────
+TOTAL MAVEN:                 292 tests
+Tests E2E curl:              129 tests  (fuera del pipeline Maven)
 ```
 
-Cobertura JaCoCo: **82.4% líneas · 88.1% métodos · 58.7% ramas**
+Cobertura JaCoCo: **83.1% líneas · 88.4% métodos · 59.9% ramas**
 
-Rama activa de desarrollo: `feature/sales`
+Rama activa de desarrollo: `feature/reports`
 
 ---
 
@@ -989,7 +1044,25 @@ try {
 }
 ```
 
-### Bug 5: save() vs saveAndFlush() con Optimistic Locking
+### Bug 5: `extractRoles()` no mockeado en SecurityFilterTest tras refactorización RBAC
+
+**Síntoma**: NPE en `JwtAuthenticationFilter` al ejecutar `SecurityFilterTest` después de agregar `extractRoles()` al filtro.
+
+**Causa**: el helper `autenticar()` mockeaba `extractUsername` y `validateToken` pero no `extractRoles`. Mockito retorna null por defecto para métodos no configurados — el filtro intentaba iterar sobre null.
+
+**Corrección**: `autenticarConRol(String... roles)` mockea los tres métodos. Toda prueba que simule un usuario autenticado debe incluir `extractRoles`.
+
+### Bug 6: `unitCost` nullable — inconsistencia de integridad para módulo reports
+
+**Síntoma** (detectado en análisis, no en producción): los cálculos de COGS en el módulo `reports` requerirían `WHERE unitCost IS NOT NULL` y un campo `cogsCompleteness` para indicar qué porcentaje del revenue tiene costo definido.
+
+**Causa**: `Product.unitCost` y `SaleOrderDetail.unitCost` eran nullable por diseño de "captura progresiva". El módulo sales ya garantizaba que toda orden creada con el flujo normal tenía unitCost definido, pero sin NOT NULL en BD no había garantía formal.
+
+**Por qué los tests no lo detectaron**: los mocks devuelven el objeto configurado en `@BeforeEach` — ningún test insertaba un producto sin unitCost en la BD real y luego creaba una orden de venta.
+
+**Corrección**: `ALTER TABLE products ALTER COLUMN unit_cost SET NOT NULL`, `ALTER TABLE sale_order_details ALTER COLUMN unit_cost SET NOT NULL`, `@NotNull` en `ProductRequestDTO.unitCost`. El módulo `reports` puede calcular COGS sin filtros especiales.
+
+### Bug 7: save() vs saveAndFlush() con Optimistic Locking
 
 **Síntoma**: `ObjectOptimisticLockingFailureException` se lanzaba con el mensaje interno de Hibernate ("Row was updated or deleted by another transaction") en lugar del mensaje de negocio "Stock modificado concurrentemente."
 

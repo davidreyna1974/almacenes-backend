@@ -4,6 +4,7 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
@@ -28,11 +29,13 @@ import java.util.Set;
 public class JwtUtils {
 
     /**
-     * Clave secreta de al menos 256 bits (64 caracteres hex) requerida por HMAC-SHA256.
-     * En producción este valor debe externalizarse a una variable de entorno
-     * o a un gestor de secretos (Vault, AWS Secrets Manager, etc.).
+     * Clave secreta inyectada desde la variable de entorno JWT_SECRET (vía application.yaml).
+     * Debe tener al menos 256 bits (64 caracteres hex) para HMAC-SHA256.
+     * En producción nunca debe usarse el valor por defecto del yaml —
+     * establecer JWT_SECRET con: export JWT_SECRET=$(openssl rand -hex 32)
      */
-    private static final String SECRET = "4a8f3b2e9c1d7f6a0b5e2c8d4f1a9b3e7c0d6f2a5b8e3c1d9f4a7b0e2c6d8f1";
+    @Value("${jwt.secret}")
+    private String secret;
 
     /**
      * Tiempo de vida del token: 2 horas expresadas en milisegundos (2 * 60 * 60 * 1000).
@@ -45,7 +48,7 @@ public class JwtUtils {
      * compatible con HMAC-SHA256. JJWT requiere este tipo para firmar y verificar.
      */
     private SecretKey getSigningKey() {
-        return Keys.hmacShaKeyFor(SECRET.getBytes(StandardCharsets.UTF_8));
+        return Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
     }
 
     /**

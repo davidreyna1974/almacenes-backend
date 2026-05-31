@@ -139,6 +139,7 @@
 									-->
 									<excludes>
 										<exclude>com.codigo2enter.almacenes</exclude>
+										<exclude>com.codigo2enter.almacenes.core.config</exclude>
 										<exclude>com.codigo2enter.almacenes.modules.auth.mapper</exclude>
 										<exclude>com.codigo2enter.almacenes.modules.inventory.mapper</exclude>
 										<exclude>com.codigo2enter.almacenes.modules.purchases.mapper</exclude>

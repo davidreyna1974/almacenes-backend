@@ -136,25 +136,47 @@ src/test/java/com/codigo2enter/almacenes/modules/reports/
 
 ## 7. Resultado de ejecución de tests
 
+### Por clase de test del módulo reports
+
+| Clase | Tipo | Tests | Comando | Resultado |
+|---|---|---|---|---|
+| `ExecutiveReportServiceImplTest` | A | 11 | `./mvnw test -Dtest=ExecutiveReportServiceImplTest` | ✓ 0 fallos |
+| `ManagementReportServiceImplTest` | A | 17 | `./mvnw test -Dtest=ManagementReportServiceImplTest` | ✓ 0 fallos |
+| `OperationalReportServiceImplTest` | A | 12 | `./mvnw test -Dtest=OperationalReportServiceImplTest` | ✓ 0 fallos |
+| `ReportControllerTest` | B | 14 | `./mvnw test -Dtest=ReportControllerTest` | ✓ 0 fallos |
+| `ReportRepositoryTest` | D | 7 | `./mvnw test -Dtest=ReportRepositoryTest` | ✓ 0 fallos |
+| **SUBTOTAL REPORTS** | | **61** | | |
+
+### Suite consolidada
+
 ```
-./mvnw test  — 2026-05-31
+./mvnw clean test  — 2026-05-31
 
-Tests nuevos del módulo reports:
-  ExecutiveReportServiceImplTest   :  11 tests
-  ManagementReportServiceImplTest  :  17 tests
-  OperationalReportServiceImplTest :  12 tests
-  ReportControllerTest             :  14 tests
-  ReportRepositoryTest             :   7 tests
-  SUBTOTAL REPORTS                 :  61 tests
+Tests run: 353, Failures: 0, Errors: 0, Skipped: 0
+BUILD SUCCESS
 
-Suite completa:
-  Tests run: 353, Failures: 0, Errors: 0, Skipped: 0
-  BUILD SUCCESS
+Comparativa:
+  Suite pre-reports : 292/292 — BUILD SUCCESS
+  Suite post-reports: 353/353 — BUILD SUCCESS
+  Diferencia        : +61 tests, 0 fallos nuevos
 ```
 
-**Tests previos**: 239 tests (antes de implementar reports)
-**Tests nuevos**: 61 tests del módulo reports + 53 de SecurityFilterTest/RBAC/integraciones (que creció de 19 a 33 en SecurityFilterTest durante versiones anteriores)
-**Total después**: 353 tests — todos pasan.
+### Cobertura JaCoCo
+
+```
+./mvnw verify  — 2026-05-31
+
+Líneas  : 85.9%  (1829/2128)
+Métodos : 89.6%  (327/365)
+Ramas   : 62.7%  (414/660)
+BUILD SUCCESS
+
+Referencia: target/site/jacoco/index.html
+```
+
+Nota: `core.config` (DataInitializer) excluido del check de cobertura — es código
+de bootstrap que solo ejecuta cuando la tabla users está vacía. Se agregó a las
+exclusiones de JaCoCo en `pom.xml` junto a los mappers y paquetes dto/model.
 
 ## 8. Bugs encontrados durante implementación
 

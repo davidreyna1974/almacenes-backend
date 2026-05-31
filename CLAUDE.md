@@ -12,6 +12,89 @@ Backend REST API para gestión de almacenes. Proyecto Spring Boot 3.5.14 con Jav
 - `purchases` — Gestión de compras (proveedores, órdenes de compra)
 - `sales` — Gestión de ventas (clientes, órdenes de venta, reservas de stock, analítica de costo)
 
+## Documentación obligatoria por módulo
+
+Todo módulo nuevo — tanto en este backend como en el futuro frontend — requiere dos archivos en la raíz del repositorio antes de iniciar la implementación:
+
+### `propuesta_modulo_<nombre>.txt`
+
+Documento de planificación creado **antes de escribir código**. Contiene:
+- Contexto y justificación (qué problema resuelve y por qué ahora)
+- Análisis de audiencias y necesidades (quién lo usa y con qué frecuencia)
+- Catálogo de funcionalidades/reportes/pantallas con especificación completa
+- Disponibilidad de datos en el schema actual (sin nuevas tablas si es posible)
+- Arquitectura técnica: paquetes, clases, decisiones de diseño
+- Especificación de endpoints y control de acceso RBAC
+- Plan de implementación por fases con entregables
+- Plan de tests (tipos A/B/B*/C/D estimados)
+- Estructura de la memoria técnica
+- Tabla de riesgos con probabilidad y mitigación
+- Criterios de éxito del módulo (checklist verificable)
+
+### `memoria_tecnica_modulo_<nombre>.md`
+
+Documento vivo creado en la **Fase 0** y actualizado al finalizar cada fase. Orientado a cualquier desarrollador externo que necesite entender el trabajo ejecutado. Incluye no solo qué se hizo, sino por qué, qué problemas se encontraron y cómo verificar que el módulo funciona.
+
+Secciones obligatorias:
+
+| Sección | Contenido | Se llena en |
+|---|---|---|
+| 1. Contexto y justificación | Problemática, usuarios beneficiados, relación con módulos anteriores | Fase 0 |
+| 2. Decisiones de diseño | Por qué se eligió cada patrón (SRP, no MapStruct, readOnly, etc.) | Fase 0-1 |
+| 3. Especificación de funcionalidades | Por cada reporte/endpoint: audiencia, fórmula, DTO, criterio de éxito, casos edge | Fase 1 |
+| 4. Queries JPQL | Por cada query: JPQL, SQL equivalente, justificación, dependencias de dialecto | Fase 2 |
+| 5. Algoritmos no triviales | Pseudocódigo de lógica compleja; manejo de división por cero, fechas, etc. | Fase 3 |
+| 6. RBAC — criterio de acceso | Matriz endpoint × rol, justificación, reglas exactas de SecurityConfig | Fase 4 |
+| 7. Ejecución de tests y resultados | Ver detalle abajo | Fase 5 |
+| 8. Bugs y retos | Sección viva: síntoma, causa, por qué los mocks no lo detectaron, corrección | Fases 2-5 |
+| 9. Estándares y buenas prácticas | Convenciones aplicadas específicas del módulo | Fase 6 |
+| 10. Cumplimiento y validación | Checklist final de criterios de éxito | Fase 6 |
+
+**Criterio de la Sección 7 — Ejecución de tests y resultados:**
+
+Esta sección documenta evidencia verificable de que el módulo funciona. Debe incluir:
+
+- **Por cada clase de test ejecutada:**
+  - Nombre de la clase y tipo (A/B/B*/C/D)
+  - Comando: `./mvnw test -Dtest=NombreClase`
+  - Resultado exacto: `Tests run: X, Failures: 0, Errors: 0 — BUILD SUCCESS`
+  - Si hubo fallos: síntoma, causa raíz, corrección aplicada
+
+- **Suite consolidada:**
+  - `./mvnw test` → `Tests run: X, Failures: 0 — BUILD SUCCESS`
+  - Comparativa: X tests antes del módulo → X tests después
+
+- **Cobertura JaCoCo:**
+  - `./mvnw verify` → líneas X%, métodos X%, ramas X%
+  - Referencia: `target/site/jacoco/index.html`
+  - Si algún paquete no alcanza el 70%: justificación documentada
+
+- **Validación E2E con curl** (por cada endpoint):
+  - Comando curl ejecutado
+  - Código HTTP recibido vs esperado
+  - Campos del response verificados
+  - Resultado: X/Y endpoints — 0 fallos
+
+- **Regresiones en módulos anteriores:**
+  - Suite pre-módulo: X/X — BUILD SUCCESS
+  - Suite post-módulo: X/X — BUILD SUCCESS
+
+### Convención de nombres y ubicación
+
+```
+# Raíz del repositorio (junto a CLAUDE.md)
+propuesta_modulo_reports.txt
+propuesta_modulo_reportes_frontend.txt   # cuando aplique al frontend
+memoria_tecnica_modulo_reports.md
+memoria_tecnica_modulo_reportes_frontend.md
+```
+
+La propuesta va en `.txt` (documento de planificación sin formato especial).
+La memoria técnica va en `.md` (documento con formato, tablas y código).
+Ambos archivos se commitean en la `feature/<nombre>` branch correspondiente.
+
+---
+
 ## Comandos comunes
 
 ```bash

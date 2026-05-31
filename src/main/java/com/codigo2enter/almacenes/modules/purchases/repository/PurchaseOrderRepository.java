@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -128,4 +129,53 @@ public interface PurchaseOrderRepository extends JpaRepository<PurchaseOrder, Lo
     @Query("SELECT COUNT(p) FROM PurchaseOrder p " +
            "WHERE YEAR(p.createdAt) = :year")
     Long countByYear(@Param("year") int year);
+
+    // ── QUERIES ANALÍTICAS PARA EL MÓDULO REPORTS ──────────────────────────
+
+    /**
+     * Cuenta órdenes de compra en estado PENDING o APPROVED.
+     * Representa compromisos activos con proveedores que no han sido completados
+     * ni cancelados. Usado en el dashboard ejecutivo para el KPI de operaciones pendientes.
+     *
+     * @return número de órdenes activas (PENDING + APPROVED)
+     */
+    @Query("SELECT COUNT(p) FROM PurchaseOrder p WHERE p.status IN " +
+           "(com.codigo2enter.almacenes.modules.purchases.model.PurchaseOrderStatus.PENDING, " +
+           " com.codigo2enter.almacenes.modules.purchases.model.PurchaseOrderStatus.APPROVED)")
+    Long countPendingAndApproved();
+
+    /**
+     * Totales de compras agrupados por proveedor, considerando solo órdenes RECEIVED.
+     * Solo las órdenes RECEIVED representan dinero efectivamente desembolsado —
+     * las PENDING, APPROVED y CANCELLED no.
+     *
+     * Retorna Object[] {supplierId (Long), supplierName (String), rfc (String),
+     * orderCount (Long), totalAmount (BigDecimal), lastReceivedAt (LocalDateTime)}.
+     *
+     * ORDER BY SUM DESC muestra primero los proveedores con mayor volumen de compras.
+     *
+     * @param from inicio del período (receivedAt >= from)
+     * @param to   fin del período (receivedAt < to)
+     * @return lista de Object[] ordenada por totalAmount DESC
+     */
+    @Query("SELECT p.supplier.id, p.supplier.companyName, p.supplier.rfc, COUNT(p), " +
+           "COALESCE(SUM(p.totalAmount), 0), MAX(p.receivedAt) " +
+           "FROM PurchaseOrder p WHERE p.status = com.codigo2enter.almacenes.modules.purchases.model.PurchaseOrderStatus.RECEIVED " +
+           "AND p.receivedAt >= :from AND p.receivedAt < :to " +
+           "GROUP BY p.supplier.id, p.supplier.companyName, p.supplier.rfc " +
+           "ORDER BY SUM(p.totalAmount) DESC")
+    List<Object[]> totalsBySupplier(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
+
+    /**
+     * Retorna órdenes de compra en estado PENDING o APPROVED para el reporte operativo.
+     * Ordenadas por createdAt DESC para mostrar las más recientes primero.
+     * No incluye órdenes RECEIVED ni CANCELLED — solo las que requieren acción.
+     *
+     * @return lista de órdenes activas, la más reciente primero
+     */
+    @Query("SELECT p FROM PurchaseOrder p WHERE p.status IN " +
+           "(com.codigo2enter.almacenes.modules.purchases.model.PurchaseOrderStatus.PENDING, " +
+           " com.codigo2enter.almacenes.modules.purchases.model.PurchaseOrderStatus.APPROVED) " +
+           "ORDER BY p.createdAt DESC")
+    List<PurchaseOrder> findPendingAndApproved();
 }

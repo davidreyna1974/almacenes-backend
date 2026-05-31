@@ -134,18 +134,10 @@ public class Product {
     @Column(nullable = false)
     private Long version;
 
-    /** Costo unitario de compra del producto.
-     *  Fuente para poblar SaleOrderDetail.unitCost al crear un detalle de venta:
-     *  el servicio copia este valor al detalle para preservar el costo histórico,
-     *  igual que unit_price preserva el precio pactado en la venta.
-     *
-     *  Nullable por diseño — captura progresiva:
-     *    a) Productos existentes no tienen costo definido aún.
-     *    b) Nuevos productos pueden registrarse sin costo y completarse después.
-     *    c) El futuro módulo financiero calculará margen solo donde != null.
-     *
-     *  Si el costo cambia (renegociación con proveedor), las ventas históricas
-     *  conservan su costo original en SaleOrderDetail.unitCost. */
-    @Column(name = "unit_cost")
+    /** Costo unitario de compra del producto. Obligatorio — NOT NULL en BD.
+     *  Se copia a SaleOrderDetail.unitCost al crear un detalle de venta para
+     *  preservar el costo histórico: si el costo cambia después, las ventas
+     *  registradas conservan el costo original para calcular margen. */
+    @Column(name = "unit_cost", nullable = false)
     private BigDecimal unitCost;
 }

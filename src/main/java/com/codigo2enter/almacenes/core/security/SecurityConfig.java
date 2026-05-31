@@ -160,6 +160,39 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.PATCH,  "/api/v1/sales/**").hasAnyRole("ADMIN","MANAGER","SALES")
                 .requestMatchers(HttpMethod.DELETE, "/api/v1/sales/**").hasAnyRole("ADMIN","MANAGER","SALES")
 
+                // ── REPORTS: dashboard ejecutivo — solo ADMIN ───────────────
+                // El dashboard contiene datos financieros sensibles (revenue, COGS,
+                // margen bruto). Se restringe al rol más privilegiado.
+                .requestMatchers(HttpMethod.GET, "/api/v1/reports/dashboard/**")
+                        .hasRole("ADMIN")
+
+                // ── REPORTS: stock bajo mínimo — ADMIN, MANAGER, WAREHOUSEMAN ─
+                // Antes de la regla general de /inventory/** — la específica debe ir primero.
+                .requestMatchers(HttpMethod.GET, "/api/v1/reports/inventory/low-stock")
+                        .hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN")
+
+                // ── REPORTS: Kardex — ADMIN, MANAGER, WAREHOUSEMAN ───────────
+                // El Kardex es una herramienta operativa de auditoría de inventario.
+                .requestMatchers(HttpMethod.GET, "/api/v1/reports/inventory/kardex/**")
+                        .hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN")
+
+                // ── REPORTS: operaciones pendientes — ADMIN, MANAGER, WH, SALES
+                // SALES necesita ver las órdenes de venta pendientes para hacer seguimiento.
+                .requestMatchers(HttpMethod.GET, "/api/v1/reports/operations/**")
+                        .hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN","SALES")
+
+                // ── REPORTS: inventory general — ADMIN, MANAGER, WAREHOUSEMAN ─
+                // Cubre /inventory/valuation, /inventory/abc, /inventory/turnover,
+                // /inventory/movements y cualquier futuro endpoint de inventario.
+                .requestMatchers(HttpMethod.GET, "/api/v1/reports/inventory/**")
+                        .hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN")
+
+                // ── REPORTS: resto de endpoints — ADMIN, MANAGER ─────────────
+                // Cubre /products/top-performers, /purchases/by-supplier, /sales/**
+                // Regla más amplia al final para no interferir con las específicas anteriores.
+                .requestMatchers(HttpMethod.GET, "/api/v1/reports/**")
+                        .hasAnyRole("ADMIN","MANAGER")
+
                 // ── CUALQUIER OTRA RUTA — autenticado ───────────────────────
                 .anyRequest().authenticated()
             )

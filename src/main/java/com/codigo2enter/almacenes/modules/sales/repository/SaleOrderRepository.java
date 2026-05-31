@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -82,4 +83,60 @@ public interface SaleOrderRepository extends JpaRepository<SaleOrder, Long> {
            "com.codigo2enter.almacenes.modules.sales.model.SaleOrderStatus.APPROVED " +
            "ORDER BY so.approvedAt ASC")
     List<SaleOrder> findOldestApprovedOrders(Pageable pageable);
+
+    // ── QUERIES ANALÍTICAS PARA EL MÓDULO REPORTS ──────────────────────────
+
+    /**
+     * Cuenta órdenes de venta en estado PENDING o APPROVED.
+     * Representa compromisos activos con clientes que no han sido entregados ni cancelados.
+     * Usado en el dashboard ejecutivo para el KPI de operaciones pendientes de venta.
+     *
+     * @return número de órdenes activas (PENDING + APPROVED)
+     */
+    @Query("SELECT COUNT(so) FROM SaleOrder so WHERE so.status IN " +
+           "(com.codigo2enter.almacenes.modules.sales.model.SaleOrderStatus.PENDING, " +
+           " com.codigo2enter.almacenes.modules.sales.model.SaleOrderStatus.APPROVED)")
+    Long countPendingAndApproved();
+
+    /**
+     * Revenue de ventas DELIVERED agrupado por período.
+     *
+     * Usa una query nativa de PostgreSQL con TO_CHAR para formatear la fecha.
+     * Se usa nativeQuery=true porque JPQL no garantiza que el parámetro :format
+     * sea tratado como literal en GROUP BY/ORDER BY — PostgreSQL requiere que la
+     * expresión en GROUP BY y SELECT sea idéntica, lo que falla cuando el parámetro
+     * es enlazado como JDBC bind variable.
+     *
+     * La query nativa pasa :format como texto literal en la expresión TO_CHAR,
+     * permitiendo que PostgreSQL reconozca la misma expresión en SELECT, GROUP BY y ORDER BY.
+     *
+     * Retorna Object[] {period (String), revenue (BigDecimal), orderCount (Long)}.
+     * ORDER BY period garantiza orden cronológico en la respuesta.
+     *
+     * @param from   inicio del período
+     * @param to     fin del período
+     * @param format formato de TO_CHAR: 'YYYY-MM-DD' (día), 'IYYY-IW' (semana ISO), 'YYYY-MM' (mes)
+     * @return lista de Object[]{String, BigDecimal, Long} ordenada cronológicamente
+     */
+    @Query(value = "SELECT period, COALESCE(SUM(total_amount), 0) AS revenue, COUNT(id) AS order_count " +
+                   "FROM (SELECT total_amount, id, TO_CHAR(delivered_at, :format) AS period " +
+                   "      FROM sale_orders " +
+                   "      WHERE status = 'DELIVERED' AND delivered_at >= :from AND delivered_at < :to) sub " +
+                   "GROUP BY period ORDER BY period",
+           nativeQuery = true)
+    List<Object[]> revenueByPeriod(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to,
+                                   @Param("format") String format);
+
+    /**
+     * Retorna órdenes de venta en estado PENDING o APPROVED para el reporte operativo.
+     * Ordenadas por createdAt DESC para mostrar las más recientes primero.
+     * No incluye DELIVERED ni CANCELLED — solo las que requieren acción.
+     *
+     * @return lista de órdenes activas, la más reciente primero
+     */
+    @Query("SELECT so FROM SaleOrder so WHERE so.status IN " +
+           "(com.codigo2enter.almacenes.modules.sales.model.SaleOrderStatus.PENDING, " +
+           " com.codigo2enter.almacenes.modules.sales.model.SaleOrderStatus.APPROVED) " +
+           "ORDER BY so.createdAt DESC")
+    List<SaleOrder> findPendingAndApproved();
 }

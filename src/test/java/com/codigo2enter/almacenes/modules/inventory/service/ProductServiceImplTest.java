@@ -132,6 +132,7 @@ class ProductServiceImplTest {
                 .status("AVAILABLE")
                 .categoryId(1L)
                 .supplierId(1L)
+                .unitCost(new BigDecimal("50.00"))
                 .build();
 
         responseDTO = ProductResponseDTO.builder()

@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 
@@ -87,4 +88,32 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
            "WHERE p.reservedStock > 0 AND p.active = true " +
            "ORDER BY p.reservedStock DESC")
     List<Product> findProductsWithActiveReservations();
+
+    // ── QUERIES ANALÍTICAS PARA EL MÓDULO REPORTS ──────────────────────────
+
+    /**
+     * Valuación del inventario agrupada por categoría.
+     * Retorna Object[] {categoryId (Long), categoryName (String), productCount (Long),
+     * totalValue (BigDecimal)} para cada categoría con al menos un producto activo.
+     *
+     * COALESCE(..., 0) garantiza que la suma sea 0 en lugar de null cuando una
+     * categoría tiene productos activos con stock cero.
+     * ORDER BY SUM DESC muestra primero las categorías con mayor capital inmovilizado.
+     *
+     * @return lista de Object[]{Long, String, Long, BigDecimal} ordenada por valor DESC
+     */
+    @Query("SELECT p.category.id, p.category.name, COUNT(p), COALESCE(SUM(p.currentStock * p.unitCost), 0) " +
+           "FROM Product p WHERE p.active = true GROUP BY p.category.id, p.category.name " +
+           "ORDER BY SUM(p.currentStock * p.unitCost) DESC")
+    List<Object[]> inventoryValueByCategory();
+
+    /**
+     * Valor total del inventario activo: Σ(currentStock × unitCost) para todos
+     * los productos con active = true.
+     * COALESCE garantiza BigDecimal.ZERO cuando no hay productos activos.
+     *
+     * @return valor total del inventario, nunca null
+     */
+    @Query("SELECT COALESCE(SUM(p.currentStock * p.unitCost), 0) FROM Product p WHERE p.active = true")
+    BigDecimal totalInventoryValue();
 }

@@ -1,8 +1,10 @@
 ================================================================================
-  PROPUESTA DE IMPLEMENTACIÓN — MÓDULO REPORTS
+  PROPUESTA DE IMPLEMENTACIÓN — MÓDULO REPORTS  (v2 — 2026-05-31)
   Sistema de Gestión de Almacenes — Backend Spring Boot
-  Fecha: 2026-05-31
-  Estado: Propuesta aprobada — pendiente de implementación
+
+  v1 (2026-05-31): propuesta inicial
+  v2 (2026-05-31): corrección post-fix de unitCost NOT NULL; criterio ampliado
+                   de la memoria técnica para incluir ejecución de tests
 ================================================================================
 
 
@@ -98,13 +100,11 @@
     Campos de respuesta:
       - totalRevenue        → SUM(sale_order_details.subtotal) de órdenes DELIVERED
       - totalCogs           → SUM(sod.quantity × sod.unit_cost) de órdenes DELIVERED
-                              (excluye detalles con unitCost NULL — indicado en respuesta)
       - grossMargin         → totalRevenue − totalCogs
       - grossMarginPct      → (grossMargin / totalRevenue) × 100
       - inventoryValue      → SUM(current_stock × unit_cost) de productos activos
       - pendingPurchaseOrders → COUNT de PurchaseOrders en PENDING o APPROVED
       - pendingSaleOrders    → COUNT de SaleOrders en PENDING o APPROVED
-      - cogsCompleteness    → % de detalles de venta con unitCost definido
       - generatedAt         → timestamp del momento de cálculo
     Parámetros opcionales: from, to (rango de fechas para revenue y COGS)
     Acceso: ADMIN
@@ -117,7 +117,6 @@
       - categories          → lista de:
           categoryId, categoryName, productCount,
           categoryValue (SUM del grupo), pct (% del total)
-      - productsWithoutCost → COUNT de productos activos sin unitCost definido
       - generatedAt
     Parámetros: ninguno (siempre refleja el estado actual del inventario)
     Acceso: ADMIN, MANAGER
@@ -133,7 +132,6 @@
       - grossMarginPct
       - deliveredOrderCount → número de órdenes entregadas en el período
       - avgTicket           → totalRevenue / deliveredOrderCount
-      - cogsCompleteness    → % de líneas de venta con costo definido
       - generatedAt
     Parámetros: from, to (obligatorios para este reporte)
     Acceso: ADMIN, MANAGER
@@ -148,7 +146,7 @@
       - productId, sku, name, categoryName
       - totalQuantitySold   → SUM(quantity)
       - totalRevenue        → SUM(subtotal)
-      - totalCogs           → SUM(quantity × unitCost) donde unitCost NOT NULL
+      - totalCogs           → SUM(quantity × unitCost) de órdenes DELIVERED
       - grossMargin         → totalRevenue − totalCogs
       - grossMarginPct
     Parámetros: from, to (opcional), limit (default 10, max 50)
@@ -187,7 +185,7 @@
       - cogsInPeriod        → SUM(quantity × unitCost) de órdenes DELIVERED
       - currentInventoryValue → currentStock × unitCost
       - turnoverRate        → cogsInPeriod / currentInventoryValue
-                              (null si currentInventoryValue = 0 o unitCost null)
+                              (null si currentInventoryValue = 0, i.e. producto sin stock)
       - interpretation      → "Alta" (>4), "Media" (1-4), "Baja" (<1), "Sin datos"
     Parámetros: from, to (default: último año)
     Acceso: ADMIN, MANAGER
@@ -304,14 +302,12 @@
       FROM sale_order_details sod
       JOIN sale_orders so ON sod.sale_order_id = so.id
       WHERE so.status = 'DELIVERED'
-        AND sod.unit_cost IS NOT NULL           -- limitación conocida
         AND so.delivered_at BETWEEN :from AND :to
 
     Valuación de inventario:
       SELECT SUM(p.current_stock * p.unit_cost)
       FROM products p
       WHERE p.active = true
-        AND p.unit_cost IS NOT NULL
 
     Margen bruto:
       Revenue − COGS (cálculo en Java, no en SQL)
@@ -319,17 +315,18 @@
     Rotación:
       COGS del período / SUM(current_stock * unit_cost)
 
-  Limitación conocida y manejo:
-    `sale_order_details.unit_cost` es nullable (captura progresiva desde el módulo
-    sales). Los reportes que usan COGS excluirán detalles con unit_cost NULL y
-    retornarán el campo `cogsCompleteness` indicando qué porcentaje del revenue
-    tiene costo asociado. Si cogsCompleteness < 100%, los valores de COGS y margen
-    son aproximados — el reporte lo indicará explícitamente.
+  Integridad de datos garantizada (corrección pre-desarrollo):
+    Antes de iniciar la implementación del módulo reports, `unit_cost` fue
+    declarado NOT NULL en `products` y `sale_order_details` (ALTER TABLE +
+    @NotNull en ProductRequestDTO). No existe riesgo de COGS incompleto —
+    todo producto activo tiene costo y todo detalle de venta tiene unitCost.
+    Esta corrección eliminó la necesidad de cogsCompleteness y simplificó
+    todas las queries de agregación.
 
   Campos relevantes confirmados en entidades:
-    Product:          price, unitCost (nullable), currentStock, minimumStock,
+    Product:          price, unitCost (NOT NULL), currentStock, minimumStock,
                       reservedStock, active, @ManyToOne Category
-    SaleOrderDetail:  quantity, unitPrice, unitCost (nullable), subtotal,
+    SaleOrderDetail:  quantity, unitPrice, unitCost (NOT NULL), subtotal,
                       @ManyToOne Product, @ManyToOne SaleOrder
     SaleOrder:        totalAmount, status, createdAt, deliveredAt, cancelledAt,
                       @ManyToOne Client, @OneToMany details
@@ -477,7 +474,7 @@
     - Documentar en la memoria técnica: contexto, justificación,
       audiencias, catálogo de reportes, disponibilidad de datos
     - Verificar que no se requieren nuevas columnas (confirmado — sin ALTER TABLE)
-    - Documentar la limitación de unitCost nullable y su tratamiento
+    - Documentar la corrección previa: unitCost NOT NULL en products y sale_order_details
   Entregable: memoria técnica con secciones 1-4 pobladas, branch lista
 
   Fase 1 — DTOs de respuesta (12 DTOs, sin lógica)
@@ -501,9 +498,7 @@
 
   SaleOrderDetailRepository (nuevos métodos):
     - sumRevenue(from, to)           → BigDecimal
-    - sumCogs(from, to)              → BigDecimal (excluye unit_cost NULL)
-    - countDetailsWithCost(from, to) → Long (para cogsCompleteness)
-    - countDetails(from, to)         → Long (denominador de cogsCompleteness)
+    - sumCogs(from, to)              → BigDecimal
     - revenueByProduct(from, to)     → List<Object[]> (productId, revenue)
                                        para ABC y Top Products
     - cogsByProduct(from, to)        → List<Object[]> (productId, cogs)
@@ -640,8 +635,8 @@
   ├────────────────────────────────────────┼──────┼──────────┼──────────────────────────────┤
   │ ExecutiveReportServiceImplTest         │ A    │ ~10      │ Dashboard KPIs, valuación,   │
   │                                        │      │          │ rentabilidad; mocks de repos │
-  │                                        │      │          │ con y sin datos; unitCost    │
-  │                                        │      │          │ null en COGS                 │
+  │                                        │      │          │ con y sin datos; período sin │
+  │                                        │      │          │ ventas → revenue = 0         │
   ├────────────────────────────────────────┼──────┼──────────┼──────────────────────────────┤
   │ ManagementReportServiceImplTest        │ A    │ ~15      │ ABC (< 3 productos, todos A),│
   │                                        │      │          │ turnover (inventario en 0),  │
@@ -670,11 +665,11 @@
 
   Casos edge que deben cubrirse obligatoriamente:
     - Período sin ventas → revenue = 0, COGS = 0, margin = 0 (no NullPointerException)
-    - Todos los productos con unitCost null → cogsCompleteness = 0%, COGS = null
     - Stock en cero para todos los productos → inventoryValue = 0, turnover = null
     - ABC con un solo producto → clasificación A al 100%
     - Kardex sin movimientos en el período → lista vacía, openingStock = closingStock
     - Pendientes: ninguna orden pendiente → listas vacías, totales = 0
+    - División por cero en porcentajes → null o 0 según la semántica del campo
 
   Regla heredada del proyecto (dirty-checking vs save):
     Los servicios de reports nunca llaman save(). No aplica el patrón
@@ -745,9 +740,9 @@
       - Algoritmo ABC paso a paso con pseudocódigo
       - Cálculo de saldo acumulado en Kardex
       - Cálculo de openingStock (hacia atrás desde estado actual)
-      - Manejo de unitCost nullable en COGS y cogsCompleteness
       - Conversión de fechas LocalDate → LocalDateTime en el servicio
       - Agrupamiento de tendencias (DAY/WEEK/MONTH) con TO_CHAR
+      - Manejo de división por cero en porcentajes (margin%, pct, turnover)
     Se llena en: Fase 3
 
   ── Sección 6: RBAC — Criterio de acceso por rol ──────────
@@ -758,12 +753,41 @@
       - Orden de las reglas y por qué importa
     Se llena en: Fase 4
 
-  ── Sección 7: Plan de tests y resultados ─────────────────
+  ── Sección 7: Ejecución de tests y resultados ────────────
     Contenido:
-      - Taxonomía aplicada (A, B, D)
-      - Por cada clase de test: propósito, casos cubiertos, casos edge
-      - Resultado final: X/X tests — BUILD SUCCESS
-      - Cobertura JaCoCo del módulo reports
+      - Taxonomía aplicada (A, B, D) y justificación de por qué no Tipo C
+        para reports (módulo de solo lectura, sin estado que verificar en BD)
+
+      - Por cada clase de test ejecutada:
+          Nombre de la clase
+          Comando: ./mvnw test -Dtest=NombreClase
+          Resultado: Tests run: X, Failures: 0, Errors: 0 — BUILD SUCCESS
+          Si hubo fallos: síntoma exacto, causa raíz, corrección aplicada
+
+      - Resultado consolidado de la suite completa:
+          Comando: ./mvnw test
+          Salida: Tests run: X, Failures: 0, Errors: 0 — BUILD SUCCESS
+          Comparativa: X tests antes del módulo reports (292) → X tests después
+
+      - Cobertura JaCoCo del módulo reports:
+          Comando: ./mvnw verify
+          Salida de líneas: X% (X covered / Y total)
+          Salida de métodos: X%
+          Salida de ramas: X%
+          Referencia al reporte HTML: target/site/jacoco/index.html
+          Nota: si algún paquete no alcanza el umbral del 70%, documentar
+          la excepción y su justificación (ej. DTOs sin lógica)
+
+      - Validación E2E con curl (por cada endpoint):
+          Comando curl ejecutado
+          Código HTTP recibido vs esperado
+          Campos del response verificados (revenue, cogs, grossMargin, etc.)
+          Resultado: X/12 endpoints — 0 fallos
+
+      - Regresiones en módulos anteriores:
+          Suite completa pre-reports: 292/292 — BUILD SUCCESS
+          Suite completa post-reports: X/X — BUILD SUCCESS
+          Diferencia: +X tests, 0 fallos nuevos
     Se llena en: Fase 5
 
   ── Sección 8: Bugs y retos durante el desarrollo ─────────
@@ -781,9 +805,13 @@
       - @Transactional(readOnly=true) en todos los métodos del servicio
       - BigDecimal para cálculos financieros (nunca float/double)
       - Validación de rango de fechas en el servicio (from <= to)
-      - Exclusión explícita de registros con datos incompletos (unitCost null)
-      - Documentación de limitaciones en el DTO de respuesta (cogsCompleteness)
-      - Tests de casos edge obligatorios (período sin datos)
+      - Manejo de división por cero: retornar null cuando el denominador es 0
+        (grossMarginPct, turnoverRate, pct en ABC) — documentar semántica en DTO
+      - unitCost garantizado NOT NULL: no se requieren filtros IS NOT NULL
+        en ninguna query de COGS (corrección realizada antes del módulo)
+      - Tests de casos edge obligatorios (período sin datos, stock en cero)
+      - Parámetros de fecha como LocalDate con conversión a LocalDateTime
+        en el servicio (from.atStartOfDay(), to.plusDays(1).atStartOfDay())
     Se llena en: Fase 6
 
   ── Sección 10: Cumplimiento y validación ─────────────────
@@ -802,9 +830,11 @@
   ┌─────────────────────────────────────────┬─────────────┬──────────────────────────────────┐
   │ Riesgo                                  │ Probabilidad│ Mitigación                       │
   ├─────────────────────────────────────────┼─────────────┼──────────────────────────────────┤
-  │ unitCost null en ventas existentes      │ Alta        │ Filtrar WHERE unitCost IS NOT    │
-  │ (captura progresiva del módulo sales)   │             │ NULL. Campo cogsCompleteness en  │
-  │                                         │             │ el DTO advierte al consumidor.   │
+  │ [RESUELTO] unitCost null en ventas      │ ~~Alta~~    │ ALTER TABLE products/            │
+  │ (captura progresiva del módulo sales)   │ → N/A       │ sale_order_details SET NOT NULL  │
+  │                                         │             │ ejecutado antes de iniciar el     │
+  │                                         │             │ módulo. No se requiere ningún     │
+  │                                         │             │ filtro IS NOT NULL en las queries.│
   ├─────────────────────────────────────────┼─────────────┼──────────────────────────────────┤
   │ Queries de agregación lentas con        │ Media       │ Documentar en memoria técnica.   │
   │ volumen alto de datos                   │             │ Agregar índices en created_at,   │
@@ -845,7 +875,7 @@
     [ ] El análisis ABC clasifica productos según la distribución de Pareto
     [ ] El Kardex muestra saldo acumulado correcto en cada movimiento
     [ ] Los reportes de pendientes reflejan el estado real de la BD
-    [ ] Los reportes con unitCost null indican cogsCompleteness < 100%
+    [ ] COGS y margen calculados sin filtros especiales (unitCost garantizado NOT NULL)
 
   Seguridad:
     [ ] ADMIN accede a los 12 reportes
@@ -873,7 +903,8 @@
 
 
 ================================================================================
-  FIN DEL DOCUMENTO
-  Propuesta generada el 2026-05-31
-  Estado: pendiente de aprobación para inicio de implementación
+  FIN DEL DOCUMENTO  (v2)
+  v1 generada el 2026-05-31 — propuesta inicial
+  v2 generada el 2026-05-31 — corrección unitCost NOT NULL + criterio de tests
+  Estado: aprobada — lista para inicio de implementación (Fase 0)
 ================================================================================

@@ -7,10 +7,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Backend REST API para gestión de almacenes. Proyecto Spring Boot 3.5.14 con Java 17, Maven y PostgreSQL.
 
 **Módulos principales:**
-- `auth` — Autenticación y autorización (JWT/Spring Security)
+- `auth` — Autenticación y autorización (JWT/Spring Security, RBAC con 4 roles)
 - `inventory` — Gestión de inventario (categorías, productos, movimientos de stock)
 - `purchases` — Gestión de compras (proveedores, órdenes de compra)
 - `sales` — Gestión de ventas (clientes, órdenes de venta, reservas de stock, analítica de costo)
+- `reports` — Reportes analíticos por audiencia (ejecutivos, gestión, operativos)
 
 ## Documentación obligatoria por módulo
 
@@ -1037,6 +1038,25 @@ assertFalse(jwtUtils.validateToken(expiredToken));
 - Tests (Tipo C): `SaleOrderConcurrencyTest` (3 — Optimistic Locking con threads reales)
 - Tests (Tipo D): `SaleOrderRepositoryTest` (5 — `countByYear`, `findActiveOrdersByClient`, `findByProductId`)
 
+### Módulo `reports` — completo
+
+- Sin entidades JPA propias — módulo de solo lectura que agrega datos de otros módulos
+- Sin mappers MapStruct — DTOs construidos directamente en servicios con builders
+- 3 servicios `@Transactional(readOnly=true)` por audiencia: `ExecutiveReportServiceImpl`, `ManagementReportServiceImpl`, `OperationalReportServiceImpl`
+- 1 controlador: `ReportController` — 12 endpoints GET en `/api/v1/reports/**`
+- 15 DTOs en 3 subpaquetes: `executive/` (4), `management/` (5), `operational/` (6)
+- 18 queries JPQL analíticas agregadas a repositorios existentes (sin nuevas tablas)
+- Bug detectado: `FUNCTION('TO_CHAR', ..., :format)` con GROUP BY falla en PostgreSQL — resuelto con `nativeQuery = true` y subquery (detectado por `ReportRepositoryTest` Tipo D)
+- Queries nuevas en repositorios:
+  - `SaleOrderDetailRepository`: 6 (revenue, COGS, quantitySold, revenueByProduct, cogsByProduct, countDelivered)
+  - `ProductRepository`: 2 (inventoryValueByCategory, totalInventoryValue)
+  - `StockMovementRepository`: 3 (findByProductAndPeriod, sumIn, sumOut)
+  - `PurchaseOrderRepository`: 3 (countPendingAndApproved, totalsBySupplier, findPendingAndApproved)
+  - `SaleOrderRepository`: 3 (countPendingAndApproved, revenueByPeriod native, findPendingAndApproved)
+- Tests (Tipo A): `ExecutiveReportServiceImplTest` (11), `ManagementReportServiceImplTest` (17), `OperationalReportServiceImplTest` (12)
+- Tests (Tipo B): `ReportControllerTest` (14)
+- Tests (Tipo D): `ReportRepositoryTest` (7 — queries JPQL y native contra PostgreSQL real)
+
 ### Tests de integración transversales
 
 - `AuditAndConstraintIntegrationTest` (8 tests, Tipo C): verifica en BD real que los bugs históricos no regresan:
@@ -1056,20 +1076,22 @@ assertFalse(jwtUtils.validateToken(expiredToken));
   4. Flujo completo MANAGER: crea categoría, producto, orden de compra y la aprueba — verifica en BD que `approvedByUsername` es el usuario MANAGER
   5. Token con firma manipulada → 403 (verifica try-catch real del filtro JWT)
 
-### Suite de tests actual: 292 tests — 0 fallos
+### Suite de tests actual: 353 tests — 0 fallos
 
 ```
-Tipo A (Mockito):            131 tests
-Tipo B (@WebMvcTest):         68 tests
+Tipo A (Mockito):            171 tests  (+40 reports)
+Tipo B (@WebMvcTest):         82 tests  (+14 reports)
 Tipo B* (con seguridad):      33 tests
-Tipo C (@SpringBootTest):     51 tests  (8 auditoría + 17 RBAC + 3 concurrencia + 23 otros)
-Tipo D (@DataJpaTest):         9 tests
+Tipo C (@SpringBootTest):     51 tests
+Tipo D (@DataJpaTest):        16 tests  (+7 reports)
 ──────────────────────────────────────
-TOTAL MAVEN:                 292 tests
+TOTAL MAVEN:                 353 tests
 Tests E2E curl:              129 tests  (fuera del pipeline Maven)
 ```
 
-Cobertura JaCoCo: **83.1% líneas · 88.4% métodos · 59.9% ramas**
+Cobertura JaCoCo: **85.9% líneas · 89.6% métodos · 62.7% ramas**
+
+Nota: `core.config` (DataInitializer) excluido del check JaCoCo — bootstrap code.
 
 Rama activa de desarrollo: `feature/reports`
 

@@ -94,7 +94,8 @@ class ProductControllerTest {
                     "minimumStock": 5,
                     "status": "AVAILABLE",
                     "categoryId": 1,
-                    "supplierId": 1
+                    "supplierId": 1,
+                    "unitCost": 50.00
                 }
                 """;
 
@@ -159,7 +160,8 @@ class ProductControllerTest {
                     "minimumStock": 5,
                     "status": "AVAILABLE",
                     "categoryId": 1,
-                    "supplierId": 1
+                    "supplierId": 1,
+                    "unitCost": 50.00
                 }
                 """;
 

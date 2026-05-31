@@ -77,10 +77,10 @@ public class ProductRequestDTO {
     @NotNull(message = "El proveedor es obligatorio")
     private Long supplierId;
 
-    /** Costo unitario de compra del producto. Opcional — nullable para captura
-     *  progresiva. Un costo de 0.00 es válido (productos sin costo de adquisición).
-     *  Este valor se copia automáticamente a SaleOrderDetail.unitCost al crear
-     *  un detalle de venta, preservando el costo histórico para análisis futuros. */
+    /** Costo unitario de compra del producto. Obligatorio.
+     *  Se copia automáticamente a SaleOrderDetail.unitCost al crear un detalle
+     *  de venta, preservando el costo histórico para cálculo de márgenes. */
+    @NotNull(message = "El costo unitario es obligatorio")
     @DecimalMin(value = "0.00", message = "El costo no puede ser negativo")
     private BigDecimal unitCost;
 }

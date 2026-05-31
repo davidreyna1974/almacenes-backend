@@ -49,13 +49,11 @@ public class SaleOrderDetail {
     @Column(name = "unit_price", nullable = false)
     private BigDecimal unitPrice;
 
-    /**
-     * Costo de compra copiado desde Product.unitCost al crear o actualizar
-     * el detalle. Null si el producto no tiene costo definido aún.
-     * El módulo financiero calculará margen (unitPrice - unitCost) solo
-     * donde este campo no sea null.
-     */
-    @Column(name = "unit_cost")
+    /** Costo de compra copiado desde Product.unitCost al crear el detalle.
+     *  NOT NULL — Product.unitCost es obligatorio, por lo que este campo
+     *  siempre tiene valor. Preserva el costo histórico para calcular
+     *  margen (unitPrice - unitCost) aunque el costo del producto cambie. */
+    @Column(name = "unit_cost", nullable = false)
     private BigDecimal unitCost;
 
     /** quantity × unitPrice. Calculado y asignado por SaleOrderServiceImpl. */

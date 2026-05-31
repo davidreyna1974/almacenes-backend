@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -68,6 +69,29 @@ public class JwtUtils {
                 .expiration(new Date(System.currentTimeMillis() + EXPIRATION_MS))
                 .signWith(getSigningKey())
                 .compact();
+    }
+
+    /**
+     * Extrae la lista de roles almacenada en el claim 'roles' del token.
+     *
+     * El claim 'roles' se almacena como una lista de Strings (ej. ["ROLE_ADMIN","ROLE_WAREHOUSEMAN"]).
+     * Se usa en JwtAuthenticationFilter para construir las GrantedAuthority del usuario
+     * sin necesidad de consultar la BD en cada request.
+     *
+     * @param token JWT compacto del que extraer los roles
+     * @return lista de nombres de roles; lista vacía si el claim no existe o no es una lista
+     */
+    @SuppressWarnings("unchecked")
+    public List<String> extractRoles(String token) {
+        Claims claims = parseClaims(token);
+        Object rolesObj = claims.get("roles");
+        if (rolesObj instanceof List<?> list) {
+            return list.stream()
+                    .filter(String.class::isInstance)
+                    .map(String.class::cast)
+                    .toList();
+        }
+        return List.of();
     }
 
     /**

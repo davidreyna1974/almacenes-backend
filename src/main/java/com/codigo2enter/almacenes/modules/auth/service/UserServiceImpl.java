@@ -1,30 +1,24 @@
 package com.codigo2enter.almacenes.modules.auth.service;
 
 import com.codigo2enter.almacenes.core.security.JwtUtils;
-import com.codigo2enter.almacenes.modules.auth.dto.AuthRequestDTO;
-import com.codigo2enter.almacenes.modules.auth.dto.AuthResponseDTO;
-import com.codigo2enter.almacenes.modules.auth.dto.UserRequestDTO;
-import com.codigo2enter.almacenes.modules.auth.dto.UserResponseDTO;
+import com.codigo2enter.almacenes.modules.auth.dto.*;
 import com.codigo2enter.almacenes.modules.auth.mapper.UserMapper;
 import com.codigo2enter.almacenes.modules.auth.model.Role;
 import com.codigo2enter.almacenes.modules.auth.model.User;
 import com.codigo2enter.almacenes.modules.auth.repository.RoleRepository;
 import com.codigo2enter.almacenes.modules.auth.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-/**
- * Implementación concreta de UserService.
- *
- * @RequiredArgsConstructor genera automáticamente un constructor con todos
- * los campos 'final', que Spring usa para inyectar las dependencias.
- * Esto evita el uso de @Autowired y facilita las pruebas unitarias.
- */
 @Service
 @Transactional
 @RequiredArgsConstructor
@@ -34,84 +28,172 @@ public class UserServiceImpl implements UserService {
     private final RoleRepository roleRepository;
     private final UserMapper userMapper;
     private final PasswordEncoder passwordEncoder;
-
-    // JwtUtils vive en core/security y se inyecta aquí para generar el token
-    // tras una autenticación exitosa.
     private final JwtUtils jwtUtils;
 
-    @Override
-    public UserResponseDTO registerUser(UserRequestDTO request) {
+    // ── Autenticación ─────────────────────────────────────────────────────
 
-        // Validar reglas de negocio contra duplicados
-        if (userRepository.existsByUsername(request.getUsername())) {
-            throw new RuntimeException("El nombre de usuario '" + request.getUsername() + "' ya está registrado en el sistema.");
-        }
-        if (userRepository.existsByEmail(request.getEmail())) {
-            throw new RuntimeException("El correo electrónico '" + request.getEmail() + "' ya está registrado en el sistema.");
-        }
-
-        // Convertir DTO de entrada a Entidad JPA usando MapStruct
-        User userEntity = userMapper.toEntity(request);
-
-        // El password se cifra con BCrypt antes de persistirlo.
-        // passwordEncoder.encode() genera un hash único con salt aleatorio
-        // cada vez que se llama, por lo que dos registros con la misma
-        // contraseña producen hashes distintos.
-        userEntity.setPassword(passwordEncoder.encode(request.getPassword()));
-
-        // Buscamos la entidad del rol en la base de datos para asegurar su consistencia
-        Role defaultRole = roleRepository.findByName("ROLE_WAREHOUSEMAN")
-                .orElseThrow(() -> new RuntimeException("Error: El rol 'ROLE_WAREHOUSEMAN' no existe en el sistema."));
-
-        // Accedemos al HashSet de roles del usuario (gracias al new HashSet<>())
-        // y le inyectamos el rol por defecto
-        userEntity.getRoles().add(defaultRole);
-
-        // Persistir en la base de datos
-        User savedUser = userRepository.save(userEntity);
-
-        // Retornar el DTO de salida seguro, libre de contraseñas
-        return userMapper.toResponseDTO(savedUser);
-    }
-
-    /**
-     * Autentica al usuario verificando sus credenciales y genera un JWT firmado.
-     *
-     * Se marca como readOnly = true porque este método solo lee de la base de datos.
-     * Esto permite que Hibernate optimice la sesión (sin flush al final) y que
-     * el pool de conexiones pueda enrutar la consulta a réplicas de lectura si existieran.
-     */
     @Override
     @Transactional(readOnly = true)
     public AuthResponseDTO login(AuthRequestDTO request) {
-
-        // Buscamos el usuario por username. Si no existe devolvemos el mismo mensaje
-        // que si la contraseña fuera incorrecta — evitar enumerar usuarios válidos
-        // (técnica de seguridad: no revelar qué parte de las credenciales falló).
         User user = userRepository.findByUsername(request.getUsername())
                 .orElseThrow(() -> new RuntimeException("Credenciales incorrectas."));
 
-        // passwordEncoder.matches() aplica el mismo algoritmo BCrypt al password
-        // en texto plano y lo compara con el hash almacenado en la base de datos.
-        // Nunca se desencripta el hash — BCrypt es una función unidireccional.
+        if (!user.isActive()) {
+            throw new RuntimeException("Credenciales incorrectas.");
+        }
+
         if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
             throw new RuntimeException("Credenciales incorrectas.");
         }
 
-        // Extraemos solo los nombres de los roles (ej. "ROLE_WAREHOUSEMAN") para
-        // incluirlos como claim en el JWT. JwtUtils trabaja con String para
-        // no acoplarse a la entidad Role del módulo auth.
         Set<String> roles = user.getRoles().stream()
                 .map(Role::getName)
                 .collect(Collectors.toSet());
 
-        // Generamos el token JWT firmado con HMAC-SHA256, con vigencia de 2 horas.
-        // El token contiene username y roles — suficiente para autorizar peticiones
-        // posteriores sin consultar la base de datos en cada request.
         String token = jwtUtils.generateToken(user.getUsername(), roles);
+        return AuthResponseDTO.builder().token(token).build();
+    }
 
-        return AuthResponseDTO.builder()
-                .token(token)
+    // ── Gestión de usuarios (ADMIN) ───────────────────────────────────────
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<UserResponseDTO> getAllUsers() {
+        return userMapper.toResponseDTOList(userRepository.findByActiveTrue());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public UserResponseDTO getUserById(Long id) {
+        return userMapper.toResponseDTO(findUserOrThrow(id));
+    }
+
+    @Override
+    public UserResponseDTO createUser(UserCreateDTO dto) {
+        if (userRepository.existsByUsername(dto.getUsername())) {
+            throw new RuntimeException(
+                "El nombre de usuario '" + dto.getUsername() + "' ya está registrado.");
+        }
+        if (userRepository.existsByEmail(dto.getEmail())) {
+            throw new RuntimeException(
+                "El email '" + dto.getEmail() + "' ya está registrado.");
+        }
+
+        Set<Role> roles = resolveRoles(dto.getRoles());
+
+        User user = User.builder()
+                .username(dto.getUsername())
+                .password(passwordEncoder.encode(dto.getPassword()))
+                .email(dto.getEmail())
+                .roles(roles)
                 .build();
+
+        return userMapper.toResponseDTO(userRepository.save(user));
+    }
+
+    @Override
+    public UserResponseDTO updateUser(Long id, UserUpdateDTO dto) {
+        User user = findUserOrThrow(id);
+
+        userRepository.findByUsernameAndIdNot(dto.getUsername(), id).ifPresent(u -> {
+            throw new RuntimeException(
+                "El username '" + dto.getUsername() + "' ya está en uso por otro usuario.");
+        });
+        userRepository.findByEmailAndIdNot(dto.getEmail(), id).ifPresent(u -> {
+            throw new RuntimeException(
+                "El email '" + dto.getEmail() + "' ya está en uso por otro usuario.");
+        });
+
+        user.setUsername(dto.getUsername());
+        user.setEmail(dto.getEmail());
+        user.setUpdatedAt(LocalDateTime.now());
+        return userMapper.toResponseDTO(user);
+    }
+
+    @Override
+    public void deactivateUser(Long id) {
+        User user = findUserOrThrow(id);
+
+        String currentUsername = SecurityContextHolder.getContext()
+                .getAuthentication().getName();
+        if (user.getUsername().equals(currentUsername)) {
+            throw new RuntimeException(
+                "No puedes desactivar tu propia cuenta. " +
+                "Pide a otro administrador que lo haga.");
+        }
+
+        user.setActive(false);
+        user.setUpdatedAt(LocalDateTime.now());
+    }
+
+    @Override
+    public UserResponseDTO assignRoles(Long id, UserRoleAssignDTO dto) {
+        User user = findUserOrThrow(id);
+        Set<Role> newRoles = resolveRoles(dto.getRoles());
+
+        user.getRoles().clear();
+        user.getRoles().addAll(newRoles);
+        user.setUpdatedAt(LocalDateTime.now());
+
+        // save() explícito necesario: la relación @ManyToMany (user_roles)
+        // no se persiste con dirty-checking — requiere sincronización explícita.
+        return userMapper.toResponseDTO(userRepository.save(user));
+    }
+
+    // ── Perfil propio ─────────────────────────────────────────────────────
+
+    @Override
+    @Transactional(readOnly = true)
+    public UserResponseDTO getMyProfile() {
+        return userMapper.toResponseDTO(resolveAuthenticatedUser());
+    }
+
+    @Override
+    public void changePassword(ChangePasswordDTO dto) {
+        if (!dto.getNewPassword().equals(dto.getConfirmPassword())) {
+            throw new RuntimeException("Las contraseñas nuevas no coinciden.");
+        }
+
+        User user = resolveAuthenticatedUser();
+
+        if (!passwordEncoder.matches(dto.getCurrentPassword(), user.getPassword())) {
+            throw new RuntimeException("La contraseña actual es incorrecta.");
+        }
+
+        user.setPassword(passwordEncoder.encode(dto.getNewPassword()));
+        user.setUpdatedAt(LocalDateTime.now());
+        userRepository.save(user);
+    }
+
+    // ── Métodos privados ──────────────────────────────────────────────────
+
+    private User findUserOrThrow(Long id) {
+        return userRepository.findById(id)
+                .filter(User::isActive)
+                .orElseThrow(() -> new RuntimeException(
+                    "Usuario con id " + id + " no encontrado o inactivo."));
+    }
+
+    private User resolveAuthenticatedUser() {
+        String username = SecurityContextHolder.getContext().getAuthentication().getName();
+        return userRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException(
+                    "Usuario autenticado no encontrado en el sistema."));
+    }
+
+    /**
+     * Convierte un Set<String> de nombres de rol a entidades Role.
+     * Lanza RuntimeException si algún nombre no corresponde a un rol existente.
+     */
+    private Set<Role> resolveRoles(Set<String> roleNames) {
+        Set<Role> roles = new HashSet<>();
+        for (String name : roleNames) {
+            Role role = roleRepository.findByName(name)
+                    .orElseThrow(() -> new RuntimeException(
+                        "Rol '" + name + "' no existe. " +
+                        "Roles válidos: ROLE_ADMIN, ROLE_MANAGER, ROLE_WAREHOUSEMAN, ROLE_SALES."));
+            roles.add(role);
+        }
+        return roles;
     }
 }

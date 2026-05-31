@@ -1,32 +1,64 @@
 package com.codigo2enter.almacenes.modules.auth.service;
 
-import com.codigo2enter.almacenes.modules.auth.dto.AuthRequestDTO;
-import com.codigo2enter.almacenes.modules.auth.dto.AuthResponseDTO;
-import com.codigo2enter.almacenes.modules.auth.dto.UserRequestDTO;
-import com.codigo2enter.almacenes.modules.auth.dto.UserResponseDTO;
+import com.codigo2enter.almacenes.modules.auth.dto.*;
+
+import java.util.List;
 
 /**
- * Contrato de la capa de servicio para la gestión de usuarios y autenticación.
+ * Contrato de la capa de servicio para gestión de usuarios y autenticación.
  *
- * Define las operaciones públicas disponibles para los controladores REST.
- * La implementación concreta vive en UserServiceImpl, lo que permite
- * desacoplar la interfaz del detalle técnico (JPA, BCrypt, JWT).
+ * Agrupa tres responsabilidades:
+ *   1. Autenticación pública (login)
+ *   2. Gestión de usuarios — solo ADMIN (CRUD + asignación de roles)
+ *   3. Operaciones de perfil propio — cualquier autenticado
  */
 public interface UserService {
 
-    /**
-     * Registra un nuevo usuario en el sistema asignándole el rol por defecto.
-     *
-     * @param request datos del nuevo usuario (username, email, password)
-     * @return DTO con la información pública del usuario creado
-     */
-    UserResponseDTO registerUser(UserRequestDTO request);
+    // ── Autenticación (pública) ───────────────────────────────────────────
 
     /**
      * Autentica a un usuario existente y genera un JWT firmado.
-     *
-     * @param request credenciales enviadas por el cliente (username, password)
-     * @return DTO con el token JWT listo para usar en cabeceras Authorization
+     * El JWT incluye username y roles para autorización stateless.
      */
     AuthResponseDTO login(AuthRequestDTO request);
+
+    // ── Gestión de usuarios (solo ADMIN) ─────────────────────────────────
+
+    /** Retorna todos los usuarios activos del sistema. */
+    List<UserResponseDTO> getAllUsers();
+
+    /** Retorna el detalle de un usuario por ID. */
+    UserResponseDTO getUserById(Long id);
+
+    /**
+     * Crea un nuevo usuario con el rol especificado por el ADMIN.
+     * Reemplaza el antiguo registerUser() público.
+     */
+    UserResponseDTO createUser(UserCreateDTO dto);
+
+    /** Actualiza username y email de un usuario existente. */
+    UserResponseDTO updateUser(Long id, UserUpdateDTO dto);
+
+    /**
+     * Desactiva lógicamente un usuario (soft delete).
+     * No se puede desactivar al propio usuario autenticado.
+     */
+    void deactivateUser(Long id);
+
+    /**
+     * Reemplaza la lista completa de roles de un usuario.
+     * Semántica PUT: el ADMIN envía la lista definitiva.
+     */
+    UserResponseDTO assignRoles(Long id, UserRoleAssignDTO dto);
+
+    // ── Perfil propio (cualquier autenticado) ─────────────────────────────
+
+    /** Retorna el perfil del usuario autenticado. */
+    UserResponseDTO getMyProfile();
+
+    /**
+     * Cambia la contraseña del usuario autenticado.
+     * Requiere contraseña actual para verificar identidad.
+     */
+    void changePassword(ChangePasswordDTO dto);
 }

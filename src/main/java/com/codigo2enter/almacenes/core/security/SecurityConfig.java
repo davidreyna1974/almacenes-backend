@@ -3,6 +3,8 @@ package com.codigo2enter.almacenes.core.security;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -29,6 +31,7 @@ import java.util.List;
  */
 @Configuration
 @EnableWebSecurity
+@EnableMethodSecurity
 @RequiredArgsConstructor
 public class SecurityConfig {
 
@@ -82,17 +85,82 @@ public class SecurityConfig {
             //    POST/PUT/DELETE desde Angular.
             .csrf(AbstractHttpConfigurer::disable)
 
-            // 2. REGLAS DE AUTORIZACIÓN POR RUTA
-            //    Se evalúan en orden: la primera regla que coincide con la ruta gana.
+            // 2. REGLAS DE AUTORIZACIÓN POR RUTA Y ROL
+            //    Las reglas se evalúan en orden: la primera que coincide gana.
+            //    Las reglas más específicas (paths concretos) deben ir ANTES
+            //    de las más generales (wildcards amplios).
             .authorizeHttpRequests(auth -> auth
-                // Rutas públicas: registro y login no requieren token JWT.
-                // El patrón /api/v1/auth/** cubre /register, /login y cualquier
-                // ruta futura bajo ese prefijo.
-                .requestMatchers("/api/v1/auth/**").permitAll()
 
-                // Cualquier otra ruta del sistema requiere un JWT válido.
-                // Si la petición no tiene el header Authorization o el token
-                // es inválido/expirado, Spring retorna HTTP 403 Forbidden.
+                // ── RUTAS PÚBLICAS ──────────────────────────────────────────
+                .requestMatchers("/api/v1/auth/login").permitAll()
+
+                // ── GESTIÓN DE USUARIOS — solo ADMIN ───────────────────────
+                .requestMatchers("/api/v1/auth/users/**").hasRole("ADMIN")
+
+                // ── PERFIL Y CONTRASEÑA — cualquier autenticado ─────────────
+                .requestMatchers("/api/v1/auth/me/**").authenticated()
+
+                // ── INVENTORY: lectura — todos los roles ────────────────────
+                .requestMatchers(HttpMethod.GET, "/api/v1/inventory/**")
+                        .hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN","SALES")
+
+                // ── INVENTORY: movimiento de stock — ADMIN, MANAGER, WHOUSE ─
+                // Regla específica antes que el POST general de inventory
+                .requestMatchers(HttpMethod.POST, "/api/v1/inventory/products/movement")
+                        .hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN")
+
+                // ── INVENTORY: desactivar producto — solo ADMIN ─────────────
+                // Antes del DELETE general de inventory
+                .requestMatchers(HttpMethod.DELETE, "/api/v1/inventory/products/**")
+                        .hasRole("ADMIN")
+
+                // ── INVENTORY: escritura general — ADMIN, MANAGER ───────────
+                .requestMatchers(HttpMethod.POST,   "/api/v1/inventory/**").hasAnyRole("ADMIN","MANAGER")
+                .requestMatchers(HttpMethod.PUT,    "/api/v1/inventory/**").hasAnyRole("ADMIN","MANAGER")
+                .requestMatchers(HttpMethod.DELETE, "/api/v1/inventory/**").hasAnyRole("ADMIN","MANAGER")
+
+                // ── PURCHASES: lectura — ADMIN, MANAGER, WAREHOUSEMAN ───────
+                .requestMatchers(HttpMethod.GET, "/api/v1/purchases/**")
+                        .hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN")
+
+                // ── PURCHASES: recepción — ADMIN, MANAGER, WAREHOUSEMAN ─────
+                // Antes del PATCH general de purchases
+                .requestMatchers(HttpMethod.PATCH, "/api/v1/purchases/orders/*/receive")
+                        .hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN")
+
+                // ── PURCHASES: escritura general — ADMIN, MANAGER ───────────
+                .requestMatchers(HttpMethod.POST,   "/api/v1/purchases/**").hasAnyRole("ADMIN","MANAGER")
+                .requestMatchers(HttpMethod.PUT,    "/api/v1/purchases/**").hasAnyRole("ADMIN","MANAGER")
+                .requestMatchers(HttpMethod.PATCH,  "/api/v1/purchases/**").hasAnyRole("ADMIN","MANAGER")
+                .requestMatchers(HttpMethod.DELETE, "/api/v1/purchases/**").hasAnyRole("ADMIN","MANAGER")
+
+                // ── SALES: lectura — todos los roles ────────────────────────
+                .requestMatchers(HttpMethod.GET, "/api/v1/sales/**")
+                        .hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN","SALES")
+
+                // ── SALES: transiciones de estado (orden importa) ───────────
+                // approve: ADMIN, MANAGER (antes del PATCH general)
+                .requestMatchers(HttpMethod.PATCH, "/api/v1/sales/orders/*/approve")
+                        .hasAnyRole("ADMIN","MANAGER")
+                // deliver: ADMIN, MANAGER, WAREHOUSEMAN
+                .requestMatchers(HttpMethod.PATCH, "/api/v1/sales/orders/*/deliver")
+                        .hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN")
+                // cancel: ADMIN, MANAGER, SALES
+                .requestMatchers(HttpMethod.PATCH, "/api/v1/sales/orders/*/cancel")
+                        .hasAnyRole("ADMIN","MANAGER","SALES")
+
+                // ── SALES: DELETE clientes — ADMIN, MANAGER (no SALES) ──────
+                // Antes del DELETE general de sales
+                .requestMatchers(HttpMethod.DELETE, "/api/v1/sales/clients/**")
+                        .hasAnyRole("ADMIN","MANAGER")
+
+                // ── SALES: escritura general — ADMIN, MANAGER, SALES ────────
+                .requestMatchers(HttpMethod.POST,   "/api/v1/sales/**").hasAnyRole("ADMIN","MANAGER","SALES")
+                .requestMatchers(HttpMethod.PUT,    "/api/v1/sales/**").hasAnyRole("ADMIN","MANAGER","SALES")
+                .requestMatchers(HttpMethod.PATCH,  "/api/v1/sales/**").hasAnyRole("ADMIN","MANAGER","SALES")
+                .requestMatchers(HttpMethod.DELETE, "/api/v1/sales/**").hasAnyRole("ADMIN","MANAGER","SALES")
+
+                // ── CUALQUIER OTRA RUTA — autenticado ───────────────────────
                 .anyRequest().authenticated()
             )
 

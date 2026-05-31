@@ -505,7 +505,7 @@ class AuditAndConstraintIntegrationTest {
 
     @SuppressWarnings("unchecked")
     private HttpHeaders obtenerJwt() {
-        Map<String, String> loginBody = Map.of("username", "tester01", "password", "Admin123!");
+        Map<String, String> loginBody = Map.of("username", "admin", "password", "Admin123!");
         HttpHeaders jsonH = new HttpHeaders();
         jsonH.setContentType(MediaType.APPLICATION_JSON);
         ResponseEntity<Map> loginResp = restTemplate.postForEntity(

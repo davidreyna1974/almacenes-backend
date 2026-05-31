@@ -31,6 +31,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -80,8 +81,21 @@ class SecurityFilterTest {
     private static final String BEARER = "Bearer " + TOKEN;
 
     private void autenticar() {
+        autenticarConRol("ROLE_ADMIN");
+    }
+
+    private void autenticarConRol(String... roles) {
         when(jwtUtils.extractUsername(TOKEN)).thenReturn("tester01");
         when(jwtUtils.validateToken(TOKEN)).thenReturn(true);
+        when(jwtUtils.extractRoles(TOKEN)).thenReturn(List.of(roles));
+    }
+
+    private String tokenConRol(String... roles) {
+        String tok = "token." + String.join(".", roles);
+        when(jwtUtils.extractUsername(tok)).thenReturn("usuario_test");
+        when(jwtUtils.validateToken(tok)).thenReturn(true);
+        when(jwtUtils.extractRoles(tok)).thenReturn(List.of(roles));
+        return tok;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -89,18 +103,12 @@ class SecurityFilterTest {
     // ─────────────────────────────────────────────────────────────────────────
 
     @Test
-    void register_sinToken_esAccesible_noRetorna403() throws Exception {
-        when(userService.registerUser(any()))
-                .thenReturn(UserResponseDTO.builder().id(1L).username("u").build());
-
-        mockMvc.perform(post("/api/v1/auth/register")
+    void login_createUser_admin_sinToken_retorna403() throws Exception {
+        // POST /auth/users requiere ROLE_ADMIN — sin token debe retornar 403
+        mockMvc.perform(post("/api/v1/auth/users")
                 .contentType("application/json")
-                .content("{\"username\":\"u\",\"password\":\"P1!\",\"email\":\"u@t.com\"}"))
-                // Spring Security no bloquea /auth/** → el request llega al controlador
-                .andExpect(result -> assertNotEquals(
-                    HttpStatus.FORBIDDEN.value(),
-                    result.getResponse().getStatus(),
-                    "Spring Security no debe bloquear POST /auth/register (ruta pública)"));
+                .content("{\"username\":\"nuevo\",\"password\":\"P1234567!\",\"email\":\"n@t.com\",\"roles\":[\"ROLE_WAREHOUSEMAN\"]}"))
+                .andExpect(status().isForbidden());
     }
 
     @Test
@@ -271,5 +279,136 @@ class SecurityFilterTest {
         mockMvc.perform(get("/api/v1/inventory/categories/active")
                 .header("Authorization", BEARER))
                 .andExpect(status().isForbidden());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // BLOQUE 5 — Autorización por rol (RBAC)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    void gestionUsuarios_conTokenAdmin_noRetorna403() throws Exception {
+        when(userService.getAllUsers()).thenReturn(List.of());
+        String tok = tokenConRol("ROLE_ADMIN");
+
+        mockMvc.perform(get("/api/v1/auth/users").header("Authorization", "Bearer " + tok))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void gestionUsuarios_conTokenManager_retorna403() throws Exception {
+        String tok = tokenConRol("ROLE_MANAGER");
+        mockMvc.perform(get("/api/v1/auth/users").header("Authorization", "Bearer " + tok))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void gestionUsuarios_conTokenWarehouseman_retorna403() throws Exception {
+        String tok = tokenConRol("ROLE_WAREHOUSEMAN");
+        mockMvc.perform(get("/api/v1/auth/users").header("Authorization", "Bearer " + tok))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void crearProducto_conTokenWarehouseman_retorna403() throws Exception {
+        String tok = tokenConRol("ROLE_WAREHOUSEMAN");
+        mockMvc.perform(post("/api/v1/inventory/products")
+                .header("Authorization", "Bearer " + tok)
+                .contentType("application/json").content("{}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void crearProducto_conTokenManager_noRetorna403() throws Exception {
+        when(productService.createProduct(any())).thenReturn(null);
+        String tok = tokenConRol("ROLE_MANAGER");
+        mockMvc.perform(post("/api/v1/inventory/products")
+                .header("Authorization", "Bearer " + tok)
+                .contentType("application/json").content("{}"))
+                .andExpect(result -> assertNotEquals(403, result.getResponse().getStatus(),
+                        "MANAGER puede crear productos"));
+    }
+
+    @Test
+    void registrarMovimientoStock_conTokenWarehouseman_noRetorna403() throws Exception {
+        String tok = tokenConRol("ROLE_WAREHOUSEMAN");
+        mockMvc.perform(post("/api/v1/inventory/products/movement")
+                .header("Authorization", "Bearer " + tok)
+                .contentType("application/json").content("{}"))
+                .andExpect(result -> assertNotEquals(403, result.getResponse().getStatus(),
+                        "WAREHOUSEMAN puede registrar movimientos de stock"));
+    }
+
+    @Test
+    void aprobarOrdenVenta_conTokenSales_retorna403() throws Exception {
+        String tok = tokenConRol("ROLE_SALES");
+        mockMvc.perform(patch("/api/v1/sales/orders/1/approve")
+                .header("Authorization", "Bearer " + tok))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void cancelarOrdenVenta_conTokenSales_noRetorna403() throws Exception {
+        when(saleOrderService.cancelOrder(1L)).thenReturn(null);
+        String tok = tokenConRol("ROLE_SALES");
+        mockMvc.perform(patch("/api/v1/sales/orders/1/cancel")
+                .header("Authorization", "Bearer " + tok))
+                .andExpect(result -> assertNotEquals(403, result.getResponse().getStatus(),
+                        "SALES puede cancelar órdenes de venta"));
+    }
+
+    @Test
+    void entregarOrdenVenta_conTokenWarehouseman_noRetorna403() throws Exception {
+        when(saleOrderService.deliverOrder(1L)).thenReturn(null);
+        String tok = tokenConRol("ROLE_WAREHOUSEMAN");
+        mockMvc.perform(patch("/api/v1/sales/orders/1/deliver")
+                .header("Authorization", "Bearer " + tok))
+                .andExpect(result -> assertNotEquals(403, result.getResponse().getStatus(),
+                        "WAREHOUSEMAN puede entregar órdenes de venta"));
+    }
+
+    @Test
+    void crearOrdenVenta_conTokenSales_noRetorna403() throws Exception {
+        when(saleOrderService.createOrder(any())).thenReturn(null);
+        String tok = tokenConRol("ROLE_SALES");
+        mockMvc.perform(post("/api/v1/sales/orders")
+                .header("Authorization", "Bearer " + tok)
+                .contentType("application/json").content("{}"))
+                .andExpect(result -> assertNotEquals(403, result.getResponse().getStatus(),
+                        "SALES puede crear órdenes de venta"));
+    }
+
+    @Test
+    void aprobarOrdenCompra_conTokenWarehouseman_retorna403() throws Exception {
+        String tok = tokenConRol("ROLE_WAREHOUSEMAN");
+        mockMvc.perform(patch("/api/v1/purchases/orders/1/approve")
+                .header("Authorization", "Bearer " + tok))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void recibirOrdenCompra_conTokenWarehouseman_noRetorna403() throws Exception {
+        when(purchaseOrderService.receiveOrder(1L)).thenReturn(null);
+        String tok = tokenConRol("ROLE_WAREHOUSEMAN");
+        mockMvc.perform(patch("/api/v1/purchases/orders/1/receive")
+                .header("Authorization", "Bearer " + tok))
+                .andExpect(result -> assertNotEquals(403, result.getResponse().getStatus(),
+                        "WAREHOUSEMAN puede recibir órdenes de compra"));
+    }
+
+    @Test
+    void eliminarCliente_conTokenSales_retorna403() throws Exception {
+        String tok = tokenConRol("ROLE_SALES");
+        mockMvc.perform(delete("/api/v1/sales/clients/1")
+                .header("Authorization", "Bearer " + tok))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void eliminarCliente_conTokenManager_noRetorna403() throws Exception {
+        String tok = tokenConRol("ROLE_MANAGER");
+        mockMvc.perform(delete("/api/v1/sales/clients/1")
+                .header("Authorization", "Bearer " + tok))
+                .andExpect(result -> assertNotEquals(403, result.getResponse().getStatus(),
+                        "MANAGER puede eliminar clientes"));
     }
 }

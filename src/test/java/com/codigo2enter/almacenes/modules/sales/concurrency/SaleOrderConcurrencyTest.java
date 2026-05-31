@@ -341,7 +341,7 @@ class SaleOrderConcurrencyTest {
 
     private HttpHeaders buildAuthHeaders() {
         Map<String, String> loginBody = Map.of(
-            "username", "tester01",
+            "username", "admin",
             "password", "Admin123!"
         );
         ResponseEntity<Map> loginResp = restTemplate.postForEntity(

@@ -15,6 +15,7 @@ import com.codigo2enter.almacenes.modules.reports.dto.operational.PendingOperati
 import com.codigo2enter.almacenes.modules.reports.service.ExecutiveReportService;
 import com.codigo2enter.almacenes.modules.reports.service.ManagementReportService;
 import com.codigo2enter.almacenes.modules.reports.service.OperationalReportService;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
@@ -43,6 +44,7 @@ import java.util.List;
  * Los parámetros from/to se reciben como LocalDate (sin hora) — el servicio
  * los convierte internamente a LocalDateTime para los rangos de las queries.
  */
+@Tag(name = "Reportes", description = "Reportes analíticos por audiencia")
 @RestController
 @RequestMapping("/api/v1/reports")
 @RequiredArgsConstructor

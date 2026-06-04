@@ -1,7 +1,9 @@
 package com.codigo2enter.almacenes.modules.purchases.controller;
 
+import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
 import com.codigo2enter.almacenes.modules.purchases.dto.SupplierDTO;
 import com.codigo2enter.almacenes.modules.purchases.service.SupplierService;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -13,9 +15,8 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-
-import java.util.List;
 
 /**
  * Controlador REST para la gestión de proveedores del módulo de compras.
@@ -28,6 +29,7 @@ import java.util.List;
  * validaciones Jakarta con @Valid y delegar al servicio.
  * Cero lógica de negocio en esta capa.
  */
+@Tag(name = "Proveedores", description = "Gestión de proveedores")
 @RestController
 @RequestMapping("/api/v1/purchases/suppliers")
 @RequiredArgsConstructor
@@ -67,8 +69,10 @@ public class SupplierController {
      * @return 200 OK con la lista de proveedores activos (puede ser vacía)
      */
     @GetMapping("/active")
-    public ResponseEntity<List<SupplierDTO>> getAllActiveSuppliers() {
-        return ResponseEntity.ok(supplierService.getAllActiveSuppliers());
+    public ResponseEntity<PageResponseDTO<SupplierDTO>> getAllActiveSuppliers(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(supplierService.getAllActiveSuppliers(page, size));
     }
 
     /**

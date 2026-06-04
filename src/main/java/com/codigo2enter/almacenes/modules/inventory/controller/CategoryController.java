@@ -1,7 +1,9 @@
 package com.codigo2enter.almacenes.modules.inventory.controller;
 
+import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
 import com.codigo2enter.almacenes.modules.inventory.dto.CategoryDTO;
 import com.codigo2enter.almacenes.modules.inventory.service.CategoryService;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -13,9 +15,8 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-
-import java.util.List;
 
 /**
  * Controlador REST para la gestión de categorías del inventario.
@@ -28,6 +29,7 @@ import java.util.List;
  * validaciones Jakarta con @Valid y delegar al servicio. Cero lógica
  * de negocio en esta capa.
  */
+@Tag(name = "Categorías", description = "Gestión de categorías de productos")
 @RestController
 @RequestMapping("/api/v1/inventory/categories")
 @RequiredArgsConstructor
@@ -68,8 +70,10 @@ public class CategoryController {
      * @return 200 OK con la lista de categorías activas (puede ser vacía)
      */
     @GetMapping("/active")
-    public ResponseEntity<List<CategoryDTO>> getAllActiveCategories() {
-        return ResponseEntity.ok(categoryService.getAllActiveCategories());
+    public ResponseEntity<PageResponseDTO<CategoryDTO>> getAllActiveCategories(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(categoryService.getAllActiveCategories(page, size));
     }
 
     /**

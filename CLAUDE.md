@@ -1175,6 +1175,33 @@ try {
 
 **Corrección**: cambiar a `saveAndFlush()` para forzar el SQL inmediatamente dentro del try-catch.
 
+### Bug 8: Regla SecurityConfig demasiado permisiva para un rol
+
+**Síntoma** (detectado en E2E del módulo reports): WAREHOUSEMAN recibía HTTP 200 en
+`/reports/inventory/valuation`, `/reports/inventory/abc` y `/reports/inventory/turnover`,
+cuando debería recibir 403. Estos son reportes analíticos/financieros reservados para ADMIN
+y MANAGER según el diseño.
+
+**Causa**: la regla general `.requestMatchers(HttpMethod.GET, "/api/v1/reports/inventory/**")
+.hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN")` era demasiado amplia. Cubría tanto los
+endpoints operativos (low-stock, kardex, movements — correctos para WAREHOUSEMAN) como los
+analíticos (valuation, abc, turnover — incorrectos para WAREHOUSEMAN).
+
+**Por qué los tests no lo detectaron**: `ReportControllerTest` usa `@WebMvcTest` con
+`addFilters=false` — Spring Security está completamente deshabilitado. Los tests de servicio
+(Tipo A) y repositorio (Tipo D) tampoco verifican reglas de URL. Solo la validación E2E con
+tokens JWT reales y la aplicación corriendo lo expuso.
+
+**Corrección**: agregar regla específica para `/reports/inventory/movements` con WAREHOUSEMAN
+ANTES de la regla general, y cambiar la general `/reports/inventory/**` a solo ADMIN+MANAGER.
+El orden de las reglas en SecurityConfig es crítico — la más específica siempre antes de la
+más general.
+
+**Lección**: las reglas de autorización por URL en SecurityConfig deben verificarse con
+validación E2E (curl real) O con tests Tipo B* (`@WebMvcTest` + `@Import(SecurityConfig.class)`
+sin `addFilters=false`). Los tests Tipo B estándar con `addFilters=false` nunca detectarán
+este tipo de error.
+
 ### Regla general para prevenir bugs de integración
 
 Ante cualquier nuevo endpoint, verificar con **curl real** O con **@SpringBootTest** antes de dar por terminado:

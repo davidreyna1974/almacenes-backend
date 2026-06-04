@@ -178,7 +178,7 @@ Nota: `core.config` (DataInitializer) excluido del check de cobertura — es có
 de bootstrap que solo ejecuta cuando la tabla users está vacía. Se agregó a las
 exclusiones de JaCoCo en `pom.xml` junto a los mappers y paquetes dto/model.
 
-## 8. Bugs encontrados durante implementación
+## 8. Bugs encontrados durante implementación y validación E2E
 
 ### Bug 1: `FUNCTION('TO_CHAR', ..., :format)` con GROUP BY falla en PostgreSQL
 
@@ -201,6 +201,34 @@ GROUP BY period ORDER BY period
 Este patrón de subquery garantiza que PostgreSQL materialice la columna `period` antes del agrupamiento, eliminando la ambigüedad.
 
 **Detectado por**: `ReportRepositoryTest.revenueByPeriod_formatoMensual_funcionaEnPostgresql` (Tipo D)
+
+### Bug 2: Regla SecurityConfig `GET /reports/inventory/**` demasiado permisiva
+
+**Síntoma** (detectado en validación E2E): WAREHOUSEMAN recibe HTTP 200 en
+`/reports/inventory/valuation`, `/reports/inventory/abc` y `/reports/inventory/turnover`,
+cuando debería recibir 403. Estos son reportes analíticos/financieros reservados
+para ADMIN y MANAGER.
+
+**Causa**: la regla general `.requestMatchers(HttpMethod.GET, "/api/v1/reports/inventory/**")
+.hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN")` otorgaba acceso a WAREHOUSEMAN a todos
+los endpoints de inventario, incluyendo los analíticos. Las reglas específicas anteriores
+(low-stock, kardex) ya cubrían correctamente los endpoints operativos con WAREHOUSEMAN.
+
+**Por qué los tests automatizados no lo detectaron**: `ReportControllerTest` usa
+`@WebMvcTest` + `addFilters=false` — Spring Security está deshabilitado. Los tests
+de servicio (Tipo A) y de repositorio (Tipo D) tampoco prueban reglas de URL. Solo
+la validación E2E con tokens JWT reales y la aplicación corriendo lo expuso.
+
+**Corrección**:
+- Agregar regla específica para `/reports/inventory/movements` → ADMIN, MANAGER, WAREHOUSEMAN
+  (antes de la regla general)
+- Cambiar la regla general `/reports/inventory/**` → solo ADMIN, MANAGER
+
+**Lección**: las reglas de SecurityConfig deben incluirse en los tests de Tipo B*
+(`SecurityFilterTest`) con `@Import(SecurityConfig.class)` y `autenticarConRol()`.
+Se documenta como mejora pendiente para la siguiente iteración.
+
+**Detectado por**: validación E2E con curl (2026-06-04)
 
 ## 9. Estándares aplicados
 

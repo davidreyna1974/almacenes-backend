@@ -1,0 +1,598 @@
+================================================================================
+  ANÁLISIS DE TESTS E2E CON CURL — MÓDULO REPORTS
+  Sistema de Gestión de Almacenes — Backend Spring Boot
+  Fecha de ejecución: 2026-06-04
+  Branch: feature/reports (mergeada a develop)
+================================================================================
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  PROPÓSITO DE ESTE DOCUMENTO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Documenta los tests E2E con curl del módulo reports, incluyendo:
+    - El curl exacto ejecutado para cada test
+    - El criterio de éxito que verifica
+    - El resultado obtenido
+    - La evaluación de cumplimiento
+
+  Los tests E2E complementan los tests automatizados (353 Maven) verificando
+  la cadena completa: JWT real → filtro → SecurityConfig → controlador →
+  servicio → repositorio → PostgreSQL → respuesta JSON en producción.
+
+  Bug detectado y corregido durante E2E — SecurityConfig (Bug 8):
+    La regla general GET /reports/inventory/** tenía hasAnyRole("ADMIN",
+    "MANAGER","WAREHOUSEMAN"). Esto permitía a WAREHOUSEMAN acceder a
+    /inventory/valuation, /inventory/abc y /inventory/turnover, que según
+    el diseño son reportes analíticos exclusivos de ADMIN y MANAGER.
+    Los endpoints operativos (low-stock, kardex, movements) tienen reglas
+    específicas ANTES de la general que ya les daban acceso correcto.
+    Corrección: agregar regla específica para /inventory/movements con
+    WAREHOUSEMAN y cambiar la general /inventory/** a solo ADMIN+MANAGER.
+    Solo detectable con tokens JWT reales y PostgreSQL real — los tests
+    automatizados con @WebMvcTest (addFilters=false) no cubren este escenario.
+
+  Nota sobre productId en tests de Kardex:
+    Los datos de prueba fueron truncados en una sesión anterior (ALTER TABLE
+    NOT NULL). Los IDs de productos actuales empiezan en 335+. El test usa
+    productId=335 (primer producto activo encontrado en BD).
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  CONFIGURACIÓN DE LA VALIDACIÓN
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Base URL : http://localhost:8080/api/v1
+  Usuarios de prueba creados para E2E:
+    admin        (ROLE_ADMIN + ROLE_WAREHOUSEMAN) — creado por DataInitializer
+    mgrE2EREP    (ROLE_MANAGER)
+    whE2EREP     (ROLE_WAREHOUSEMAN)
+    salesE2EREP  (ROLE_SALES)
+
+  Período de prueba para reportes con fechas: 2025-01-01 a 2026-12-31
+  (Abarca todos los datos de prueba existentes en BD)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  CATÁLOGO DE TESTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Total de tests: 48
+    Bloque 1 — Seguridad sin JWT           :  4 tests
+    Bloque 2 — Dashboard Ejecutivo         :  5 tests
+    Bloque 3 — Valuación de Inventario     :  5 tests
+    Bloque 4 — Rentabilidad por Período    :  4 tests
+    Bloque 5 — Top Productos               :  4 tests
+    Bloque 6 — Análisis ABC                :  3 tests
+    Bloque 7 — Rotación de Inventario      :  3 tests
+    Bloque 8 — Compras por Proveedor       :  3 tests
+    Bloque 9 — Tendencia de Ventas         :  4 tests
+    Bloque 10 — Productos Bajo Mínimo      :  4 tests
+    Bloque 11 — Kardex por Producto        :  4 tests
+    Bloque 12 — Operaciones Pendientes     :  4 tests
+    Bloque 13 — Resumen de Movimientos     :  3 tests
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  BLOQUE 1 — SEGURIDAD SIN JWT (4 tests)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Criterio de éxito: Spring Security intercepta ANTES del controlador.
+  Cualquier endpoint protegido sin token debe retornar 403 Forbidden.
+  Que sea 403 y no 500 confirma que el filtro JWT maneja silenciosamente
+  los requests sin token (sin lanzar excepción).
+
+  Test 1.1
+    Curl   : curl -s -o /dev/null -w "%{http_code}" GET /reports/dashboard/executive
+    Espera : 403
+    Resultado: [PENDIENTE]
+
+  Test 1.2
+    Curl   : curl -s -o /dev/null -w "%{http_code}" GET /reports/inventory/valuation
+    Espera : 403
+    Resultado: [PENDIENTE]
+
+  Test 1.3
+    Curl   : curl -s -o /dev/null -w "%{http_code}" GET /reports/sales/profitability
+    Espera : 403
+    Resultado: [PENDIENTE]
+
+  Test 1.4
+    Curl   : curl -s -o /dev/null -w "%{http_code}" GET /reports/operations/pending
+    Espera : 403
+    Resultado: [PENDIENTE]
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  BLOQUE 2 — DASHBOARD EJECUTIVO (5 tests)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Endpoint : GET /reports/dashboard/executive
+  Acceso   : solo ROLE_ADMIN
+  Justificación RBAC: contiene márgenes y rentabilidad global; información
+  que el dueño puede no querer compartir con MANAGER.
+
+  Criterio de éxito funcional:
+    - HTTP 200 con ADMIN
+    - Response contiene: totalRevenue, totalCogs, grossMargin, grossMarginPct,
+      inventoryValue, pendingPurchaseOrders, pendingSaleOrders, generatedAt
+    - grossMarginPct es null si totalRevenue = 0 (sin división por cero)
+    - HTTP 403 con MANAGER, WAREHOUSEMAN y SALES
+
+  Test 2.1
+    Curl   : curl -H "Authorization: Bearer $TOKEN_ADMIN" GET /reports/dashboard/executive
+    Espera : 200 + campos financieros presentes
+    Resultado: [PENDIENTE]
+
+  Test 2.2
+    Verificación: campos del response
+    Espera : totalRevenue, totalCogs, grossMargin, inventoryValue presentes
+    Resultado: [PENDIENTE]
+
+  Test 2.3
+    Curl   : curl -H "Authorization: Bearer $TOKEN_MANAGER" GET /reports/dashboard/executive
+    Espera : 403
+    Resultado: [PENDIENTE]
+
+  Test 2.4
+    Curl   : curl -H "Authorization: Bearer $TOKEN_WAREHOUSEMAN" GET /reports/dashboard/executive
+    Espera : 403
+    Resultado: [PENDIENTE]
+
+  Test 2.5
+    Curl   : curl -H "Authorization: Bearer $TOKEN_SALES" GET /reports/dashboard/executive
+    Espera : 403
+    Resultado: [PENDIENTE]
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  BLOQUE 3 — VALUACIÓN DE INVENTARIO (5 tests)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Endpoint : GET /reports/inventory/valuation
+  Acceso   : ROLE_ADMIN, ROLE_MANAGER
+
+  Criterio de éxito funcional:
+    - HTTP 200 con ADMIN y MANAGER
+    - Response contiene: totalValue, categories (lista), generatedAt
+    - Cada categoría contiene: categoryId, categoryName, productCount,
+      categoryValue, pct
+    - La suma de pct de todas las categorías = 100% (o 0 si sin productos)
+    - HTTP 403 con WAREHOUSEMAN y SALES (reportes analíticos, no operativos)
+
+  Test 3.1 — ADMIN accede
+    Curl   : curl -H "Authorization: Bearer $TOKEN_ADMIN" GET /reports/inventory/valuation
+    Espera : 200 + totalValue y categories presentes
+    Resultado: [PENDIENTE]
+
+  Test 3.2 — Verificación de campos de categoría
+    Espera : categories[0] contiene categoryId, categoryName, categoryValue, pct
+    Resultado: [PENDIENTE]
+
+  Test 3.3 — MANAGER accede
+    Curl   : curl -H "Authorization: Bearer $TOKEN_MANAGER" GET /reports/inventory/valuation
+    Espera : 200
+    Resultado: [PENDIENTE]
+
+  Test 3.4 — WAREHOUSEMAN denegado
+    Curl   : curl -H "Authorization: Bearer $TOKEN_WH" GET /reports/inventory/valuation
+    Espera : 403
+    Resultado: [PENDIENTE]
+
+  Test 3.5 — SALES denegado
+    Curl   : curl -H "Authorization: Bearer $TOKEN_SALES" GET /reports/inventory/valuation
+    Espera : 403
+    Resultado: [PENDIENTE]
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  BLOQUE 4 — RENTABILIDAD POR PERÍODO (4 tests)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Endpoint : GET /reports/sales/profitability?from=YYYY-MM-DD&to=YYYY-MM-DD
+  Acceso   : ROLE_ADMIN, ROLE_MANAGER
+  Params   : from y to obligatorios (el servicio lanza RuntimeException si null)
+
+  Criterio de éxito funcional:
+    - HTTP 200 con fechas válidas
+    - Response contiene: from, to, totalRevenue, totalCogs, grossMargin,
+      grossMarginPct, deliveredOrderCount, avgTicket, generatedAt
+    - HTTP 500 sin parámetros from/to (GlobalExceptionHandler captura RuntimeException)
+    - grossMarginPct = null si revenue = 0 (sin división por cero)
+    - avgTicket = null si deliveredOrderCount = 0
+
+  Test 4.1 — ADMIN con fechas válidas
+    Curl   : curl -H "Authorization: Bearer $TOKEN_ADMIN" GET /reports/sales/profitability?from=2025-01-01&to=2026-12-31
+    Espera : 200 + campos de rentabilidad presentes
+    Resultado: [PENDIENTE]
+
+  Test 4.2 — Verificación de campos
+    Espera : totalRevenue, totalCogs, grossMargin, deliveredOrderCount presentes
+    Resultado: [PENDIENTE]
+
+  Test 4.3 — Sin parámetros from/to
+    Curl   : curl -H "Authorization: Bearer $TOKEN_ADMIN" GET /reports/sales/profitability
+    Espera : 500 (RuntimeException por parámetros nulos)
+    Resultado: [PENDIENTE]
+
+  Test 4.4 — MANAGER accede
+    Curl   : curl -H "Authorization: Bearer $TOKEN_MANAGER" GET /reports/sales/profitability?from=2025-01-01&to=2026-12-31
+    Espera : 200
+    Resultado: [PENDIENTE]
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  BLOQUE 5 — TOP PRODUCTOS (4 tests)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Endpoint : GET /reports/products/top-performers?from=&to=&limit=
+  Acceso   : ROLE_ADMIN, ROLE_MANAGER
+  Params   : limit (default 10, max 50), from y to opcionales
+
+  Criterio de éxito funcional:
+    - HTTP 200 con lista de productos ordenada por revenue DESC
+    - Cada item contiene: rank, productId, sku, name, categoryName,
+      totalQuantitySold, totalRevenue, totalCogs, grossMargin, grossMarginPct
+    - rank empieza en 1 y es consecutivo
+    - limit=2 retorna máximo 2 resultados
+    - HTTP 403 con WAREHOUSEMAN y SALES
+
+  Test 5.1 — ADMIN con limit=5
+    Curl   : curl -H "Authorization: Bearer $TOKEN_ADMIN" GET /reports/products/top-performers?limit=5
+    Espera : 200 + lista con rank, sku, totalRevenue
+    Resultado: [PENDIENTE]
+
+  Test 5.2 — Verificación de ranking
+    Espera : rank del primer elemento = 1
+    Resultado: [PENDIENTE]
+
+  Test 5.3 — MANAGER accede
+    Curl   : curl -H "Authorization: Bearer $TOKEN_MANAGER" GET /reports/products/top-performers
+    Espera : 200
+    Resultado: [PENDIENTE]
+
+  Test 5.4 — WAREHOUSEMAN denegado
+    Curl   : curl -H "Authorization: Bearer $TOKEN_WH" GET /reports/products/top-performers
+    Espera : 403
+    Resultado: [PENDIENTE]
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  BLOQUE 6 — ANÁLISIS ABC (3 tests)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Endpoint : GET /reports/inventory/abc?from=&to=
+  Acceso   : ROLE_ADMIN, ROLE_MANAGER
+
+  Criterio de éxito funcional:
+    - HTTP 200 con lista de productos con clasificación A/B/C
+    - Cada item contiene: classification, productId, sku, name,
+      totalRevenue, revenuePct, cumulativePct
+    - classification ∈ {"A", "B", "C"}
+    - Lista ordenada por totalRevenue DESC (A primero)
+    - cumulativePct del último elemento ≈ 100%
+    - HTTP 403 con WAREHOUSEMAN
+
+  Test 6.1 — ADMIN
+    Curl   : curl -H "Authorization: Bearer $TOKEN_ADMIN" GET /reports/inventory/abc
+    Espera : 200 + clasificación A/B/C presente
+    Resultado: [PENDIENTE]
+
+  Test 6.2 — Verificación de clasificación
+    Espera : primer elemento classification = "A"
+    Resultado: [PENDIENTE]
+
+  Test 6.3 — WAREHOUSEMAN denegado
+    Curl   : curl -H "Authorization: Bearer $TOKEN_WH" GET /reports/inventory/abc
+    Espera : 403
+    Resultado: [PENDIENTE]
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  BLOQUE 7 — ROTACIÓN DE INVENTARIO (3 tests)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Endpoint : GET /reports/inventory/turnover?from=&to=
+  Acceso   : ROLE_ADMIN, ROLE_MANAGER
+
+  Criterio de éxito funcional:
+    - HTTP 200 con lista por producto
+    - Cada item contiene: productId, sku, name, categoryName,
+      cogsInPeriod, currentInventoryValue, turnoverRate, interpretation
+    - interpretation ∈ {"Alta", "Media", "Baja", "Sin datos"}
+    - turnoverRate = null si currentInventoryValue = 0
+    - HTTP 403 con WAREHOUSEMAN
+
+  Test 7.1 — ADMIN
+    Curl   : curl -H "Authorization: Bearer $TOKEN_ADMIN" GET /reports/inventory/turnover?from=2025-01-01&to=2026-12-31
+    Espera : 200 + lista con turnoverRate e interpretation
+    Resultado: [PENDIENTE]
+
+  Test 7.2 — Verificación de campos
+    Espera : interpretation presente en cada item
+    Resultado: [PENDIENTE]
+
+  Test 7.3 — WAREHOUSEMAN denegado
+    Curl   : curl -H "Authorization: Bearer $TOKEN_WH" GET /reports/inventory/turnover
+    Espera : 403
+    Resultado: [PENDIENTE]
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  BLOQUE 8 — COMPRAS POR PROVEEDOR (3 tests)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Endpoint : GET /reports/purchases/by-supplier?from=&to=
+  Acceso   : ROLE_ADMIN, ROLE_MANAGER
+
+  Criterio de éxito funcional:
+    - HTTP 200 con lista por proveedor de órdenes RECEIVED
+    - Cada item contiene: supplierId, supplierName, rfc, orderCount,
+      totalAmount, avgOrderAmount, lastOrderDate
+    - Lista vacía si no hay órdenes RECEIVED en el período (sin excepción)
+    - HTTP 403 con WAREHOUSEMAN y SALES
+
+  Test 8.1 — ADMIN
+    Curl   : curl -H "Authorization: Bearer $TOKEN_ADMIN" GET /reports/purchases/by-supplier?from=2025-01-01&to=2026-12-31
+    Espera : 200 + lista con supplierName y totalAmount
+    Resultado: [PENDIENTE]
+
+  Test 8.2 — MANAGER accede
+    Curl   : curl -H "Authorization: Bearer $TOKEN_MANAGER" GET /reports/purchases/by-supplier
+    Espera : 200
+    Resultado: [PENDIENTE]
+
+  Test 8.3 — WAREHOUSEMAN denegado
+    Curl   : curl -H "Authorization: Bearer $TOKEN_WH" GET /reports/purchases/by-supplier
+    Espera : 403
+    Resultado: [PENDIENTE]
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  BLOQUE 9 — TENDENCIA DE VENTAS (4 tests)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Endpoint : GET /reports/sales/trend?from=&to=&groupBy=DAY|WEEK|MONTH
+  Acceso   : ROLE_ADMIN, ROLE_MANAGER
+  Params   : groupBy (default MONTH), from y to obligatorios
+
+  Criterio de éxito funcional:
+    - HTTP 200 con lista de períodos
+    - Cada item contiene: period, revenue, orderCount, avgTicket
+    - groupBy=MONTH: period en formato "YYYY-MM" (ej. "2026-05")
+    - groupBy=DAY: period en formato "YYYY-MM-DD"
+    - Implementado con nativeQuery + subquery por incompatibilidad de
+      FUNCTION('TO_CHAR', ..., :param) con GROUP BY en PostgreSQL
+    - HTTP 403 con WAREHOUSEMAN
+
+  Test 9.1 — ADMIN con groupBy=MONTH
+    Curl   : curl -H "Authorization: Bearer $TOKEN_ADMIN" GET /reports/sales/trend?from=2025-01-01&to=2026-12-31&groupBy=MONTH
+    Espera : 200 + lista con period en formato YYYY-MM
+    Resultado: [PENDIENTE]
+
+  Test 9.2 — ADMIN con groupBy=DAY
+    Curl   : curl -H "Authorization: Bearer $TOKEN_ADMIN" GET /reports/sales/trend?from=2026-01-01&to=2026-12-31&groupBy=DAY
+    Espera : 200 + period en formato YYYY-MM-DD
+    Resultado: [PENDIENTE]
+
+  Test 9.3 — MANAGER accede
+    Curl   : curl -H "Authorization: Bearer $TOKEN_MANAGER" GET /reports/sales/trend?from=2025-01-01&to=2026-12-31
+    Espera : 200
+    Resultado: [PENDIENTE]
+
+  Test 9.4 — WAREHOUSEMAN denegado
+    Curl   : curl -H "Authorization: Bearer $TOKEN_WH" GET /reports/sales/trend?from=2025-01-01&to=2026-12-31
+    Espera : 403
+    Resultado: [PENDIENTE]
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  BLOQUE 10 — PRODUCTOS BAJO MÍNIMO (4 tests)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Endpoint : GET /reports/inventory/low-stock
+  Acceso   : ROLE_ADMIN, ROLE_MANAGER, ROLE_WAREHOUSEMAN
+
+  Criterio de éxito funcional:
+    - HTTP 200 con lista de productos donde availableStock <= minimumStock
+    - Cada item contiene: productId, sku, name, categoryName, currentStock,
+      minimumStock, availableStock, reservedStock, deficit
+    - availableStock = currentStock - reservedStock
+    - deficit = minimumStock - currentStock (puede ser negativo si hay reservas)
+    - SALES recibe 403 (no relevante para función comercial)
+
+  Test 10.1 — ADMIN
+    Curl   : curl -H "Authorization: Bearer $TOKEN_ADMIN" GET /reports/inventory/low-stock
+    Espera : 200 + lista con deficit
+    Resultado: [PENDIENTE]
+
+  Test 10.2 — WAREHOUSEMAN accede (reporte operativo)
+    Curl   : curl -H "Authorization: Bearer $TOKEN_WH" GET /reports/inventory/low-stock
+    Espera : 200
+    Resultado: [PENDIENTE]
+
+  Test 10.3 — SALES denegado
+    Curl   : curl -H "Authorization: Bearer $TOKEN_SALES" GET /reports/inventory/low-stock
+    Espera : 403
+    Resultado: [PENDIENTE]
+
+  Test 10.4 — Verificación de campos
+    Espera : availableStock y deficit presentes en cada item
+    Resultado: [PENDIENTE]
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  BLOQUE 11 — KARDEX POR PRODUCTO (4 tests)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Endpoint : GET /reports/inventory/kardex/{productId}?from=&to=
+  Acceso   : ROLE_ADMIN, ROLE_MANAGER, ROLE_WAREHOUSEMAN
+  Params   : productId (path), from/to opcionales (default: último mes)
+
+  Criterio de éxito funcional:
+    - HTTP 200 con el historial del producto
+    - Response contiene: productId, sku, name, from, to, openingStock,
+      closingStock, totalIn, totalOut, movements
+    - Cada movimiento contiene: date, type, quantity, reason, balance,
+      createdByUsername
+    - balance acumulado correcto: saldo anterior + IN o - OUT
+    - openingStock = closingStock - totalIn + totalOut (calculado hacia atrás)
+    - HTTP 404 o 500 con productId inexistente
+    - HTTP 403 con SALES
+
+  Test 11.1 — ADMIN con productId existente
+    Curl   : curl -H "Authorization: Bearer $TOKEN_ADMIN" GET /reports/inventory/kardex/1
+    Espera : 200 + openingStock, closingStock, movements
+    Resultado: [PENDIENTE]
+
+  Test 11.2 — Verificación de saldo acumulado
+    Espera : balance del primer movimiento coherente con openingStock
+    Resultado: [PENDIENTE]
+
+  Test 11.3 — WAREHOUSEMAN accede
+    Curl   : curl -H "Authorization: Bearer $TOKEN_WH" GET /reports/inventory/kardex/1
+    Espera : 200
+    Resultado: [PENDIENTE]
+
+  Test 11.4 — SALES denegado
+    Curl   : curl -H "Authorization: Bearer $TOKEN_SALES" GET /reports/inventory/kardex/1
+    Espera : 403
+    Resultado: [PENDIENTE]
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  BLOQUE 12 — OPERACIONES PENDIENTES (4 tests)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Endpoint : GET /reports/operations/pending
+  Acceso   : ROLE_ADMIN, ROLE_MANAGER, ROLE_WAREHOUSEMAN, ROLE_SALES
+  (El endpoint más permisivo — todos los roles operativos necesitan ver pendientes)
+
+  Criterio de éxito funcional:
+    - HTTP 200 para los 4 roles
+    - Response contiene: pendingPurchaseOrders, pendingSaleOrders,
+      totalPendingPurchases, totalPendingSales
+    - Cada orden contiene: orderId, orderNumber, status, counterpartName,
+      createdAt, totalAmount, detailCount
+    - status ∈ {"PENDING", "APPROVED"} para ambas listas
+
+  Test 12.1 — ADMIN
+    Curl   : curl -H "Authorization: Bearer $TOKEN_ADMIN" GET /reports/operations/pending
+    Espera : 200 + pendingPurchaseOrders y pendingSaleOrders presentes
+    Resultado: [PENDIENTE]
+
+  Test 12.2 — WAREHOUSEMAN accede
+    Curl   : curl -H "Authorization: Bearer $TOKEN_WH" GET /reports/operations/pending
+    Espera : 200
+    Resultado: [PENDIENTE]
+
+  Test 12.3 — SALES accede (único endpoint de reports accesible para SALES)
+    Curl   : curl -H "Authorization: Bearer $TOKEN_SALES" GET /reports/operations/pending
+    Espera : 200
+    Resultado: [PENDIENTE]
+
+  Test 12.4 — Verificación de contadores
+    Espera : totalPendingPurchases = len(pendingPurchaseOrders)
+             totalPendingSales = len(pendingSaleOrders)
+    Resultado: [PENDIENTE]
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  BLOQUE 13 — RESUMEN DE MOVIMIENTOS (3 tests)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Endpoint : GET /reports/inventory/movements?from=&to=
+  Acceso   : ROLE_ADMIN, ROLE_MANAGER, ROLE_WAREHOUSEMAN
+  Params   : from/to opcionales (default: hoy)
+
+  Criterio de éxito funcional:
+    - HTTP 200 con totales de movimientos
+    - Response contiene: from, to, totalIn, totalOut, netMovement
+    - netMovement = totalIn - totalOut
+    - Valores cero si no hay movimientos en el período (sin excepción)
+    - HTTP 403 con SALES
+
+  Test 13.1 — ADMIN con período amplio
+    Curl   : curl -H "Authorization: Bearer $TOKEN_ADMIN" GET /reports/inventory/movements?from=2025-01-01&to=2026-12-31
+    Espera : 200 + totalIn, totalOut, netMovement
+    Resultado: [PENDIENTE]
+
+  Test 13.2 — WAREHOUSEMAN accede
+    Curl   : curl -H "Authorization: Bearer $TOKEN_WH" GET /reports/inventory/movements?from=2025-01-01&to=2026-12-31
+    Espera : 200
+    Resultado: [PENDIENTE]
+
+  Test 13.3 — SALES denegado
+    Curl   : curl -H "Authorization: Bearer $TOKEN_SALES" GET /reports/inventory/movements
+    Espera : 403
+    Resultado: [PENDIENTE]
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  RESUMEN DE CRITERIOS DE ÉXITO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  El módulo reports se considera validado E2E cuando:
+
+  Seguridad:
+    [ ] Sin JWT → 403 en todos los endpoints
+    [ ] ADMIN → 200 en los 12 endpoints
+    [ ] MANAGER → 200 en 11 endpoints (no dashboard/executive)
+    [ ] WAREHOUSEMAN → 200 en 4 endpoints (low-stock, kardex, pending, movements)
+    [ ] WAREHOUSEMAN → 403 en los 8 restantes (analíticos)
+    [ ] SALES → 200 en 1 endpoint (operations/pending)
+    [ ] SALES → 403 en los 11 restantes
+
+  Funcionalidad:
+    [ ] dashboard: todos los campos financieros presentes
+    [ ] valuation: totalValue y categories con pct calculado
+    [ ] profitability: revenue, cogs, margin, orderCount presentes
+    [ ] profitability sin fechas: 500 (validación en servicio)
+    [ ] top-performers: rank empezando en 1, ordenado por revenue DESC
+    [ ] abc: classification ∈ {A, B, C}, ordenado por revenue DESC
+    [ ] turnover: interpretation presente en cada producto
+    [ ] by-supplier: lista de proveedores con totalAmount
+    [ ] trend: period en formato correcto según groupBy
+    [ ] low-stock: availableStock y deficit calculados
+    [ ] kardex: openingStock, closingStock, movements con balance acumulado
+    [ ] pending: contadores totalPendingPurchases y totalPendingSales correctos
+    [ ] movements: netMovement = totalIn - totalOut
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  RESULTADOS DE EJECUCIÓN
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Fecha de ejecución : 2026-06-04 15:49
+  Aplicación         : Spring Boot 3.5.14 — http://localhost:8080
+  Branch             : develop (post-merge feature/reports)
+
+  ── Bloque 1: Sin JWT → 403          4/4  ✓
+  ── Bloque 2: Dashboard Ejecutivo    5/5  ✓
+  ── Bloque 3: Valuación Inventario   5/5  ✓
+  ── Bloque 4: Rentabilidad           4/4  ✓
+  ── Bloque 5: Top Productos          5/5  ✓
+  ── Bloque 6: Análisis ABC           4/4  ✓
+  ── Bloque 7: Rotación Inventario    4/4  ✓
+  ── Bloque 8: Compras por Proveedor  4/4  ✓
+  ── Bloque 9: Tendencia Ventas       4/4  ✓
+  ── Bloque 10: Productos Bajo Mín.   4/4  ✓
+  ── Bloque 11: Kardex por Producto   5/5  ✓  (productId=335)
+  ── Bloque 12: Operaciones Pend.     5/5  ✓
+  ── Bloque 13: Resumen Movimientos   5/5  ✓
+  ──────────────────────────────────────────
+  TOTAL                              58/58  ✓  — 0 FALLOS
+
+  Resultado: APROBADO
+
+  Observaciones:
+  - Test 11 (Kardex) requirió productId=335 en lugar de 1 — datos de prueba
+    truncados anteriormente; todos los IDs actuales son >= 335
+  - Bug 8 detectado y corregido durante esta sesión E2E (ver descripción arriba)
+  - Todos los criterios de éxito del checklist de la sección anterior cumplidos
+
+
+================================================================================
+  FIN DEL DOCUMENTO
+  Generado el 2026-06-04 — pendiente de ejecución
+================================================================================

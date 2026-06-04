@@ -181,11 +181,18 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/v1/reports/operations/**")
                         .hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN","SALES")
 
-                // ── REPORTS: inventory general — ADMIN, MANAGER, WAREHOUSEMAN ─
-                // Cubre /inventory/valuation, /inventory/abc, /inventory/turnover,
-                // /inventory/movements y cualquier futuro endpoint de inventario.
-                .requestMatchers(HttpMethod.GET, "/api/v1/reports/inventory/**")
+                // ── REPORTS: resumen de movimientos — ADMIN, MANAGER, WAREHOUSEMAN ─
+                // Antes de la regla general inventory/**. WAREHOUSEMAN necesita
+                // el resumen de movimientos para su trabajo operativo diario.
+                .requestMatchers(HttpMethod.GET, "/api/v1/reports/inventory/movements")
                         .hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN")
+
+                // ── REPORTS: inventory analítico — solo ADMIN, MANAGER ─────────
+                // Valuación, ABC y rotación son reportes financieros/estratégicos.
+                // WAREHOUSEMAN accede a las vistas operativas mediante reglas específicas
+                // anteriores (low-stock, kardex, movements), no a los analíticos.
+                .requestMatchers(HttpMethod.GET, "/api/v1/reports/inventory/**")
+                        .hasAnyRole("ADMIN","MANAGER")
 
                 // ── REPORTS: resto de endpoints — ADMIN, MANAGER ─────────────
                 // Cubre /products/top-performers, /purchases/by-supplier, /sales/**

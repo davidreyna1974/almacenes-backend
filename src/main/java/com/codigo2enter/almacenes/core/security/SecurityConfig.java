@@ -94,7 +94,8 @@ public class SecurityConfig {
                 // ── RUTAS PÚBLICAS ──────────────────────────────────────────
                 // Swagger UI y la especificación OpenAPI son accesibles sin JWT.
                 // El preflight del browser también necesita estas rutas sin autenticación.
-                .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
+                .requestMatchers("/swagger-ui/**", "/swagger-ui.html",
+                                 "/v3/api-docs", "/v3/api-docs/**").permitAll()
                 .requestMatchers("/api/v1/auth/login").permitAll()
 
                 // ── GESTIÓN DE USUARIOS — solo ADMIN ───────────────────────

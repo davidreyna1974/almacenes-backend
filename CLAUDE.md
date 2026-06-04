@@ -151,10 +151,108 @@ El paquete `core/` contiene configuración transversal:
 - **Lombok** — Usado en modelos y DTOs para reducir boilerplate (`@Data`, `@Builder`, `@NoArgsConstructor`, `@AllArgsConstructor`, `@RequiredArgsConstructor`).
 - **Spring Security** — Configurado con cadena de filtros JWT stateless y CORS habilitado. Ver `core/security/SecurityConfig.java`.
 - **JJWT 0.12.6** — Librería para generación y validación de tokens JWT (jjwt-api, jjwt-impl, jjwt-jackson).
+- **springdoc-openapi 2.7.0** — Genera Swagger UI y especificación OpenAPI 3.0 automáticamente desde los controladores. Requiere versión ≥ 2.7.0 para compatibilidad con Spring Framework 6.2.x (versiones anteriores lanzan `NoSuchMethodError` en `ControllerAdviceBean`).
 
 ---
 
 ## Estándares y convenciones globales
+
+### Swagger / OpenAPI — implementar desde el primer módulo
+
+Swagger debe configurarse **antes de implementar el primer controlador**, no al final del proyecto. Agregarlo después obliga a actualizar todos los tests que verifican formatos de respuesta.
+
+**Por qué desde el inicio**: el frontend consumirá la especificación OpenAPI generada por Swagger como contrato. Si se agrega tarde, el formato de respuesta de algunos endpoints puede cambiar (ej. paginación) y romper los tests existentes.
+
+**Configuración mínima en `pom.xml`**:
+```xml
+<dependency>
+    <groupId>org.springdoc</groupId>
+    <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+    <version>2.7.0</version>
+</dependency>
+```
+
+**`core/config/OpenApiConfig.java`** — bean con esquema Bearer JWT global:
+```java
+@Configuration
+public class OpenApiConfig {
+    @Bean
+    OpenAPI openAPI() {
+        return new OpenAPI()
+            .info(new Info().title("API").version("1.0.0"))
+            .addSecurityItem(new SecurityRequirement().addList("Bearer"))
+            .components(new Components().addSecuritySchemes("Bearer",
+                new SecurityScheme().type(Type.HTTP).scheme("bearer").bearerFormat("JWT")));
+    }
+}
+```
+
+**SecurityConfig** — agregar antes de las reglas de negocio:
+```java
+.requestMatchers("/swagger-ui/**", "/swagger-ui.html",
+                 "/v3/api-docs", "/v3/api-docs/**").permitAll()
+```
+
+**Cada controlador** lleva `@Tag(name = "Nombre", description = "...")` para agrupar endpoints en el UI. Los métodos `@Bean` van sin modificador `public` para evitar el warning `JAVA_PUBLIC_BEAN_METHOD` del plugin de VS Code.
+
+**Acceso**: `http://localhost:8080/swagger-ui/index.html`
+
+---
+
+### Paginación — implementar desde el primer endpoint de colección
+
+Todo endpoint `GET` que retorna una lista de entidades debe implementar paginación desde su creación. Añadirla después obliga a cambiar el formato de respuesta (de `List<T>` a `PageResponseDTO<T>`), lo que rompe los tests existentes y el contrato con el frontend.
+
+**`core/dto/PageResponseDTO<T>`** — wrapper genérico (crear una vez, reutilizar en todos los módulos):
+```java
+@Data @Builder @NoArgsConstructor @AllArgsConstructor
+public class PageResponseDTO<T> {
+    private List<T> content;
+    private int currentPage;
+    private int totalPages;
+    private long totalElements;
+    private int size;
+    private boolean first;
+    private boolean last;
+
+    public static <T> PageResponseDTO<T> from(Page<T> page) {
+        return PageResponseDTO.<T>builder()
+            .content(page.getContent()).currentPage(page.getNumber())
+            .totalPages(page.getTotalPages()).totalElements(page.getTotalElements())
+            .size(page.getSize()).first(page.isFirst()).last(page.isLast()).build();
+    }
+}
+```
+
+**Patrón estándar** por capa:
+```java
+// Repositorio
+Page<Product> findByActiveTrue(Pageable pageable);
+
+// Servicio
+public PageResponseDTO<ProductResponseDTO> getAllActive(int page, int size) {
+    Pageable pageable = PageRequest.of(page, size, Sort.by("name").ascending());
+    return PageResponseDTO.from(repository.findByActiveTrue(pageable)
+        .map(mapper::toResponseDTO));
+}
+
+// Controlador
+@GetMapping("/active")
+public ResponseEntity<PageResponseDTO<ProductResponseDTO>> getAllActive(
+        @RequestParam(defaultValue = "0") int page,
+        @RequestParam(defaultValue = "20") int size) {
+    return ResponseEntity.ok(service.getAllActive(page, size));
+}
+```
+
+**Qué NO paginar**: endpoints que retornan un único objeto (`/products/{id}`), subrecursos acotados por padre (detalles de una orden específica), o endpoints analíticos de reports (ya son datos agregados).
+
+**Sort por defecto recomendado por entidad**:
+- Usuarios, órdenes: `createdAt DESC`
+- Productos, categorías, clientes, proveedores: `name ASC`
+- Movimientos de stock: `createdAt DESC`
+
+---
 
 ### Documentación de código
 

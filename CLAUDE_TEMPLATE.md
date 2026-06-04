@@ -234,6 +234,67 @@ y rotarse de inmediato aunque se elimine del código.
 
 ## U4. Estándares globales de código
 
+### Swagger / OpenAPI — implementar desde el primer módulo
+
+Swagger debe configurarse **antes del primer controlador**. Agregarlo después obliga
+a actualizar los tests que verifican formatos de respuesta y puede romper el contrato
+con el frontend si el formato de algunos endpoints cambia (ej. al agregar paginación).
+
+Configuración mínima para cualquier stack REST:
+- Agregar la dependencia de Swagger/OpenAPI al gestor de dependencias
+- Crear un bean de configuración con el esquema de autenticación JWT Bearer global
+- Permitir las rutas de Swagger en la configuración de seguridad sin autenticación
+- Agregar `@Tag(name, description)` a cada controlador desde su creación
+
+**Acceso típico**: `http://localhost:[PUERTO]/swagger-ui/index.html`
+
+**Nota de compatibilidad (Spring Boot)**: usar springdoc-openapi ≥ 2.7.0 para
+compatibilidad con Spring Framework 6.2.x. Versiones anteriores lanzan
+`NoSuchMethodError` en `ControllerAdviceBean`.
+
+### Paginación — implementar desde el primer endpoint de colección
+
+Todo endpoint GET que retorna una lista debe implementar paginación desde su creación.
+Añadirla después cambia el formato de respuesta (de array `[...]` a objeto paginado
+`{"content": [...], "totalPages": ..., ...}`), rompiendo los tests existentes y el
+contrato con el frontend.
+
+**Wrapper genérico de respuesta paginada** (crear una vez en `core/dto/`):
+```java
+@Data @Builder @NoArgsConstructor @AllArgsConstructor
+public class PageResponseDTO<T> {
+    private List<T> content;
+    private int currentPage;
+    private int totalPages;
+    private long totalElements;
+    private int size;
+    private boolean first;
+    private boolean last;
+
+    public static <T> PageResponseDTO<T> from(Page<T> page) {
+        return PageResponseDTO.<T>builder()
+            .content(page.getContent()).currentPage(page.getNumber())
+            .totalPages(page.getTotalPages()).totalElements(page.getTotalElements())
+            .size(page.getSize()).first(page.isFirst()).last(page.isLast()).build();
+    }
+}
+```
+
+**Patrón estándar por capa**:
+```
+Repositorio  → Page<Entity> findByActiveTrue(Pageable pageable)
+Servicio     → PageResponseDTO<DTO> getAll(int page, int size) usando PageRequest.of()
+Controlador  → @RequestParam(defaultValue="0") int page, @RequestParam(defaultValue="20") int size
+```
+
+**Qué NO paginar**: endpoint de un solo objeto por ID, subrecursos acotados por
+padre (detalles de una orden), endpoints analíticos ya agregados (reports).
+
+**Sort por defecto recomendado**: colecciones de negocio → `name ASC`;
+historial/auditoría → `createdAt DESC`.
+
+---
+
 ### Documentación de código
 
 Todo código generado debe incluir comentarios o documentación que expliquen

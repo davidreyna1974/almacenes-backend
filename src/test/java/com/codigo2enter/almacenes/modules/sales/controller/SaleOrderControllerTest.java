@@ -1,5 +1,6 @@
 package com.codigo2enter.almacenes.modules.sales.controller;
 
+import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
 import com.codigo2enter.almacenes.core.security.JwtUtils;
 import com.codigo2enter.almacenes.modules.sales.dto.*;
 import com.codigo2enter.almacenes.modules.sales.service.SaleOrderService;
@@ -87,11 +88,16 @@ class SaleOrderControllerTest {
 
     @Test
     void findByStatus_retorna200() throws Exception {
-        when(saleOrderService.findByStatus("PENDING")).thenReturn(List.of(buildResponse()));
+        // El endpoint ahora retorna PageResponseDTO — mockear la versión paginada.
+        PageResponseDTO<SaleOrderResponseDTO> page = PageResponseDTO.<SaleOrderResponseDTO>builder()
+                .content(List.of(buildResponse()))
+                .currentPage(0).totalPages(1).totalElements(1).size(20)
+                .first(true).last(true).build();
+        when(saleOrderService.findByStatus("PENDING", 0, 20)).thenReturn(page);
 
         mockMvc.perform(get(BASE + "/status/PENDING"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].status").value("PENDING"));
+                .andExpect(jsonPath("$.content[0].status").value("PENDING"));
     }
 
     @Test

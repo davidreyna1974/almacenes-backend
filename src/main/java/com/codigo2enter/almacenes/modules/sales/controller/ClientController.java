@@ -1,7 +1,9 @@
 package com.codigo2enter.almacenes.modules.sales.controller;
 
+import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
 import com.codigo2enter.almacenes.modules.sales.dto.ClientDTO;
 import com.codigo2enter.almacenes.modules.sales.service.ClientService;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -10,6 +12,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
+@Tag(name = "Clientes", description = "Gestión de clientes")
 @RestController
 @RequestMapping("/api/v1/sales/clients")
 @RequiredArgsConstructor
@@ -23,8 +26,10 @@ public class ClientController {
     }
 
     @GetMapping("/active")
-    public ResponseEntity<List<ClientDTO>> getAllActiveClients() {
-        return ResponseEntity.ok(clientService.getAllActiveClients());
+    public ResponseEntity<PageResponseDTO<ClientDTO>> getAllActiveClients(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(clientService.getAllActiveClients(page, size));
     }
 
     @GetMapping("/{id}")

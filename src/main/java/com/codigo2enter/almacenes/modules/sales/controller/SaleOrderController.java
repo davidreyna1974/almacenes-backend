@@ -1,7 +1,9 @@
 package com.codigo2enter.almacenes.modules.sales.controller;
 
+import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
 import com.codigo2enter.almacenes.modules.sales.dto.*;
 import com.codigo2enter.almacenes.modules.sales.service.SaleOrderService;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -10,6 +12,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
+@Tag(name = "Órdenes de Venta", description = "Ciclo de vida de órdenes de venta")
 @RestController
 @RequestMapping("/api/v1/sales/orders")
 @RequiredArgsConstructor
@@ -28,8 +31,11 @@ public class SaleOrderController {
     }
 
     @GetMapping("/status/{status}")
-    public ResponseEntity<List<SaleOrderResponseDTO>> findByStatus(@PathVariable String status) {
-        return ResponseEntity.ok(saleOrderService.findByStatus(status));
+    public ResponseEntity<PageResponseDTO<SaleOrderResponseDTO>> findByStatus(
+            @PathVariable String status,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(saleOrderService.findByStatus(status, page, size));
     }
 
     @GetMapping("/client/{clientId}")

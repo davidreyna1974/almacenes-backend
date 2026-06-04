@@ -1,5 +1,6 @@
 package com.codigo2enter.almacenes.modules.inventory.service;
 
+import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
 import com.codigo2enter.almacenes.modules.inventory.dto.CategoryDTO;
 
 import java.util.List;
@@ -29,6 +30,15 @@ public interface CategoryService {
      * @return lista de categorías vigentes, vacía si no hay ninguna
      */
     List<CategoryDTO> getAllActiveCategories();
+
+    /**
+     * Retorna una página de categorías activas, ordenadas por nombre ascendente.
+     *
+     * @param page número de página (base 0)
+     * @param size cantidad de registros por página
+     * @return PageResponseDTO con las categorías de la página solicitada
+     */
+    PageResponseDTO<CategoryDTO> getAllActiveCategories(int page, int size);
 
     /**
      * Actualiza los datos de una categoría existente.

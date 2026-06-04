@@ -1,6 +1,8 @@
 package com.codigo2enter.almacenes.modules.inventory.repository;
 
 import com.codigo2enter.almacenes.modules.inventory.model.Product;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
@@ -42,6 +44,17 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     List<Product> findByCategoryIdAndActiveTrue(Long categoryId);
 
     /**
+     * Versión paginada del filtro por categoría.
+     * La versión sin Pageable se conserva para uso en validaciones de servicio
+     * (verificar si una categoría tiene productos antes de desactivarla).
+     *
+     * @param categoryId ID de la categoría por la que filtrar
+     * @param pageable   parámetros de paginación y ordenación
+     * @return página de productos activos de esa categoría
+     */
+    Page<Product> findByCategoryIdAndActiveTrue(Long categoryId, Pageable pageable);
+
+    /**
      * Verifica si ya existe un producto registrado con el SKU indicado.
      * Más eficiente que findBySku() para validaciones de unicidad porque
      * Spring Data genera un SELECT COUNT en lugar de traer el objeto completo.
@@ -70,6 +83,21 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
            "WHERE (p.currentStock - p.reservedStock) <= p.minimumStock " +
            "AND p.active = true")
     List<Product> findLowStockProducts();
+
+    /**
+     * Versión paginada de findLowStockProducts.
+     * Spring Data acepta Pageable como último parámetro en métodos @Query.
+     *
+     * Sort dentro de Pageable se aplica como ORDER BY adicional al WHERE ya definido.
+     * El servicio pasa Sort.by("id").ascending() como criterio neutro.
+     *
+     * @param pageable parámetros de paginación y ordenación
+     * @return página de productos activos con stock disponible en nivel crítico
+     */
+    @Query("SELECT p FROM Product p " +
+           "WHERE (p.currentStock - p.reservedStock) <= p.minimumStock " +
+           "AND p.active = true")
+    Page<Product> findLowStockProducts(Pageable pageable);
 
     /**
      * Retorna todos los productos activos con reservas vigentes

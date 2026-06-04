@@ -2,6 +2,8 @@ package com.codigo2enter.almacenes.modules.purchases.repository;
 
 import com.codigo2enter.almacenes.modules.purchases.model.PurchaseOrder;
 import com.codigo2enter.almacenes.modules.purchases.model.PurchaseOrderStatus;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.repository.query.Param;
@@ -43,6 +45,16 @@ public interface PurchaseOrderRepository extends JpaRepository<PurchaseOrder, Lo
      * @return lista de órdenes en ese estado, vacía si no hay ninguna
      */
     List<PurchaseOrder> findByStatus(PurchaseOrderStatus status);
+
+    /**
+     * Versión paginada del filtro por estado.
+     * La versión sin Pageable se conserva para uso interno en los servicios.
+     *
+     * @param status   estado del enum por el que filtrar
+     * @param pageable parámetros de paginación y ordenación
+     * @return página de órdenes en ese estado
+     */
+    Page<PurchaseOrder> findByStatus(PurchaseOrderStatus status, Pageable pageable);
 
     /**
      * Recupera todas las órdenes de un proveedor específico.

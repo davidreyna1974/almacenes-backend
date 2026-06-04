@@ -1,5 +1,6 @@
 package com.codigo2enter.almacenes.modules.purchases.service;
 
+import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
 import com.codigo2enter.almacenes.modules.auth.model.User;
 import com.codigo2enter.almacenes.modules.auth.repository.UserRepository;
 import com.codigo2enter.almacenes.modules.inventory.dto.StockMovementRequestDTO;
@@ -20,6 +21,9 @@ import com.codigo2enter.almacenes.modules.purchases.repository.PurchaseOrderDeta
 import com.codigo2enter.almacenes.modules.purchases.repository.PurchaseOrderRepository;
 import com.codigo2enter.almacenes.modules.purchases.repository.SupplierRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -123,6 +127,28 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
         }
         return purchaseOrderMapper.toResponseDTOList(
                 purchaseOrderRepository.findByStatus(statusEnum));
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * Sort por createdAt DESC para que las órdenes más recientes aparezcan
+     * primero — el operador generalmente gestiona las órdenes más nuevas.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public PageResponseDTO<PurchaseOrderResponseDTO> findByStatus(String status, int page, int size) {
+        PurchaseOrderStatus statusEnum;
+        try {
+            statusEnum = PurchaseOrderStatus.valueOf(status);
+        } catch (IllegalArgumentException e) {
+            throw new RuntimeException(
+                    "Estado inválido: '" + status + "'. Valores permitidos: " +
+                    "PENDING, APPROVED, RECEIVED, CANCELLED.");
+        }
+        PageRequest pageable = PageRequest.of(page, size, Sort.by("createdAt").descending());
+        Page<PurchaseOrder> result = purchaseOrderRepository.findByStatus(statusEnum, pageable);
+        return PageResponseDTO.from(result.map(purchaseOrderMapper::toResponseDTO));
     }
 
     /**

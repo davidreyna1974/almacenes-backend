@@ -1,14 +1,16 @@
 package com.codigo2enter.almacenes.modules.auth.controller;
 
+import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
 import com.codigo2enter.almacenes.modules.auth.dto.*;
 import com.codigo2enter.almacenes.modules.auth.service.UserService;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
+
 
 /**
  * Controlador REST para autenticación y gestión de usuarios.
@@ -20,6 +22,7 @@ import java.util.List;
  *   2. Gestión de usuarios: /users/** (hasRole ADMIN)
  *   3. Perfil propio: /me/** (authenticated)
  */
+@Tag(name = "Auth", description = "Autenticación y gestión de usuarios")
 @RestController
 @RequestMapping("/api/v1/auth")
 @RequiredArgsConstructor
@@ -37,8 +40,10 @@ public class UserController {
     // ── Gestión de usuarios (ADMIN only — protegido en SecurityConfig) ────
 
     @GetMapping("/users")
-    public ResponseEntity<List<UserResponseDTO>> getAllUsers() {
-        return ResponseEntity.ok(userService.getAllUsers());
+    public ResponseEntity<PageResponseDTO<UserResponseDTO>> getAllUsers(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(userService.getAllUsers(page, size));
     }
 
     @PostMapping("/users")

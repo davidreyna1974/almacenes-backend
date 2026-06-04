@@ -1,6 +1,8 @@
 package com.codigo2enter.almacenes.modules.inventory.repository;
 
 import com.codigo2enter.almacenes.modules.inventory.model.Category;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
@@ -36,4 +38,14 @@ public interface CategoryRepository extends JpaRepository<Category, Long> {
      * @return lista de categorías activas, vacía si no hay ninguna
      */
     List<Category> findByActiveTrue();
+
+    /**
+     * Retorna una página de categorías activas.
+     * La versión sin Pageable se conserva para uso interno (validaciones de servicio,
+     * tests que necesitan la colección completa).
+     *
+     * @param pageable parámetros de paginación y ordenación
+     * @return página de categorías activas
+     */
+    Page<Category> findByActiveTrue(Pageable pageable);
 }

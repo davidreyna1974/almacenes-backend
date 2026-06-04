@@ -53,7 +53,7 @@ public class SecurityConfig {
      * para que el código dependiente esté desacoplado de la implementación concreta.
      */
     @Bean
-    public PasswordEncoder passwordEncoder() {
+    PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
     }
 
@@ -68,7 +68,7 @@ public class SecurityConfig {
      * @return la cadena de filtros de seguridad construida y lista para ser aplicada
      */
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
             // 0. CORS — permite peticiones desde Postman Web y futuros clientes Angular.
             //    Se habilita aquí para que Spring Security aplique los headers CORS
@@ -92,6 +92,10 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
 
                 // ── RUTAS PÚBLICAS ──────────────────────────────────────────
+                // Swagger UI y la especificación OpenAPI son accesibles sin JWT.
+                // El preflight del browser también necesita estas rutas sin autenticación.
+                .requestMatchers("/swagger-ui/**", "/swagger-ui.html",
+                                 "/v3/api-docs", "/v3/api-docs/**").permitAll()
                 .requestMatchers("/api/v1/auth/login").permitAll()
 
                 // ── GESTIÓN DE USUARIOS — solo ADMIN ───────────────────────
@@ -234,7 +238,7 @@ public class SecurityConfig {
      * En producción se reemplaza la lista de orígenes por el dominio del frontend.
      */
     @Bean
-    public CorsConfigurationSource corsConfigurationSource() {
+    CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
         config.setAllowedOriginPatterns(List.of("*"));
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));

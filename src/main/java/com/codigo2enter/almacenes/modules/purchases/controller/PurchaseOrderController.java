@@ -1,11 +1,13 @@
 package com.codigo2enter.almacenes.modules.purchases.controller;
 
+import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
 import com.codigo2enter.almacenes.modules.purchases.dto.PurchaseOrderDetailRequestDTO;
 import com.codigo2enter.almacenes.modules.purchases.dto.PurchaseOrderDetailUpdateRequestDTO;
 import com.codigo2enter.almacenes.modules.purchases.dto.PurchaseOrderRequestDTO;
 import com.codigo2enter.almacenes.modules.purchases.dto.PurchaseOrderResponseDTO;
 import com.codigo2enter.almacenes.modules.purchases.dto.PurchaseOrderUpdateRequestDTO;
 import com.codigo2enter.almacenes.modules.purchases.service.PurchaseOrderService;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -18,6 +20,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -36,6 +39,7 @@ import java.util.List;
  *   PATCH → transición de estado (modifica solo el campo 'status')
  *   PUT   → actualización de datos (notes, supplierId, campos de detalle)
  */
+@Tag(name = "Órdenes de Compra", description = "Ciclo de vida de órdenes de compra")
 @RestController
 @RequestMapping("/api/v1/purchases/orders")
 @RequiredArgsConstructor
@@ -91,9 +95,11 @@ public class PurchaseOrderController {
      * @return 200 OK con la lista de órdenes (puede ser vacía)
      */
     @GetMapping("/status/{status}")
-    public ResponseEntity<List<PurchaseOrderResponseDTO>> findByStatus(
-            @PathVariable String status) {
-        return ResponseEntity.ok(purchaseOrderService.findByStatus(status));
+    public ResponseEntity<PageResponseDTO<PurchaseOrderResponseDTO>> findByStatus(
+            @PathVariable String status,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(purchaseOrderService.findByStatus(status, page, size));
     }
 
     /**

@@ -26,3 +26,12 @@ jwt:
   # 256 bits (64 caracteres hex). Nunca usar el valor por defecto fuera del entorno local.
   # Ejemplo: export JWT_SECRET=$(openssl rand -hex 32)
   secret: ${JWT_SECRET:4a8f3b2e9c1d7f6a0b5e2c8d4f1a9b3e7c0d6f2a5b8e3c1d9f4a7b0e2c6d8f1}
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: alpha
+    display-request-duration: true

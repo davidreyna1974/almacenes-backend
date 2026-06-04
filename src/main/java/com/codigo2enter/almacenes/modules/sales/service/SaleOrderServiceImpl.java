@@ -1,5 +1,6 @@
 package com.codigo2enter.almacenes.modules.sales.service;
 
+import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
 import com.codigo2enter.almacenes.modules.auth.model.User;
 import com.codigo2enter.almacenes.modules.auth.repository.UserRepository;
 import com.codigo2enter.almacenes.modules.inventory.model.Product;
@@ -17,6 +18,9 @@ import com.codigo2enter.almacenes.modules.sales.repository.SaleOrderDetailReposi
 import com.codigo2enter.almacenes.modules.sales.repository.SaleOrderRepository;
 import com.codigo2enter.almacenes.modules.inventory.dto.StockMovementRequestDTO;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -81,6 +85,20 @@ public class SaleOrderServiceImpl implements SaleOrderService {
     public List<SaleOrderResponseDTO> findByStatus(String status) {
         return saleOrderMapper.toResponseDTOList(
                 saleOrderRepository.findByStatus(parseStatus(status)));
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * Sort por createdAt DESC para mostrar las órdenes más recientes primero.
+     * Coherente con el Kardex de órdenes que el operador de ventas gestiona.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public PageResponseDTO<SaleOrderResponseDTO> findByStatus(String status, int page, int size) {
+        PageRequest pageable = PageRequest.of(page, size, Sort.by("createdAt").descending());
+        Page<SaleOrder> result = saleOrderRepository.findByStatus(parseStatus(status), pageable);
+        return PageResponseDTO.from(result.map(saleOrderMapper::toResponseDTO));
     }
 
     @Override

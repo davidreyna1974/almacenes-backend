@@ -1,5 +1,6 @@
 package com.codigo2enter.almacenes.modules.auth.service;
 
+import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
 import com.codigo2enter.almacenes.modules.auth.dto.*;
 
 import java.util.List;
@@ -26,6 +27,15 @@ public interface UserService {
 
     /** Retorna todos los usuarios activos del sistema. */
     List<UserResponseDTO> getAllUsers();
+
+    /**
+     * Retorna una página de usuarios activos, ordenados por fecha de creación descendente.
+     *
+     * @param page número de página (base 0)
+     * @param size cantidad de registros por página
+     * @return PageResponseDTO con los usuarios de la página solicitada
+     */
+    PageResponseDTO<UserResponseDTO> getAllUsers(int page, int size);
 
     /** Retorna el detalle de un usuario por ID. */
     UserResponseDTO getUserById(Long id);

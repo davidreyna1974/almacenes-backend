@@ -1,6 +1,8 @@
 package com.codigo2enter.almacenes.modules.sales.repository;
 
 import com.codigo2enter.almacenes.modules.sales.model.Client;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
@@ -23,6 +25,16 @@ public interface ClientRepository extends JpaRepository<Client, Long> {
      * La condición AndActiveTrue excluye clientes dados de baja (soft delete).
      */
     List<Client> findByActiveTrue();
+
+    /**
+     * Versión paginada de la consulta de clientes activos.
+     * La versión sin Pageable se conserva para uso en validaciones de servicio
+     * (verificar órdenes activas antes de desactivar un cliente).
+     *
+     * @param pageable parámetros de paginación y ordenación
+     * @return página de clientes activos
+     */
+    Page<Client> findByActiveTrue(Pageable pageable);
 
     /**
      * Busca un cliente por RFC. Usado para validar unicidad antes de crear

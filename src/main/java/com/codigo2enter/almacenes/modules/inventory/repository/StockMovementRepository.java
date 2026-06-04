@@ -1,6 +1,8 @@
 package com.codigo2enter.almacenes.modules.inventory.repository;
 
 import com.codigo2enter.almacenes.modules.inventory.model.StockMovement;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -35,6 +37,19 @@ public interface StockMovementRepository extends JpaRepository<StockMovement, Lo
      * @return lista de movimientos ordenados de más reciente a más antiguo
      */
     List<StockMovement> findByProductIdOrderByCreatedAtDesc(Long productId);
+
+    /**
+     * Versión paginada del Kardex de un producto.
+     * El sort en el nombre del método (OrderByCreatedAtDesc) se combina con
+     * el Pageable — Spring Data aplica el ORDER BY del método antes que cualquier
+     * sort del Pageable. Se pasa Pageable.ofSize(n) o PageRequest sin Sort
+     * para dejar activo el orden DESC del nombre de método.
+     *
+     * @param productId ID del producto cuyo historial se consulta
+     * @param pageable  parámetros de paginación (el sort se ignora — el método ya ordena)
+     * @return página de movimientos ordenados del más reciente al más antiguo
+     */
+    Page<StockMovement> findByProductIdOrderByCreatedAtDesc(Long productId, Pageable pageable);
 
     // ── QUERIES ANALÍTICAS PARA EL MÓDULO REPORTS ──────────────────────────
 

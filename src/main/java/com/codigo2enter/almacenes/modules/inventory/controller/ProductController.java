@@ -1,10 +1,12 @@
 package com.codigo2enter.almacenes.modules.inventory.controller;
 
+import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
 import com.codigo2enter.almacenes.modules.inventory.dto.ProductRequestDTO;
 import com.codigo2enter.almacenes.modules.inventory.dto.ProductResponseDTO;
 import com.codigo2enter.almacenes.modules.inventory.dto.StockMovementRequestDTO;
 import com.codigo2enter.almacenes.modules.inventory.dto.StockMovementResponseDTO;
 import com.codigo2enter.almacenes.modules.inventory.service.ProductService;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -16,9 +18,8 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-
-import java.util.List;
 
 /**
  * Controlador REST para la gestión de productos e inventario.
@@ -30,6 +31,7 @@ import java.util.List;
  * Expone 8 endpoints que cubren el ciclo de vida completo del producto:
  * creación, consulta, actualización, desactivación y gestión de stock.
  */
+@Tag(name = "Productos", description = "Gestión de productos e inventario")
 @RestController
 @RequestMapping("/api/v1/inventory/products")
 @RequiredArgsConstructor
@@ -129,9 +131,11 @@ public class ProductController {
      * @return 200 OK con la lista de productos activos de esa categoría
      */
     @GetMapping("/category/{categoryId}")
-    public ResponseEntity<List<ProductResponseDTO>> getByCategoryId(
-            @PathVariable Long categoryId) {
-        return ResponseEntity.ok(productService.getByCategoryId(categoryId));
+    public ResponseEntity<PageResponseDTO<ProductResponseDTO>> getByCategoryId(
+            @PathVariable Long categoryId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(productService.getByCategoryId(categoryId, page, size));
     }
 
     /**
@@ -144,8 +148,10 @@ public class ProductController {
      * @return 200 OK con la lista de productos en nivel crítico de stock
      */
     @GetMapping("/low-stock")
-    public ResponseEntity<List<ProductResponseDTO>> getLowStockProducts() {
-        return ResponseEntity.ok(productService.getLowStockProducts());
+    public ResponseEntity<PageResponseDTO<ProductResponseDTO>> getLowStockProducts(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(productService.getLowStockProducts(page, size));
     }
 
     /**
@@ -183,8 +189,10 @@ public class ProductController {
      * @return 200 OK con la lista de movimientos ordenados por fecha descendente
      */
     @GetMapping("/{id}/movements")
-    public ResponseEntity<List<StockMovementResponseDTO>> getStockMovementsByProduct(
-            @PathVariable Long id) {
-        return ResponseEntity.ok(productService.getStockMovementsByProduct(id));
+    public ResponseEntity<PageResponseDTO<StockMovementResponseDTO>> getStockMovementsByProduct(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(productService.getStockMovementsByProduct(id, page, size));
     }
 }

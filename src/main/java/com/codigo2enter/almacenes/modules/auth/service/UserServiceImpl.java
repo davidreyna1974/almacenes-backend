@@ -1,5 +1,6 @@
 package com.codigo2enter.almacenes.modules.auth.service;
 
+import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
 import com.codigo2enter.almacenes.core.security.JwtUtils;
 import com.codigo2enter.almacenes.modules.auth.dto.*;
 import com.codigo2enter.almacenes.modules.auth.mapper.UserMapper;
@@ -8,6 +9,9 @@ import com.codigo2enter.almacenes.modules.auth.model.User;
 import com.codigo2enter.almacenes.modules.auth.repository.RoleRepository;
 import com.codigo2enter.almacenes.modules.auth.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -60,6 +64,21 @@ public class UserServiceImpl implements UserService {
     @Transactional(readOnly = true)
     public List<UserResponseDTO> getAllUsers() {
         return userMapper.toResponseDTOList(userRepository.findByActiveTrue());
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * Sort por createdAt DESC para que los usuarios más recientes aparezcan primero.
+     * Esto hace coherente la lista paginada con la expectativa del ADMIN al gestionar
+     * el panel de usuarios.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public PageResponseDTO<UserResponseDTO> getAllUsers(int page, int size) {
+        PageRequest pageable = PageRequest.of(page, size, Sort.by("createdAt").descending());
+        Page<User> result = userRepository.findByActiveTrue(pageable);
+        return PageResponseDTO.from(result.map(userMapper::toResponseDTO));
     }
 
     @Override

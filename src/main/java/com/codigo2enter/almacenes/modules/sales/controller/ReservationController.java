@@ -2,12 +2,14 @@ package com.codigo2enter.almacenes.modules.sales.controller;
 
 import com.codigo2enter.almacenes.modules.sales.dto.*;
 import com.codigo2enter.almacenes.modules.sales.service.ReservationService;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
+@Tag(name = "Reservaciones", description = "Consulta de reservas de stock activas")
 @RestController
 @RequestMapping("/api/v1/sales/reservations")
 @RequiredArgsConstructor

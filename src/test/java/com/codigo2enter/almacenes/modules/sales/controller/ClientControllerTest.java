@@ -1,5 +1,6 @@
 package com.codigo2enter.almacenes.modules.sales.controller;
 
+import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
 import com.codigo2enter.almacenes.core.security.JwtUtils;
 import com.codigo2enter.almacenes.modules.sales.dto.ClientDTO;
 import com.codigo2enter.almacenes.modules.sales.service.ClientService;
@@ -58,11 +59,16 @@ class ClientControllerTest {
     @Test
     void getAllActiveClients_retorna200() throws Exception {
         ClientDTO dto = ClientDTO.builder().id(1L).name("Comercial Reyes SA").build();
-        when(clientService.getAllActiveClients()).thenReturn(List.of(dto));
+        // El endpoint ahora retorna PageResponseDTO — mockear la versión paginada.
+        PageResponseDTO<ClientDTO> page = PageResponseDTO.<ClientDTO>builder()
+                .content(List.of(dto))
+                .currentPage(0).totalPages(1).totalElements(1).size(20)
+                .first(true).last(true).build();
+        when(clientService.getAllActiveClients(0, 20)).thenReturn(page);
 
         mockMvc.perform(get(BASE + "/active"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].name").value("Comercial Reyes SA"));
+                .andExpect(jsonPath("$.content[0].name").value("Comercial Reyes SA"));
     }
 
     @Test

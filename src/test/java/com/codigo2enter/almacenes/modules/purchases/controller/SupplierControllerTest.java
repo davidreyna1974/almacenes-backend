@@ -1,5 +1,6 @@
 package com.codigo2enter.almacenes.modules.purchases.controller;
 
+import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
 import com.codigo2enter.almacenes.core.security.JwtUtils;
 import com.codigo2enter.almacenes.modules.purchases.dto.SupplierDTO;
 import com.codigo2enter.almacenes.modules.purchases.service.SupplierService;
@@ -147,18 +148,23 @@ class SupplierControllerTest {
      * se serializa correctamente como JSON array.
      */
     @Test
-    @DisplayName("GET /suppliers/active: debe retornar 200 con la lista de proveedores activos")
+    @DisplayName("GET /suppliers/active: debe retornar 200 con la página de proveedores activos")
     void shouldReturnActiveSuppliers() throws Exception {
         // ARRANGE
         SupplierDTO response2 = SupplierDTO.builder()
                 .id(2L).rfc("XYZ987654321B").companyName("Distribuidora Norte").active(true).build();
-        when(supplierService.getAllActiveSuppliers()).thenReturn(List.of(response, response2));
+        // El endpoint ahora retorna PageResponseDTO — mockear la versión paginada.
+        PageResponseDTO<SupplierDTO> page = PageResponseDTO.<SupplierDTO>builder()
+                .content(List.of(response, response2))
+                .currentPage(0).totalPages(1).totalElements(2).size(20)
+                .first(true).last(true).build();
+        when(supplierService.getAllActiveSuppliers(0, 20)).thenReturn(page);
 
         // ACT + ASSERT
         mockMvc.perform(get("/api/v1/purchases/suppliers/active"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(2))
-                .andExpect(jsonPath("$[0].companyName").value("Ferretería SA"));
+                .andExpect(jsonPath("$.content.length()").value(2))
+                .andExpect(jsonPath("$.content[0].companyName").value("Ferretería SA"));
     }
 
     // =========================================================================

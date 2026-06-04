@@ -1,5 +1,6 @@
 package com.codigo2enter.almacenes.modules.purchases.service;
 
+import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
 import com.codigo2enter.almacenes.modules.purchases.dto.SupplierDTO;
 
 import java.util.List;
@@ -29,6 +30,15 @@ public interface SupplierService {
      * @return lista de proveedores vigentes, vacía si no hay ninguno
      */
     List<SupplierDTO> getAllActiveSuppliers();
+
+    /**
+     * Retorna una página de proveedores activos, ordenados por razón social ascendente.
+     *
+     * @param page número de página (base 0)
+     * @param size cantidad de registros por página
+     * @return PageResponseDTO con los proveedores de la página solicitada
+     */
+    PageResponseDTO<SupplierDTO> getAllActiveSuppliers(int page, int size);
 
     /**
      * Busca un proveedor por su identificador.

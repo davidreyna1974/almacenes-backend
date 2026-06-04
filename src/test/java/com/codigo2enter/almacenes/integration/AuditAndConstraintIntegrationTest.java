@@ -139,13 +139,17 @@ class AuditAndConstraintIntegrationTest {
     void auditoria_categorias_createdBy_y_updatedBy_persisten() {
         Long catId = crearCategoria("Cat-Audit-" + suffix);
 
-        // Buscar la categoría recién creada en la lista activa
-        List<Map<String, Object>> cats = (List<Map<String, Object>>) restTemplate.exchange(
+        // Buscar la categoría recién creada en la lista activa.
+        // El endpoint ahora retorna PageResponseDTO — el contenido está en el campo "content".
+        Map<String, Object> pageBody = restTemplate.exchange(
             base + "/inventory/categories/active",
-            HttpMethod.GET, new HttpEntity<>(authHeaders), List.class
+            HttpMethod.GET, new HttpEntity<>(authHeaders), Map.class
         ).getBody();
 
-        assertNotNull(cats);
+        assertNotNull(pageBody);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> cats = (List<Map<String, Object>>) pageBody.get("content");
+        assertNotNull(cats, "El campo 'content' del PageResponseDTO no debe ser null");
         Map<String, Object> cat = cats.stream()
                 .filter(c -> catId.equals(((Number) c.get("id")).longValue()))
                 .findFirst()
@@ -360,11 +364,15 @@ class AuditAndConstraintIntegrationTest {
         assertEquals(reservadoInicial, getProductField(productId, "reservedStock"),
             "reservedStock debe liberarse (volver al valor inicial) al entregar");
 
-        // Verificar movimiento OUT en Kardex
-        ResponseEntity<List> kardexResp = restTemplate.exchange(
+        // Verificar movimiento OUT en Kardex.
+        // El endpoint ahora retorna PageResponseDTO — extraer "content" del body.
+        ResponseEntity<Map> kardexResp = restTemplate.exchange(
             base + "/inventory/products/" + productId + "/movements",
-            HttpMethod.GET, new HttpEntity<>(authHeaders), List.class);
-        List<Map<String, Object>> movimientos = kardexResp.getBody();
+            HttpMethod.GET, new HttpEntity<>(authHeaders), Map.class);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> movimientos =
+                (List<Map<String, Object>>) kardexResp.getBody().get("content");
+        assertNotNull(movimientos, "El campo 'content' del Kardex paginado no debe ser null");
         assertFalse(movimientos.isEmpty(), "Debe haber al menos un movimiento en el Kardex");
 
         Map<String, Object> ultimoMovimiento = movimientos.get(0);

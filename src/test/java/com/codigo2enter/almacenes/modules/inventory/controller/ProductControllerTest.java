@@ -1,5 +1,6 @@
 package com.codigo2enter.almacenes.modules.inventory.controller;
 
+import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
 import com.codigo2enter.almacenes.core.security.JwtUtils;
 import com.codigo2enter.almacenes.modules.inventory.dto.ProductRequestDTO;
 import com.codigo2enter.almacenes.modules.inventory.dto.ProductResponseDTO;
@@ -226,15 +227,19 @@ class ProductControllerTest {
         ProductResponseDTO response2 = ProductResponseDTO.builder()
                 .id(2L).sku("TOOL-002").categoryName("Herramientas").build();
 
-        when(productService.getByCategoryId(1L))
-                .thenReturn(List.of(response, response2));
+        // El endpoint ahora retorna PageResponseDTO — mockear la versión paginada.
+        PageResponseDTO<ProductResponseDTO> page = PageResponseDTO.<ProductResponseDTO>builder()
+                .content(List.of(response, response2))
+                .currentPage(0).totalPages(1).totalElements(2).size(20)
+                .first(true).last(true).build();
+        when(productService.getByCategoryId(1L, 0, 20)).thenReturn(page);
 
         // ACT + ASSERT
         mockMvc.perform(get("/api/v1/inventory/products/category/1"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(2))
-                .andExpect(jsonPath("$[0].sku").value("TOOL-001"))
-                .andExpect(jsonPath("$[1].sku").value("TOOL-002"));
+                .andExpect(jsonPath("$.content.length()").value(2))
+                .andExpect(jsonPath("$.content[0].sku").value("TOOL-001"))
+                .andExpect(jsonPath("$.content[1].sku").value("TOOL-002"));
     }
 
     // =========================================================================
@@ -251,13 +256,17 @@ class ProductControllerTest {
         ProductResponseDTO response2 = ProductResponseDTO.builder()
                 .id(2L).sku("TOOL-002").build();
 
-        when(productService.getLowStockProducts())
-                .thenReturn(List.of(response, response2));
+        // El endpoint ahora retorna PageResponseDTO — mockear la versión paginada.
+        PageResponseDTO<ProductResponseDTO> page = PageResponseDTO.<ProductResponseDTO>builder()
+                .content(List.of(response, response2))
+                .currentPage(0).totalPages(1).totalElements(2).size(20)
+                .first(true).last(true).build();
+        when(productService.getLowStockProducts(0, 20)).thenReturn(page);
 
         // ACT + ASSERT
         mockMvc.perform(get("/api/v1/inventory/products/low-stock"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(2));
+                .andExpect(jsonPath("$.content.length()").value(2));
     }
 
     // =========================================================================
@@ -331,14 +340,18 @@ class ProductControllerTest {
         StockMovementResponseDTO mov3 = StockMovementResponseDTO.builder()
                 .id(3L).quantity(20).type("IN").build();
 
-        when(productService.getStockMovementsByProduct(1L))
-                .thenReturn(List.of(movResponse, mov2, mov3));
+        // El endpoint ahora retorna PageResponseDTO — mockear la versión paginada.
+        PageResponseDTO<StockMovementResponseDTO> page = PageResponseDTO.<StockMovementResponseDTO>builder()
+                .content(List.of(movResponse, mov2, mov3))
+                .currentPage(0).totalPages(1).totalElements(3).size(20)
+                .first(true).last(true).build();
+        when(productService.getStockMovementsByProduct(1L, 0, 20)).thenReturn(page);
 
         // ACT + ASSERT
         mockMvc.perform(get("/api/v1/inventory/products/1/movements"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(3))
-                .andExpect(jsonPath("$[0].type").value("IN"))
-                .andExpect(jsonPath("$[1].type").value("OUT"));
+                .andExpect(jsonPath("$.content.length()").value(3))
+                .andExpect(jsonPath("$.content[0].type").value("IN"))
+                .andExpect(jsonPath("$.content[1].type").value("OUT"));
     }
 }

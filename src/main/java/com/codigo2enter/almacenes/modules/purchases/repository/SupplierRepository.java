@@ -1,6 +1,8 @@
 package com.codigo2enter.almacenes.modules.purchases.repository;
 
 import com.codigo2enter.almacenes.modules.purchases.model.Supplier;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
@@ -73,4 +75,14 @@ public interface SupplierRepository extends JpaRepository<Supplier, Long> {
      * @return lista de proveedores activos, vacía si no hay ninguno
      */
     List<Supplier> findByActiveTrue();
+
+    /**
+     * Versión paginada de la consulta de proveedores activos.
+     * La versión sin Pageable se conserva para uso en validaciones de servicio
+     * (e.g. verificar órdenes activas antes de desactivar).
+     *
+     * @param pageable parámetros de paginación y ordenación
+     * @return página de proveedores activos
+     */
+    Page<Supplier> findByActiveTrue(Pageable pageable);
 }

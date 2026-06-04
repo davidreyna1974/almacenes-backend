@@ -1,5 +1,6 @@
 package com.codigo2enter.almacenes.core.security;
 
+import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
 import com.codigo2enter.almacenes.modules.auth.controller.UserController;
 import com.codigo2enter.almacenes.modules.auth.dto.AuthResponseDTO;
 import com.codigo2enter.almacenes.modules.auth.dto.UserResponseDTO;
@@ -287,7 +288,11 @@ class SecurityFilterTest {
 
     @Test
     void gestionUsuarios_conTokenAdmin_noRetorna403() throws Exception {
-        when(userService.getAllUsers()).thenReturn(List.of());
+        // El endpoint ahora llama a getAllUsers(int page, int size).
+        when(userService.getAllUsers(0, 20)).thenReturn(
+                PageResponseDTO.<UserResponseDTO>builder()
+                        .content(List.of()).currentPage(0).totalPages(0)
+                        .totalElements(0).size(20).first(true).last(true).build());
         String tok = tokenConRol("ROLE_ADMIN");
 
         mockMvc.perform(get("/api/v1/auth/users").header("Authorization", "Bearer " + tok))

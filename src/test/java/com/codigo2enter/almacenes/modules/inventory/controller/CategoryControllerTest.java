@@ -1,5 +1,6 @@
 package com.codigo2enter.almacenes.modules.inventory.controller;
 
+import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
 import com.codigo2enter.almacenes.core.security.JwtUtils;
 import com.codigo2enter.almacenes.modules.inventory.dto.CategoryDTO;
 import com.codigo2enter.almacenes.modules.inventory.service.CategoryService;
@@ -140,21 +141,26 @@ class CategoryControllerTest {
      * Verifica la ruta /active y que la lista se serializa correctamente.
      */
     @Test
-    @DisplayName("GET /categories/active: debe retornar 200 con la lista de categorías activas")
+    @DisplayName("GET /categories/active: debe retornar 200 con la página de categorías activas")
     void shouldReturnActiveCategories() throws Exception {
         // ARRANGE
         CategoryDTO response2 = CategoryDTO.builder()
                 .id(2L).name("Electrónica").active(true).build();
 
-        when(categoryService.getAllActiveCategories())
-                .thenReturn(List.of(response, response2));
+        // El endpoint ahora retorna PageResponseDTO — mockear la versión paginada del servicio.
+        PageResponseDTO<CategoryDTO> page = PageResponseDTO.<CategoryDTO>builder()
+                .content(List.of(response, response2))
+                .currentPage(0).totalPages(1).totalElements(2).size(20)
+                .first(true).last(true).build();
+        when(categoryService.getAllActiveCategories(0, 20)).thenReturn(page);
 
         // ACT + ASSERT
         mockMvc.perform(get("/api/v1/inventory/categories/active"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(2))
-                .andExpect(jsonPath("$[0].name").value("Herramientas"))
-                .andExpect(jsonPath("$[1].name").value("Electrónica"));
+                .andExpect(jsonPath("$.content.length()").value(2))
+                .andExpect(jsonPath("$.content[0].name").value("Herramientas"))
+                .andExpect(jsonPath("$.content[1].name").value("Electrónica"))
+                .andExpect(jsonPath("$.totalElements").value(2));
     }
 
     // =========================================================================

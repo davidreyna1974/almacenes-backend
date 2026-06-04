@@ -1,5 +1,6 @@
 package com.codigo2enter.almacenes.modules.sales.service;
 
+import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
 import com.codigo2enter.almacenes.modules.auth.model.User;
 import com.codigo2enter.almacenes.modules.auth.repository.UserRepository;
 import com.codigo2enter.almacenes.modules.sales.dto.ClientDTO;
@@ -8,6 +9,9 @@ import com.codigo2enter.almacenes.modules.sales.model.Client;
 import com.codigo2enter.almacenes.modules.sales.repository.ClientRepository;
 import com.codigo2enter.almacenes.modules.sales.repository.SaleOrderRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -48,6 +52,20 @@ public class ClientServiceImpl implements ClientService {
     @Transactional(readOnly = true)
     public List<ClientDTO> getAllActiveClients() {
         return clientMapper.toDTOList(clientRepository.findByActiveTrue());
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * Sort por name ASC para que la lista de clientes aparezca en orden
+     * alfabético, coherente con la vista de lista sin paginación.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public PageResponseDTO<ClientDTO> getAllActiveClients(int page, int size) {
+        PageRequest pageable = PageRequest.of(page, size, Sort.by("name").ascending());
+        Page<Client> result = clientRepository.findByActiveTrue(pageable);
+        return PageResponseDTO.from(result.map(clientMapper::toDTO));
     }
 
     @Override

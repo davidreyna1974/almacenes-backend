@@ -1,5 +1,6 @@
 package com.codigo2enter.almacenes.modules.purchases.controller;
 
+import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
 import com.codigo2enter.almacenes.core.security.JwtUtils;
 import com.codigo2enter.almacenes.modules.purchases.dto.PurchaseOrderResponseDTO;
 import com.codigo2enter.almacenes.modules.purchases.dto.PurchaseOrderDetailRequestDTO;
@@ -183,16 +184,20 @@ class PurchaseOrderControllerTest {
      * y que la lista se serializa correctamente.
      */
     @Test
-    @DisplayName("GET /orders/status/{status}: debe retornar 200 con las órdenes en ese estado")
+    @DisplayName("GET /orders/status/{status}: debe retornar 200 con la página de órdenes en ese estado")
     void shouldReturnOrdersByStatus() throws Exception {
-        // ARRANGE
-        when(purchaseOrderService.findByStatus("PENDING")).thenReturn(List.of(response));
+        // ARRANGE — el endpoint ahora retorna PageResponseDTO (versión paginada).
+        PageResponseDTO<PurchaseOrderResponseDTO> page = PageResponseDTO.<PurchaseOrderResponseDTO>builder()
+                .content(List.of(response))
+                .currentPage(0).totalPages(1).totalElements(1).size(20)
+                .first(true).last(true).build();
+        when(purchaseOrderService.findByStatus("PENDING", 0, 20)).thenReturn(page);
 
         // ACT + ASSERT
         mockMvc.perform(get("/api/v1/purchases/orders/status/PENDING"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].status").value("PENDING"));
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].status").value("PENDING"));
     }
 
     // =========================================================================

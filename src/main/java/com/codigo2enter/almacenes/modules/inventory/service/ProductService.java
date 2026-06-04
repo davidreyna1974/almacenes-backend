@@ -1,5 +1,6 @@
 package com.codigo2enter.almacenes.modules.inventory.service;
 
+import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
 import com.codigo2enter.almacenes.modules.inventory.dto.ProductRequestDTO;
 import com.codigo2enter.almacenes.modules.inventory.dto.ProductResponseDTO;
 import com.codigo2enter.almacenes.modules.inventory.dto.StockMovementRequestDTO;
@@ -44,6 +45,15 @@ public interface ProductService {
     List<ProductResponseDTO> getLowStockProducts();
 
     /**
+     * Retorna una página de productos con stock en nivel crítico.
+     *
+     * @param page número de página (base 0)
+     * @param size cantidad de registros por página
+     * @return PageResponseDTO con los productos de stock bajo de la página solicitada
+     */
+    PageResponseDTO<ProductResponseDTO> getLowStockProducts(int page, int size);
+
+    /**
      * Registra un movimiento de stock (entrada o salida) sobre un producto.
      * Actualiza currentStock del producto y genera un registro en stock_movements.
      * Para movimientos OUT valida que el stock no quede negativo.
@@ -80,6 +90,16 @@ public interface ProductService {
     List<ProductResponseDTO> getByCategoryId(Long categoryId);
 
     /**
+     * Retorna una página de productos activos de una categoría, ordenados por nombre.
+     *
+     * @param categoryId id de la categoría
+     * @param page       número de página (base 0)
+     * @param size       cantidad de registros por página
+     * @return PageResponseDTO con los productos de la página solicitada
+     */
+    PageResponseDTO<ProductResponseDTO> getByCategoryId(Long categoryId, int page, int size);
+
+    /**
      * Desactiva lógicamente un producto (soft delete: active = false).
      *
      * @param id identificador del producto a desactivar
@@ -94,4 +114,15 @@ public interface ProductService {
      * @return lista de movimientos ordenados por fecha descendente
      */
     List<StockMovementResponseDTO> getStockMovementsByProduct(Long productId);
+
+    /**
+     * Retorna una página del historial de movimientos de un producto (Kardex paginado).
+     * El orden por fecha descendente se hereda del método de repositorio.
+     *
+     * @param productId id del producto
+     * @param page      número de página (base 0)
+     * @param size      cantidad de registros por página
+     * @return PageResponseDTO con los movimientos de la página solicitada
+     */
+    PageResponseDTO<StockMovementResponseDTO> getStockMovementsByProduct(Long productId, int page, int size);
 }

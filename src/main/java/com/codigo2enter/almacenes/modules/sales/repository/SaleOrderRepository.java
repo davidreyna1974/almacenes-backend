@@ -2,6 +2,7 @@ package com.codigo2enter.almacenes.modules.sales.repository;
 
 import com.codigo2enter.almacenes.modules.sales.model.SaleOrder;
 import com.codigo2enter.almacenes.modules.sales.model.SaleOrderStatus;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -22,6 +23,18 @@ import java.util.Optional;
 public interface SaleOrderRepository extends JpaRepository<SaleOrder, Long> {
 
     List<SaleOrder> findByStatus(SaleOrderStatus status);
+
+    /**
+     * Versión paginada del filtro por estado.
+     * La versión sin Pageable se conserva para uso interno en servicios que
+     * necesitan la colección completa (e.g., consultar todas las órdenes APPROVED
+     * para una validación antes de desactivar un cliente).
+     *
+     * @param status   estado del enum por el que filtrar
+     * @param pageable parámetros de paginación y ordenación
+     * @return página de órdenes en ese estado
+     */
+    Page<SaleOrder> findByStatus(SaleOrderStatus status, Pageable pageable);
 
     List<SaleOrder> findByClientId(Long clientId);
 

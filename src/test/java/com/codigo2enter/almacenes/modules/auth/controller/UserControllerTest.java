@@ -1,6 +1,7 @@
 package com.codigo2enter.almacenes.modules.auth.controller;
 
 import com.codigo2enter.almacenes.core.security.JwtUtils;
+import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
 import com.codigo2enter.almacenes.modules.auth.dto.*;
 import com.codigo2enter.almacenes.modules.auth.service.UserService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -63,10 +64,16 @@ class UserControllerTest {
 
     @Test
     void getAllUsers_retorna200() throws Exception {
-        when(userService.getAllUsers()).thenReturn(List.of(buildResponse()));
+        // El endpoint ahora retorna PageResponseDTO — el servicio paginado es el que se llama.
+        PageResponseDTO<UserResponseDTO> page = PageResponseDTO.<UserResponseDTO>builder()
+                .content(List.of(buildResponse()))
+                .currentPage(0).totalPages(1).totalElements(1).size(20)
+                .first(true).last(true).build();
+        when(userService.getAllUsers(0, 20)).thenReturn(page);
         mockMvc.perform(get("/api/v1/auth/users"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].username").value("tester"));
+                .andExpect(jsonPath("$.content[0].username").value("tester"))
+                .andExpect(jsonPath("$.totalElements").value(1));
     }
 
     @Test

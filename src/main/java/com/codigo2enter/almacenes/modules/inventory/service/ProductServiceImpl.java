@@ -1,5 +1,6 @@
 package com.codigo2enter.almacenes.modules.inventory.service;
 
+import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
 import com.codigo2enter.almacenes.modules.auth.model.User;
 import com.codigo2enter.almacenes.modules.auth.repository.UserRepository;
 import com.codigo2enter.almacenes.modules.inventory.dto.ProductRequestDTO;
@@ -18,6 +19,9 @@ import com.codigo2enter.almacenes.modules.inventory.repository.StockMovementRepo
 import com.codigo2enter.almacenes.modules.purchases.model.Supplier;
 import com.codigo2enter.almacenes.modules.purchases.repository.SupplierRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -127,6 +131,21 @@ public class ProductServiceImpl implements ProductService {
     @Transactional(readOnly = true)
     public List<ProductResponseDTO> getLowStockProducts() {
         return productMapper.toResponseDTOList(productRepository.findLowStockProducts());
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * Sort por id ASC como criterio neutro — el criterio de relevancia ya está
+     * en el WHERE de la query (availableStock <= minimumStock). No tiene sentido
+     * ordenar por stock porque el frontend ya muestra todos los productos críticos.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public PageResponseDTO<ProductResponseDTO> getLowStockProducts(int page, int size) {
+        PageRequest pageable = PageRequest.of(page, size, Sort.by("id").ascending());
+        Page<Product> result = productRepository.findLowStockProducts(pageable);
+        return PageResponseDTO.from(result.map(productMapper::toResponseDTO));
     }
 
     /**
@@ -271,6 +290,26 @@ public class ProductServiceImpl implements ProductService {
     /**
      * {@inheritDoc}
      *
+     * Valida la existencia de la categoría antes de paginar para distinguir
+     * entre "categoría inexistente" (RuntimeException → 500/400) y
+     * "categoría sin productos" (PageResponseDTO con content vacío → 200).
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public PageResponseDTO<ProductResponseDTO> getByCategoryId(Long categoryId, int page, int size) {
+        if (!categoryRepository.existsById(categoryId)) {
+            throw new RuntimeException(
+                "Categoría con id " + categoryId + " no encontrada."
+            );
+        }
+        PageRequest pageable = PageRequest.of(page, size, Sort.by("name").ascending());
+        Page<Product> result = productRepository.findByCategoryIdAndActiveTrue(categoryId, pageable);
+        return PageResponseDTO.from(result.map(productMapper::toResponseDTO));
+    }
+
+    /**
+     * {@inheritDoc}
+     *
      * Soft delete: setActive(false) sin borrar el registro.
      * Hibernate dirty-checking persiste el cambio al cerrar la transacción.
      */
@@ -302,6 +341,23 @@ public class ProductServiceImpl implements ProductService {
         return stockMovementMapper.toResponseDTOList(
             stockMovementRepository.findByProductIdOrderByCreatedAtDesc(productId)
         );
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * Se pasa Pageable sin Sort explícito porque el ORDER BY ya está embebido
+     * en el nombre del método del repositorio (OrderByCreatedAtDesc).
+     * Agregar un Sort aquí causaría un ORDER BY doble en el SQL generado.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public PageResponseDTO<StockMovementResponseDTO> getStockMovementsByProduct(Long productId, int page, int size) {
+        findProductOrThrow(productId);
+        PageRequest pageable = PageRequest.of(page, size);
+        Page<StockMovement> result =
+                stockMovementRepository.findByProductIdOrderByCreatedAtDesc(productId, pageable);
+        return PageResponseDTO.from(result.map(stockMovementMapper::toResponseDTO));
     }
 
     // -------------------------------------------------------------------------

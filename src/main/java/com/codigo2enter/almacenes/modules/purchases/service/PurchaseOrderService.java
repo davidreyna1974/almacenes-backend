@@ -1,5 +1,6 @@
 package com.codigo2enter.almacenes.modules.purchases.service;
 
+import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
 import com.codigo2enter.almacenes.modules.purchases.dto.PurchaseOrderDetailRequestDTO;
 import com.codigo2enter.almacenes.modules.purchases.dto.PurchaseOrderDetailUpdateRequestDTO;
 import com.codigo2enter.almacenes.modules.purchases.dto.PurchaseOrderRequestDTO;
@@ -44,6 +45,16 @@ public interface PurchaseOrderService {
      * @return lista de órdenes en ese estado
      */
     List<PurchaseOrderResponseDTO> findByStatus(String status);
+
+    /**
+     * Retorna una página de órdenes filtradas por estado.
+     *
+     * @param status nombre del estado
+     * @param page   número de página (base 0)
+     * @param size   cantidad de registros por página
+     * @return PageResponseDTO con las órdenes de la página solicitada
+     */
+    PageResponseDTO<PurchaseOrderResponseDTO> findByStatus(String status, int page, int size);
 
     /**
      * Retorna todas las órdenes de un proveedor específico.

@@ -186,8 +186,24 @@ hotfix/[nombre]  → correcciones urgentes que van directo a main y develop
 chore/[nombre]   → tareas de infraestructura, configuración, documentación
 ```
 
-**Regla fundamental**: `develop` y `main` nunca reciben commits directos
-de desarrollo. Todo trabajo va en una `feature/` branch y llega vía merge.
+**REGLA CRÍTICA — nunca commitear directamente en `develop` o `main`.**
+Todo trabajo va en una `feature/` o `fix/` branch y llega a `develop`
+exclusivamente vía `git merge --no-ff`. Un commit directo viola el historial
+y dificulta saber qué cambios llegaron juntos.
+
+**Protección automatizada**: incluir un hook pre-commit en `hooks/pre-commit`
+que bloquee automáticamente commits en ramas protegidas:
+```bash
+#!/bin/sh
+BRANCH=$(git branch --show-current)
+for protected in develop main; do
+  if [ "$BRANCH" = "$protected" ]; then
+    echo "✗ COMMIT BLOQUEADO: '$BRANCH' está protegida. Usa una feature branch."
+    exit 1
+  fi
+done
+```
+Instalación al clonar: `cp hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit`
 
 ### Merge strategy
 

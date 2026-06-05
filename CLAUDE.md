@@ -96,6 +96,69 @@ Ambos archivos se commitean en la `feature/<nombre>` branch correspondiente.
 
 ---
 
+## ⚠️ Convenciones de Git — REGLAS CRÍTICAS
+
+### NUNCA commitear directamente en `develop` o `main`
+
+`develop` y `main` son ramas protegidas. **Solo reciben trabajo mediante merges
+de feature/fix branches.** Un commit directo viola el historial y dificulta
+la trazabilidad de qué cambios llegaron juntos.
+
+**Flujo obligatorio para cualquier cambio:**
+
+```bash
+# 1. Crear branch desde develop
+git checkout develop
+git checkout -b feature/<nombre>   # o fix/<nombre> / chore/<nombre>
+
+# 2. Trabajar y commitear en la branch
+git add <archivos>
+git commit -m "tipo(scope): descripción"
+
+# 3. Merge a develop con commit de merge explícito
+git checkout develop
+git merge --no-ff feature/<nombre> -m "Merge branch 'feature/<nombre>' into develop"
+
+# 4. Push
+git push origin develop
+git push origin feature/<nombre>
+```
+
+**Si ya commiteaste en `develop` por error:**
+```bash
+# Crear branch retroactivamente con los commits del error
+git checkout -b fix/<nombre>
+# Revertir develop al estado anterior (solo si no has hecho push)
+git checkout develop
+git reset --hard HEAD~<N>   # N = número de commits incorrectos
+# Luego hacer el merge correcto de fix/<nombre>
+```
+
+### Hook local de protección
+
+El repositorio incluye un hook pre-commit en `hooks/pre-commit` que bloquea
+automáticamente cualquier intento de commitear directamente en `develop` o `main`.
+
+**Instalación en una máquina nueva** (obligatorio al clonar el repo):
+```bash
+cp hooks/pre-commit .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+```
+
+Una vez instalado, git rechaza el commit con un mensaje explicativo antes de
+que ocurra, sin posibilidad de olvidar la regla.
+
+### Convención de nombres de branches
+
+| Prefijo | Cuándo usarlo |
+|---|---|
+| `feature/<nombre>` | Módulo nuevo o funcionalidad nueva |
+| `fix/<nombre>` | Corrección de bug detectado después del merge |
+| `chore/<nombre>` | Infraestructura, configuración, documentación |
+| `hotfix/<nombre>` | Corrección urgente directamente desde `main` |
+
+---
+
 ## Comandos comunes
 
 ```bash

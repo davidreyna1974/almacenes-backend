@@ -13,6 +13,10 @@ import com.codigo2enter.almacenes.modules.purchases.controller.PurchaseOrderCont
 import com.codigo2enter.almacenes.modules.purchases.controller.SupplierController;
 import com.codigo2enter.almacenes.modules.purchases.service.PurchaseOrderService;
 import com.codigo2enter.almacenes.modules.purchases.service.SupplierService;
+import com.codigo2enter.almacenes.modules.reports.controller.ReportController;
+import com.codigo2enter.almacenes.modules.reports.service.ExecutiveReportService;
+import com.codigo2enter.almacenes.modules.reports.service.ManagementReportService;
+import com.codigo2enter.almacenes.modules.reports.service.OperationalReportService;
 import com.codigo2enter.almacenes.modules.sales.controller.ClientController;
 import com.codigo2enter.almacenes.modules.sales.controller.ReservationController;
 import com.codigo2enter.almacenes.modules.sales.controller.SaleOrderController;
@@ -61,7 +65,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
     PurchaseOrderController.class,
     ClientController.class,
     SaleOrderController.class,
-    ReservationController.class
+    ReservationController.class,
+    ReportController.class
 })
 @Import(SecurityConfig.class)
 class SecurityFilterTest {
@@ -76,6 +81,9 @@ class SecurityFilterTest {
     @MockBean ClientService clientService;
     @MockBean SaleOrderService saleOrderService;
     @MockBean ReservationService reservationService;
+    @MockBean ExecutiveReportService executiveReportService;
+    @MockBean ManagementReportService managementReportService;
+    @MockBean OperationalReportService operationalReportService;
     @MockBean JwtUtils jwtUtils;
 
     private static final String TOKEN  = "valid.test.token";
@@ -415,5 +423,139 @@ class SecurityFilterTest {
                 .header("Authorization", "Bearer " + tok))
                 .andExpect(result -> assertNotEquals(403, result.getResponse().getStatus(),
                         "MANAGER puede eliminar clientes"));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // BLOQUE 6 — Reglas RBAC del módulo reports
+    //
+    // Este bloque existe por el Bug 2 detectado en E2E: la regla general
+    // GET /reports/inventory/** permitía a WAREHOUSEMAN acceder a endpoints
+    // analíticos (valuation, abc, turnover) cuando solo debe acceder a los
+    // operativos (low-stock, kardex, movements) mediante reglas específicas.
+    //
+    // Reglas de SecurityConfig verificadas aquí:
+    //   /reports/dashboard/**          → solo ADMIN
+    //   /reports/inventory/valuation   → ADMIN, MANAGER (no WAREHOUSEMAN)
+    //   /reports/inventory/abc         → ADMIN, MANAGER (no WAREHOUSEMAN)
+    //   /reports/inventory/low-stock   → ADMIN, MANAGER, WAREHOUSEMAN (no SALES)
+    //   /reports/inventory/movements   → ADMIN, MANAGER, WAREHOUSEMAN (no SALES)
+    //   /reports/inventory/kardex/**   → ADMIN, MANAGER, WAREHOUSEMAN (no SALES)
+    //   /reports/operations/**         → todos los roles
+    //   /reports/**                    → ADMIN, MANAGER (no WAREHOUSEMAN, no SALES)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    void reports_sinJwt_retorna403() throws Exception {
+        mockMvc.perform(get("/api/v1/reports/dashboard/executive"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void reports_dashboard_conAdmin_noRetorna403() throws Exception {
+        when(executiveReportService.getExecutiveDashboard(any(), any())).thenReturn(null);
+        String tok = tokenConRol("ROLE_ADMIN");
+        mockMvc.perform(get("/api/v1/reports/dashboard/executive")
+                .header("Authorization", "Bearer " + tok))
+                .andExpect(result -> assertNotEquals(403, result.getResponse().getStatus(),
+                        "ADMIN puede acceder al dashboard ejecutivo"));
+    }
+
+    @Test
+    void reports_dashboard_conManager_retorna403() throws Exception {
+        // El dashboard contiene datos financieros sensibles — solo ADMIN
+        String tok = tokenConRol("ROLE_MANAGER");
+        mockMvc.perform(get("/api/v1/reports/dashboard/executive")
+                .header("Authorization", "Bearer " + tok))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void reports_inventarioAnalitico_conWarehouseman_retorna403() throws Exception {
+        // Bug 2: WAREHOUSEMAN NO debe acceder a endpoints analíticos de inventario.
+        // Verifica que la regla específica /reports/inventory/** (ADMIN+MANAGER)
+        // prevalece sobre cualquier regla más general.
+        String tok = tokenConRol("ROLE_WAREHOUSEMAN");
+        mockMvc.perform(get("/api/v1/reports/inventory/valuation")
+                .header("Authorization", "Bearer " + tok))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void reports_inventarioAnalitico_conManager_noRetorna403() throws Exception {
+        when(executiveReportService.getInventoryValuation()).thenReturn(null);
+        String tok = tokenConRol("ROLE_MANAGER");
+        mockMvc.perform(get("/api/v1/reports/inventory/valuation")
+                .header("Authorization", "Bearer " + tok))
+                .andExpect(result -> assertNotEquals(403, result.getResponse().getStatus(),
+                        "MANAGER puede acceder a la valuación de inventario"));
+    }
+
+    @Test
+    void reports_abc_conWarehouseman_retorna403() throws Exception {
+        // ABC es un reporte analítico/financiero — no accesible para WAREHOUSEMAN
+        String tok = tokenConRol("ROLE_WAREHOUSEMAN");
+        mockMvc.perform(get("/api/v1/reports/inventory/abc")
+                .header("Authorization", "Bearer " + tok))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void reports_lowStock_conWarehouseman_noRetorna403() throws Exception {
+        // low-stock es un reporte operativo — accesible para WAREHOUSEMAN
+        when(operationalReportService.getLowStock()).thenReturn(List.of());
+        String tok = tokenConRol("ROLE_WAREHOUSEMAN");
+        mockMvc.perform(get("/api/v1/reports/inventory/low-stock")
+                .header("Authorization", "Bearer " + tok))
+                .andExpect(result -> assertNotEquals(403, result.getResponse().getStatus(),
+                        "WAREHOUSEMAN puede acceder al reporte de stock bajo"));
+    }
+
+    @Test
+    void reports_lowStock_conSales_retorna403() throws Exception {
+        // SALES no tiene acceso a información de inventario
+        String tok = tokenConRol("ROLE_SALES");
+        mockMvc.perform(get("/api/v1/reports/inventory/low-stock")
+                .header("Authorization", "Bearer " + tok))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void reports_movimientos_conWarehouseman_noRetorna403() throws Exception {
+        // Resumen de movimientos es operativo — accesible para WAREHOUSEMAN
+        when(operationalReportService.getMovementsSummary(any(), any())).thenReturn(null);
+        String tok = tokenConRol("ROLE_WAREHOUSEMAN");
+        mockMvc.perform(get("/api/v1/reports/inventory/movements")
+                .header("Authorization", "Bearer " + tok))
+                .andExpect(result -> assertNotEquals(403, result.getResponse().getStatus(),
+                        "WAREHOUSEMAN puede acceder al resumen de movimientos"));
+    }
+
+    @Test
+    void reports_pendientes_conSales_noRetorna403() throws Exception {
+        // Operaciones pendientes es el único endpoint de reports accesible para SALES
+        when(operationalReportService.getPendingOperations()).thenReturn(null);
+        String tok = tokenConRol("ROLE_SALES");
+        mockMvc.perform(get("/api/v1/reports/operations/pending")
+                .header("Authorization", "Bearer " + tok))
+                .andExpect(result -> assertNotEquals(403, result.getResponse().getStatus(),
+                        "SALES puede ver las operaciones pendientes"));
+    }
+
+    @Test
+    void reports_topProductos_conWarehouseman_retorna403() throws Exception {
+        // Top productos es analítico/financiero — no accesible para WAREHOUSEMAN
+        String tok = tokenConRol("ROLE_WAREHOUSEMAN");
+        mockMvc.perform(get("/api/v1/reports/products/top-performers")
+                .header("Authorization", "Bearer " + tok))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void reports_tendenciaVentas_conWarehouseman_retorna403() throws Exception {
+        // Tendencia de ventas es analítico — no accesible para WAREHOUSEMAN
+        String tok = tokenConRol("ROLE_WAREHOUSEMAN");
+        mockMvc.perform(get("/api/v1/reports/sales/trend")
+                .header("Authorization", "Bearer " + tok))
+                .andExpect(status().isForbidden());
     }
 }

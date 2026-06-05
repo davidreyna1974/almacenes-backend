@@ -96,6 +96,18 @@ Ambos archivos se commitean en la `feature/<nombre>` branch correspondiente.
 
 ---
 
+## Memoria técnica global del proyecto
+
+Para entender el sistema completo (decisiones arquitectónicas, contratos de
+integración frontend↔backend, RBAC transversal, guía de configuración y roadmap)
+consultar primero:
+
+**`memoria_tecnica_global_proyecto.md`** — en la raíz de este repositorio
+
+Se actualiza al finalizar cada módulo si hay nuevas decisiones transversales.
+
+---
+
 ## ⚠️ Convenciones de Git — REGLAS CRÍTICAS
 
 ### NUNCA commitear directamente en `develop` o `main`

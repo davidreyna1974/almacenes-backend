@@ -1096,10 +1096,10 @@ open target/site/jacoco/index.html
 
 **Umbrales configurados**: 70% de cobertura de líneas por paquete (excluyendo paquetes `dto`, `model`, `mapper` — son código auto-generado por MapStruct o solo campos sin lógica).
 
-**Métricas actuales** (v3 — 239 tests):
-- Líneas: 82.4% ✓ (umbral: 70%)
-- Métodos: 88.1% ✓
-- Ramas: 58.7% ~ (área de mejora — sin umbral configurado aún)
+**Métricas actuales** (365 tests — backend completo):
+- Líneas: 84.6% ✓ (umbral: 70%)
+- Métodos: 87.5% ✓
+- Ramas: 61.6% ~ (área de mejora — sin umbral configurado aún)
 
 **Regla de exclusión en JaCoCo**: los paquetes `*.mapper` contienen solo interfaces — las implementaciones (`*MapperImpl`) son auto-generadas por MapStruct en `target/generated-sources`. JaCoCo los instrumenta pero los tests Mockito los mockean, resultando en 0% de cobertura. Estos paquetes están excluidos del check para evitar falsos negativos.
 
@@ -1150,7 +1150,7 @@ assertFalse(jwtUtils.validateToken(expiredToken));
 - 4 roles en BD: `ROLE_ADMIN`, `ROLE_WAREHOUSEMAN`, `ROLE_MANAGER`, `ROLE_SALES`
 - Tests (Tipo A): `JwtUtilsTest` (4), `UserServiceImplTest` (20)
 - Tests (Tipo B): `UserControllerTest` (12)
-- Tests (Tipo B*): `SecurityFilterTest` (33 — verifica 403s, rutas públicas y reglas RBAC por rol)
+- Tests (Tipo B*): `SecurityFilterTest` (45 — verifica 403s, rutas públicas, reglas RBAC por rol y reglas RBAC del módulo reports)
 - Tests (Tipo C): `RbacIntegrationTest` (17 — tokens JWT reales, flujo completo MANAGER, firma manipulada)
 
 ### Módulo `inventory` — completo
@@ -1237,24 +1237,24 @@ assertFalse(jwtUtils.validateToken(expiredToken));
   4. Flujo completo MANAGER: crea categoría, producto, orden de compra y la aprueba — verifica en BD que `approvedByUsername` es el usuario MANAGER
   5. Token con firma manipulada → 403 (verifica try-catch real del filtro JWT)
 
-### Suite de tests actual: 353 tests — 0 fallos
+### Suite de tests actual: 365 tests — 0 fallos
 
 ```
-Tipo A (Mockito):            171 tests  (+40 reports)
-Tipo B (@WebMvcTest):         82 tests  (+14 reports)
-Tipo B* (con seguridad):      33 tests
+Tipo A (Mockito):            171 tests
+Tipo B (@WebMvcTest):         82 tests
+Tipo B* (con seguridad):      45 tests  (+12 RBAC reports)
 Tipo C (@SpringBootTest):     51 tests
-Tipo D (@DataJpaTest):        16 tests  (+7 reports)
+Tipo D (@DataJpaTest):        16 tests
 ──────────────────────────────────────
-TOTAL MAVEN:                 353 tests
+TOTAL MAVEN:                 365 tests
 Tests E2E curl:              129 tests  (fuera del pipeline Maven)
 ```
 
-Cobertura JaCoCo: **85.9% líneas · 89.6% métodos · 62.7% ramas**
+Cobertura JaCoCo: **84.6% líneas · 87.5% métodos · 61.6% ramas**
 
 Nota: `core.config` (DataInitializer) excluido del check JaCoCo — bootstrap code.
 
-Rama activa de desarrollo: `feature/reports`
+Estado: **backend completo — listo para desarrollo del frontend**
 
 ---
 

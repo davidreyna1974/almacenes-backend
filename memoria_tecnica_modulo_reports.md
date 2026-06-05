@@ -147,28 +147,38 @@ src/test/java/com/codigo2enter/almacenes/modules/reports/
 | `ReportRepositoryTest` | D | 7 | `./mvnw test -Dtest=ReportRepositoryTest` | ✓ 0 fallos |
 | **SUBTOTAL REPORTS** | | **61** | | |
 
-### Suite consolidada
+### Fix posterior: tests RBAC en SecurityFilterTest (Gap 2)
+
+Después de la validación E2E se detectó (Bug 2) que las reglas de SecurityConfig
+para `/reports/inventory/**` no estaban cubiertas por ningún test automatizado.
+Se agregaron 12 tests al Bloque 6 de `SecurityFilterTest`:
+
+| Clase | Tipo | Tests agregados | Comando | Resultado |
+|---|---|---|---|---|
+| `SecurityFilterTest` (Bloque 6) | B* | 12 | `./mvnw test -Dtest=SecurityFilterTest` | ✓ 0 fallos |
+
+### Suite consolidada (estado final del módulo)
 
 ```
-./mvnw clean test  — 2026-05-31
+./mvnw clean test  — 2026-06-04
 
-Tests run: 353, Failures: 0, Errors: 0, Skipped: 0
+Tests run: 365, Failures: 0, Errors: 0, Skipped: 0
 BUILD SUCCESS
 
 Comparativa:
-  Suite pre-reports : 292/292 — BUILD SUCCESS
-  Suite post-reports: 353/353 — BUILD SUCCESS
-  Diferencia        : +61 tests, 0 fallos nuevos
+  Suite pre-reports  : 292/292 — BUILD SUCCESS
+  Suite post-reports : 353/353 — BUILD SUCCESS  (61 tests nuevos)
+  Suite post-Gap2fix : 365/365 — BUILD SUCCESS  (+12 tests RBAC en SecurityFilterTest)
 ```
 
-### Cobertura JaCoCo
+### Cobertura JaCoCo (estado final)
 
 ```
-./mvnw verify  — 2026-05-31
+./mvnw verify  — 2026-06-04
 
-Líneas  : 85.9%  (1829/2128)
-Métodos : 89.6%  (327/365)
-Ramas   : 62.7%  (414/660)
+Líneas  : 84.6%  (1853/2191)
+Métodos : 87.5%  (330/377)
+Ramas   : 61.6%  (408/662)
 BUILD SUCCESS
 
 Referencia: target/site/jacoco/index.html

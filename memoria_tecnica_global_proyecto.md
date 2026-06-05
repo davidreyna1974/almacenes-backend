@@ -146,6 +146,17 @@ Todos los errores pasan por `GlobalExceptionHandler`:
   "message": "El SKU 'TOOL-001' ya está registrado"
 }
 
+// Credenciales incorrectas (500 — también RuntimeException en el backend)
+{
+  "timestamp": "2026-06-05T12:00:00",
+  "status": 500,
+  "error": "Internal Server Error",
+  "message": "Credenciales incorrectas."
+}
+// IMPORTANTE: el backend devuelve 500 (no 401) para credenciales incorrectas.
+// El frontend NO debe basar el manejo del error en el status code;
+// debe leer err.error?.message del body independientemente del status.
+
 // Sin autorización (403)
 // Spring Security devuelve 403 sin body JSON — el interceptor lo maneja
 ```
@@ -345,6 +356,11 @@ Usuarios adicionales se crean desde la interfaz de gestión de usuarios (solo AD
 | Post-reports | springdoc 2.7.0 (no 2.5.0) | Versión 2.5.0 incompatible con Spring Framework 6.2.x: NoSuchMethodError en ControllerAdviceBean |
 | Post-reports | Swagger + paginación desde el inicio | Agregarlos al final obligó a actualizar 9 archivos de test y cambiar el contrato de respuesta. Lección: implementar desde el primer módulo |
 | Post-reports | Hook pre-commit para ramas protegidas | Commits directos a develop ocurrieron en múltiples ocasiones. El hook elimina la dependencia de memoria |
+| Frontend Módulo 0 | Angular 21 + Vitest como runner de tests | Angular CLI 21 usa Vitest (no Karma). Invocar siempre via `ng test`, nunca `npx vitest run` directamente |
+| Frontend Módulo 0 | `@angular/animations` se instala por separado | `provideAnimationsAsync()` requiere el paquete `@angular/animations` aunque no venga con Angular core |
+| Frontend Módulo 1 | Backend devuelve HTTP 500 para credenciales incorrectas | El frontend lee `err.error?.message` del body en vez de verificar el status code. Documentado en sección 3 |
+| Frontend Módulo 1 | `getPrimaryRole()` usa jerarquía explícita | `ADMIN > MANAGER > WAREHOUSEMAN > SALES`. Evita que usuarios con múltiples roles muestren el rol equivocado según el orden de inserción del backend |
+| Frontend Módulo 1 | Angular 21: callbacks HTTP pueden ejecutarse fuera de zone.js | Tras un error HTTP, los cambios de estado en el `error` callback no actualizan la vista automáticamente. Solución: `ChangeDetectorRef.detectChanges()` inmediatamente después del cambio de estado |
 
 ---
 
@@ -425,17 +441,18 @@ JWT_SECRET=...       # mínimo 64 caracteres hex (openssl rand -hex 32)
 **Suite total backend**: 365 tests — 0 fallos — BUILD SUCCESS  
 **Cobertura**: 84.6% líneas · 87.5% métodos · 61.6% ramas
 
-### Frontend (`almacenes-frontend`) — En inicio
+### Frontend (`almacenes-frontend`) — En desarrollo
 
-| Módulo | Estado | Notas |
-|---|---|---|
-| Setup inicial | ✓ Repositorio y CLAUDE.md creados | Pendiente instalar Angular |
-| Layout (sidebar + topbar) | ⬜ Pendiente | |
-| Auth (login, guards, JWT interceptor) | ⬜ Pendiente | |
-| Inventory | ⬜ Pendiente | |
-| Purchases | ⬜ Pendiente | |
-| Sales | ⬜ Pendiente | |
-| Reports | ⬜ Pendiente | |
+| Módulo | Estado | Tests | Notas |
+|---|---|---|---|
+| Módulo 0: Infra-base + Layout | ✓ Completo | 26 specs, 0 fallos | Angular 21, Material M2, sidebar+topbar+main-layout, tema #6B3C6B |
+| Módulo 1: Auth + RBAC | ✓ Completo | 43 specs, 0 fallos | AuthService, JWT interceptor, error interceptor, authGuard, LoginComponent, filtrado sidebar por rol |
+| Módulo 2: Inventory | ⬜ Pendiente | | |
+| Módulo 3: Purchases | ⬜ Pendiente | | |
+| Módulo 4: Sales | ⬜ Pendiente | | |
+| Módulo 5: Reports | ⬜ Pendiente | | |
+
+**Suite total frontend (Módulos 0-1)**: 43 specs — 0 fallos — cobertura 98.09% statements, 100% funciones
 
 ---
 
@@ -495,6 +512,21 @@ las queries de COGS requerían `WHERE unitCost IS NOT NULL`.
 el diseño del schema. Si el dato no está disponible al crear el registro, el
 registro no debe crearse hasta que esté.
 
+### L7: Angular 21 — los callbacks de error HTTP no siempre disparan detección de cambios
+
+**Problema**: tras un error de credenciales en el login, el botón "Iniciar sesión" permanecía
+en estado spinner hasta que el usuario hacía clic en otro elemento. `this.loading = false`
+se ejecutaba correctamente pero Angular no propagaba el cambio a la vista.
+
+**Causa**: en Angular 21, los callbacks del observable en el `error` handler del
+`HttpClient` pueden ejecutarse fuera del contexto de zone.js, lo que impide que
+el motor de detección de cambios por defecto recoja la mutación de estado.
+
+**Regla**: en componentes que mutan estado dentro de callbacks de error de HTTP,
+llamar `ChangeDetectorRef.detectChanges()` inmediatamente después del cambio.
+Alternativa más moderna: usar señales Angular (`signal()`) que actualizan la vista
+de forma reactiva sin depender de zone.js.
+
 ### L6: Los secretos en el código fuente son permanentes
 
 **Problema**: la clave JWT fue hardcodeada en `JwtUtils.java` en el primer
@@ -516,17 +548,16 @@ secreto entra al historial de git, debe considerarse comprometido.
 | Tests B* en `SecurityFilterTest` para Swagger | Baja | Swagger usa sus propios endpoints — requiere `@SpringBootTest` |
 | Paginación en endpoints de `reports` | Baja | Reports son analíticos — datos ya agregados, volumen bajo |
 
-### Frontend — pendiente (desarrollo en curso)
+### Frontend — en curso
 
-| Módulo | Dependencias |
-|---|---|
-| Setup Angular + tema Material | Ninguna |
-| Layout: sidebar + topbar + main-layout | Setup |
-| Autenticación: login, JWT interceptor, guards | Layout |
-| Inventory: categorías + productos + Kardex | Auth |
-| Purchases: proveedores + órdenes de compra | Inventory |
-| Sales: clientes + órdenes de venta + reservas | Purchases |
-| Reports: ejecutivos + gestión + operativos | Sales |
+| Módulo | Estado | Dependencias |
+|---|---|---|
+| ~~Módulo 0: Setup + Layout~~ | ✓ Completo | — |
+| ~~Módulo 1: Auth + RBAC~~ | ✓ Completo | Módulo 0 |
+| Módulo 2: Inventory | ⬜ Siguiente | Módulo 1 |
+| Módulo 3: Purchases | ⬜ Pendiente | Módulo 2 |
+| Módulo 4: Sales | ⬜ Pendiente | Módulo 3 |
+| Módulo 5: Reports | ⬜ Pendiente | Módulo 4 |
 
 ### Módulos de negocio futuros (ambas capas)
 

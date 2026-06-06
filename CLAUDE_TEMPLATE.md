@@ -31,6 +31,7 @@ debe agregarse también a este archivo en su momento.
 - U7.  Taxonomía de tests
 - U8.  Patrones de tests
 - U9.  Documentación de bugs (Lecciones aprendidas)
+- U10. Protocolo pre-código — Verificación de contratos API (proyectos cliente-servidor)
 
 **BLOQUE TÉCNICO** — específico del stack [STACK]; reemplazar por equivalente
 
@@ -809,6 +810,90 @@ con mocks no detectaron se documentan con el siguiente patrón:
 - **`save()` vs `saveAndFlush()` con Optimistic Locking**: la excepción de
   versión ocurre al commit, fuera del try-catch que rodea al `save()`.
   Usar `saveAndFlush()` para capturar la excepción dentro del try-catch.
+
+- **Contrato de API asumido sin verificar (frontend/cliente)**: el endpoint se
+  codifica basado en la propuesta del módulo en lugar de la especificación OpenAPI
+  real. Si el endpoint no existe, devuelve 403/404 en runtime. Si el response type
+  es incorrecto (array vs paginado, DTO vs void), falla silenciosamente o con
+  TypeError. Corrección: siempre consultar el OpenAPI/Swagger antes de escribir
+  el cliente HTTP. Ver sección U10 para el protocolo completo.
+
+- **Callbacks de error HTTP fuera del contexto reactivo (Angular con OnPush)**:
+  tras un error HTTP en Angular 21+, los cambios de estado dentro del callback
+  `error` no disparan la detección de cambios automáticamente. El spinner/estado
+  de carga permanece activo en la vista. Corrección: llamar
+  `ChangeDetectorRef.detectChanges()` inmediatamente después de mutar el estado
+  dentro del callback de error. Alternativa: usar Angular Signals.
+
+---
+
+## U10. Protocolo pre-código — Verificación de contratos API (proyectos cliente-servidor)
+
+**Aplica cuando**: el proyecto consume una API REST externa o de otro repositorio
+(frontend consumiendo backend, microservicio consumiendo otro servicio, etc.).
+
+**Regla**: antes de escribir cualquier servicio, cliente HTTP, modelo o interfaz
+que consuma una API, verificar los contratos reales. No hacerlo causa bugs de
+integración que los tests unitarios (con mocks) no detectan y solo aparecen en
+el browser/runtime con datos reales.
+
+### Pasos obligatorios
+
+**1. Obtener la especificación de la API** (en orden de preferencia):
+   - Swagger UI o equivalente: `http://[HOST]/swagger-ui/index.html`
+   - OpenAPI/JSON spec: `http://[HOST]/v3/api-docs` (o `/openapi.json`, `/api-docs`)
+   - Memoria técnica del módulo (sección de contratos, si ya existe)
+   - Si la API no está corriendo: leer el código fuente del controlador directamente
+
+**2. Verificar para CADA endpoint que se va a consumir:**
+
+| Dato | Por qué verificarlo | Error típico si se omite |
+|---|---|---|
+| Ruta exacta (método + path) | Puede no existir o diferir del nombre esperado | 404 en runtime |
+| HTTP status code de respuesta | 204 significa sin body — no hay JSON que parsear | Null pointer en runtime |
+| Nombres exactos de campos | El productor y el consumidor usan convenciones distintas | Campos `undefined`/null silenciosos |
+| Formato del response body | `PageResponse<T>` vs objeto simple vs `void` | `TypeError: is not iterable` |
+| Campos obligatorios del request | Opcional vs requerido puede no ser evidente | 400 Bad Request |
+
+**3. Documentar los contratos verificados** en la Sección 4 de la memoria técnica
+del módulo ANTES de escribir código. Una propuesta con contratos incorrectos
+propaga el error al código.
+
+**4. Reglas de oro:**
+- NUNCA asumir que un endpoint de colección retorna un array plano `[...]`.
+  La mayoría de APIs paginadas retornan `{content: [...], totalPages: ...}`.
+- NUNCA asumir nombres de campos — leer el JSON real o el DTO del productor.
+- Un endpoint de creación (`POST`) puede retornar 201 con body, 200 con body, o 204 sin body.
+  Verificar cuál es antes de tiparlo.
+- Si un endpoint devuelve 204, el observable/promise debe ser `Observable<void>` / `Promise<void>`.
+  Tiparlo como `Observable<AlgunDTO>` causa errores silenciosos al parsear `null`.
+
+### Checklist pre-código
+
+```
+[ ] Consulté la especificación OpenAPI/Swagger del servicio que voy a consumir
+[ ] Para cada endpoint: verifiqué ruta exacta, método HTTP y HTTP status code
+[ ] Para cada response: verifiqué si es colección paginada, objeto simple o void
+[ ] Para cada DTO: verifiqué nombres exactos de campos (no asumí ninguno)
+[ ] Documenté contratos verificados en la Sección 4 de la memoria técnica
+```
+
+### Bugs recurrentes conocidos en integración API
+
+- **Colección paginada asumida como array**: `this.items = response` cuando `response`
+  es `{content: [...], totalPages: ...}`. El `@for` / `.map()` sobre el objeto lanza
+  `TypeError: is not iterable`. Corrección: siempre extraer `.content`.
+
+- **Nombre de campo del DTO incorrecto**: el backend usa `companyName`, el frontend
+  usa `name`. La propiedad aparece como `undefined` en todos los registros.
+  El dropdown/tabla muestra etiquetas vacías sin mensaje de error.
+
+- **POST que retorna 204 tipado como DTO**: el parser intenta parsear `null` como JSON.
+  Si el error handler no tiene try-catch, puede crashear silenciosamente.
+
+- **Endpoint asumido que no existe**: la request llega al servidor y retorna 403/404.
+  Los tests con mocks nunca fallan porque nunca llegan a la red.
+  Solo se detecta en el browser con backend real.
 
 ---
 

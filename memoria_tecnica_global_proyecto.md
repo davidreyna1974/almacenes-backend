@@ -361,6 +361,8 @@ Usuarios adicionales se crean desde la interfaz de gestión de usuarios (solo AD
 | Frontend Módulo 1 | Backend devuelve HTTP 500 para credenciales incorrectas | El frontend lee `err.error?.message` del body en vez de verificar el status code. Documentado en sección 3 |
 | Frontend Módulo 1 | `getPrimaryRole()` usa jerarquía explícita | `ADMIN > MANAGER > WAREHOUSEMAN > SALES`. Evita que usuarios con múltiples roles muestren el rol equivocado según el orden de inserción del backend |
 | Frontend Módulo 1 | Angular 21: callbacks HTTP pueden ejecutarse fuera de zone.js | Tras un error HTTP, los cambios de estado en el `error` callback no actualizan la vista automáticamente. Solución: `ChangeDetectorRef.detectChanges()` inmediatamente después del cambio de estado |
+| Frontend Módulo 2 | Protocolo obligatorio pre-código en `CLAUDE.md` | Tres contratos de API incorrectos en la propuesta del módulo causaron bugs detectados solo en browser. Regla: verificar OpenAPI antes de escribir cualquier servicio o modelo. Ver L8 en sección 9. |
+| Frontend Módulo 2 | `memoria_tecnica_global_proyecto.md` copiada localmente al frontend | La versión original está en el repo backend (no accesible directamente). Se mantiene una copia en `almacenes-frontend/` raíz. Sincronizar manualmente al finalizar cada módulo. |
 
 ---
 
@@ -447,7 +449,7 @@ JWT_SECRET=...       # mínimo 64 caracteres hex (openssl rand -hex 32)
 |---|---|---|---|
 | Módulo 0: Infra-base + Layout | ✓ Completo | 26 specs, 0 fallos | Angular 21, Material M2, sidebar+topbar+main-layout, tema #6B3C6B |
 | Módulo 1: Auth + RBAC | ✓ Completo | 43 specs, 0 fallos | AuthService, JWT interceptor, error interceptor, authGuard, LoginComponent, filtrado sidebar por rol |
-| Módulo 2: Inventory | ⬜ Pendiente | | |
+| Módulo 2: Inventory | ✓ Completo (código) — ⬜ Tests pendientes | — | Código verificado en browser; specs unitarios no escritos aún |
 | Módulo 3: Purchases | ⬜ Pendiente | | |
 | Módulo 4: Sales | ⬜ Pendiente | | |
 | Módulo 5: Reports | ⬜ Pendiente | | |
@@ -526,6 +528,27 @@ el motor de detección de cambios por defecto recoja la mutación de estado.
 llamar `ChangeDetectorRef.detectChanges()` inmediatamente después del cambio.
 Alternativa más moderna: usar señales Angular (`signal()`) que actualizan la vista
 de forma reactiva sin depender de zone.js.
+
+### L8: Verificar contratos de API contra OpenAPI ANTES de escribir código frontend
+
+**Problema (Frontend Módulo 2 — Inventory)**:
+- El endpoint `GET /api/v1/inventory/products` fue listado en la propuesta como existente → no existe.
+- `POST /movement` fue documentado como retornando `StockMovementResponseDTO` → retorna 204 void.
+- El campo del nombre del proveedor fue asumido como `name` → el backend usa `companyName`.
+- Los tres errores se propagaron al código y solo se detectaron en el browser con datos reales.
+
+**Regla**: antes de escribir cualquier servicio o interfaz TypeScript que consuma el backend,
+verificar contra el OpenAPI real (`http://localhost:8080/v3/api-docs` o Swagger UI):
+1. Que el endpoint existe con la ruta y método HTTP exactos.
+2. El HTTP status code de la respuesta (200, 201, 204, etc.).
+3. Los nombres exactos de los campos en el request body y en el response.
+4. Si la respuesta es `PageResponse<T>`, objeto simple o void.
+
+Documentar los contratos verificados en la Sección 4 de la memoria técnica del módulo
+ANTES de escribir código. Una propuesta con contratos incorrectos propaga el error al código.
+
+**Impacto**: bugs de integración que pasan desapercibidos en tests (que usan mocks) y
+solo se manifiestan en el browser con datos reales, requiriendo debugging costoso.
 
 ### L6: Los secretos en el código fuente son permanentes
 

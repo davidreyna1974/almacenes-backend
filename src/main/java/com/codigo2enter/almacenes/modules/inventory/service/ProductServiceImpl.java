@@ -220,9 +220,11 @@ public class ProductServiceImpl implements ProductService {
             int available = product.getCurrentStock() - product.getReservedStock();
             if (available - request.getQuantity() < 0) {
                 throw new BusinessRuleException(
-                    "Stock disponible insuficiente. " +
-                    "Disponible (no reservado): " + available +
-                    ", solicitado: " + request.getQuantity() + "."
+                    "No se puede registrar la salida: solo hay " + available +
+                    " unidades disponibles (stock físico " + product.getCurrentStock() +
+                    " − " + product.getReservedStock() +
+                    " reservadas para órdenes de venta). Solicitado: " +
+                    request.getQuantity() + "."
                 );
             }
         }

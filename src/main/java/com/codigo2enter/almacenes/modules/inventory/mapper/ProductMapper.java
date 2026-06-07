@@ -50,7 +50,8 @@ public interface ProductMapper {
      */
     @Mapping(source = "category.id",        target = "categoryId")
     @Mapping(source = "category.name",      target = "categoryName")
-    @Mapping(source = "supplier.id",        target = "supplierId")
+    @Mapping(source = "supplier.id",          target = "supplierId")
+    @Mapping(source = "supplier.companyName", target = "supplierName")
     @Mapping(source = "createdBy.id",       target = "createdById")
     @Mapping(source = "createdBy.username", target = "createdByUsername")
     @Mapping(source = "updatedBy.id",       target = "updatedById")

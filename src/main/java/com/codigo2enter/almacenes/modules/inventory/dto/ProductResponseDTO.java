@@ -89,4 +89,8 @@ public class ProductResponseDTO {
     private String categoryName;
 
     private Long supplierId;
+
+    /** Nombre de la empresa proveedora — aplanado para mostrar en tablas y filtros
+     *  sin necesidad de una segunda petición HTTP. */
+    private String supplierName;
 }

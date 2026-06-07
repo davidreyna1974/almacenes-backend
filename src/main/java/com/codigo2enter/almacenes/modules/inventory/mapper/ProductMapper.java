@@ -138,5 +138,6 @@ public interface ProductMapper {
     @Mapping(target = "supplier",     ignore = true)
     @Mapping(target = "reservedStock", ignore = true)
     @Mapping(target = "version",       ignore = true)
+    @Mapping(target = "currentStock",  ignore = true)
     void updateFromDTO(ProductRequestDTO dto, @MappingTarget Product product);
 }

@@ -146,6 +146,15 @@ Comportamiento:
   - JPQL usa CAST(:search AS string) para evitar el error lower(bytea)
     de PostgreSQL cuando search es null (Hibernate 6 + PostgreSQL 15).
 
+Campos del ProductResponseDTO (campos clave para el frontend):
+  id, sku, name, description, price, unitCost
+  currentStock, minimumStock, reservedStock, availableStock
+  status            → "AVAILABLE" | "DISCONTINUED" | "OUT_OF_STOCK"
+  active            → siempre true en este endpoint (filtrado implícito)
+  categoryId, categoryName
+  supplierId, supplierName   ← supplierName agregado 2026-06-06 (antes solo supplierId)
+  createdAt, createdByUsername, updatedAt, updatedByUsername, updatedById
+
 Implementación frontend: ProductService.search(params) en
   src/app/modules/inventory/services/product.service.ts
 ```

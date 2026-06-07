@@ -165,39 +165,39 @@ endpoint GET para el catálogo de productos con búsqueda de texto. El endpoint
 
 ### Formato de errores del backend
 
-Todos los errores pasan por `GlobalExceptionHandler`:
+Todos los errores pasan por `GlobalExceptionHandler` (`core/exception/`).
+Formato JSON unificado para todos los casos:
 
 ```json
-// Error de validación (400)
 {
-  "timestamp": "2026-06-04T12:00:00",
-  "status": 400,
-  "error": "Bad Request",
-  "message": "El SKU es obligatorio"
+  "timestamp": "2026-06-07T12:00:00",
+  "status": 404,
+  "error": "Not Found",
+  "message": "Producto con id 99 no encontrado."
 }
-
-// Error de negocio (500 — RuntimeException)
-{
-  "timestamp": "2026-06-04T12:00:00",
-  "status": 500,
-  "error": "Internal Server Error",
-  "message": "El SKU 'TOOL-001' ya está registrado"
-}
-
-// Credenciales incorrectas (500 — también RuntimeException en el backend)
-{
-  "timestamp": "2026-06-05T12:00:00",
-  "status": 500,
-  "error": "Internal Server Error",
-  "message": "Credenciales incorrectas."
-}
-// IMPORTANTE: el backend devuelve 500 (no 401) para credenciales incorrectas.
-// El frontend NO debe basar el manejo del error en el status code;
-// debe leer err.error?.message del body independientemente del status.
-
-// Sin autorización (403)
-// Spring Security devuelve 403 sin body JSON — el interceptor lo maneja
 ```
+
+**Tabla de códigos HTTP por tipo de error** (actualizada 2026-06-07):
+
+| Condición | Clase Java | HTTP |
+|---|---|---|
+| Entidad no encontrada (ID, SKU, nombre) | `ResourceNotFoundException` | **404** |
+| Duplicado (SKU, nombre de categoría) | `DuplicateResourceException` | **409** |
+| Regla de negocio violada (stock insuficiente, categoría con productos activos, tipo de movimiento inválido) | `BusinessRuleException` | **422** |
+| Validación de campos del DTO (`@Valid`, `@NotBlank`, `@Min`) | `MethodArgumentNotValidException` | **400** |
+| Contención de Optimistic Locking | `ObjectOptimisticLockingFailureException` | **409** |
+| Error real de infraestructura (BD, usuario JWT inexistente) | `RuntimeException` | **500** |
+| Sin autorización (JWT ausente o inválido) | Spring Security | **403** (sin body JSON) |
+
+> ⚠️ **Credenciales incorrectas en login**: el backend devuelve **500** para credenciales
+> incorrectas (no 401). El frontend lee `err.error?.message` del body independientemente
+> del status code. Esto aplica **solo al endpoint `/auth/login`** — para el resto de los
+> errores de negocio el código HTTP es semánticamente correcto desde 2026-06-07.
+
+El frontend **no debe basar ninguna lógica en el status code de errores de negocio**;
+debe siempre leer `err.error?.message` del body. El `error.interceptor.ts` solo actúa
+sobre 401 (sesión expirada → redirect) y 403 (acceso denegado → snackbar); el resto
+pasa al `catchError` del componente.
 
 ### Formato de paginación (PageResponseDTO)
 
@@ -401,6 +401,8 @@ Usuarios adicionales se crean desde la interfaz de gestión de usuarios (solo AD
 | Frontend Módulo 1 | Angular 21: callbacks HTTP pueden ejecutarse fuera de zone.js | Tras un error HTTP, los cambios de estado en el `error` callback no actualizan la vista automáticamente. Solución: `ChangeDetectorRef.detectChanges()` inmediatamente después del cambio de estado |
 | Frontend Módulo 2 | Protocolo obligatorio pre-código en `CLAUDE.md` | Tres contratos de API incorrectos en la propuesta del módulo causaron bugs detectados solo en browser. Regla: verificar OpenAPI antes de escribir cualquier servicio o modelo. Ver L8 en sección 9. |
 | Frontend Módulo 2 | `memoria_tecnica_global_proyecto.md` copiada localmente al frontend | La versión original está en el repo backend (no accesible directamente). Se mantiene una copia en `almacenes-frontend/` raíz. Sincronizar manualmente al finalizar cada módulo. |
+| Frontend Módulo 2 — post | Corrección RBAC: botón "Editar" de categorías oculto para WAREHOUSEMAN/SALES | El botón existía sin guard `@if(canWrite())`. Corregido junto con el clic en fila y el cursor pointer. El backend ya rechazaba el guardado con 403 — era un gap de UX, no de seguridad. |
+| Frontend Módulo 2 — post | HTTP 500 para errores de negocio reemplazado por 404/409/422 | `GlobalExceptionHandler` + tres clases custom en `core/exception/`. Mejora la observabilidad (logs) y la semántica REST. El frontend no requirió cambios. |
 
 ---
 
@@ -436,10 +438,19 @@ La Sección 7 de cada memoria técnica documenta:
 
 ### Manejo de errores
 
-- Backend: `GlobalExceptionHandler` captura todas las `RuntimeException` y
-  errores de validación Jakarta → respuesta JSON estructurada
-- Frontend: `error.interceptor.ts` captura todos los errores HTTP →
-  muestra `MatSnackBar` con el mensaje del backend si disponible
+- **Backend**: `GlobalExceptionHandler` (`@RestControllerAdvice`) maneja:
+  - `ResourceNotFoundException` → **404** (entidad no encontrada)
+  - `DuplicateResourceException` → **409** (unicidad violada)
+  - `BusinessRuleException` → **422** (regla de negocio violada)
+  - `MethodArgumentNotValidException` → **400** (validación de campos)
+  - `ObjectOptimisticLockingFailureException` → **409** (concurrencia)
+  - `RuntimeException` genérica → **500** (errores reales de infraestructura)
+- **Frontend**: `error.interceptor.ts` actúa sobre:
+  - **401** → redirige a `/login` con mensaje "sesión expirada"
+  - **403** → muestra snackbar "Sin permiso"
+  - **Resto** → `throwError()` — el componente lo maneja en su `catchError`
+- **Regla**: los componentes siempre leen `err.error?.message` del body,
+  independientemente del status code.
 
 ### Seguridad
 
@@ -487,7 +498,7 @@ JWT_SECRET=...       # mínimo 64 caracteres hex (openssl rand -hex 32)
 |---|---|---|---|
 | Módulo 0: Infra-base + Layout | ✓ Completo | 26 specs, 0 fallos | Angular 21, Material M2, sidebar+topbar+main-layout, tema #6B3C6B |
 | Módulo 1: Auth + RBAC | ✓ Completo | 43 specs, 0 fallos | AuthService, JWT interceptor, error interceptor, authGuard, LoginComponent, filtrado sidebar por rol |
-| Módulo 2: Inventory | ✓ Completo (código) — ⬜ Tests pendientes | — | Código verificado en browser; specs unitarios no escritos aún |
+| Módulo 2: Inventory | ✓ Completo — ⬜ Specs unitarios pendientes | 15/15 browser + 4 roles RBAC + 17 seguridad backend | Mergeado a develop. RBAC 4 roles verificado en browser y backend. HTTP 404/409/422 corregidos. |
 | Módulo 3: Purchases | ⬜ Pendiente | | |
 | Módulo 4: Sales | ⬜ Pendiente | | |
 | Módulo 5: Reports | ⬜ Pendiente | | |
@@ -588,6 +599,26 @@ ANTES de escribir código. Una propuesta con contratos incorrectos propaga el er
 **Impacto**: bugs de integración que pasan desapercibidos en tests (que usan mocks) y
 solo se manifiestan en el browser con datos reales, requiriendo debugging costoso.
 
+### L9: Usar excepciones tipadas para errores de negocio — nunca RuntimeException genérica
+
+**Problema (Frontend Módulo 2 — post-desarrollo)**: todos los errores de negocio del backend
+(entidad no encontrada, SKU duplicado, stock insuficiente) retornaban HTTP 500, igual que
+un crash del servidor. Esto hacía imposible distinguir errores esperados de errores reales
+en los logs de producción, y violaba la semántica REST.
+
+**Causa**: `GlobalExceptionHandler` mapeaba toda `RuntimeException` a 500. Los servicios
+no diferenciaban tipos de error.
+
+**Regla**: crear una jerarquía mínima de excepciones de negocio desde el inicio de cada
+módulo. El patrón estándar para este proyecto:
+- `ResourceNotFoundException` → HTTP 404 (no encontrado)
+- `DuplicateResourceException` → HTTP 409 (unicidad violada)
+- `BusinessRuleException` → HTTP 422 (regla de negocio violada)
+- `RuntimeException` genérica → HTTP 500 (solo para errores reales de infraestructura)
+
+Esta jerarquía ya está implementada en `core/exception/` desde el **2026-06-07**.
+Todo módulo nuevo debe usar estas clases en sus servicios desde el primer commit.
+
 ### L6: Los secretos en el código fuente son permanentes
 
 **Problema**: la clave JWT fue hardcodeada en `JwtUtils.java` en el primer
@@ -615,8 +646,8 @@ secreto entra al historial de git, debe considerarse comprometido.
 |---|---|---|
 | ~~Módulo 0: Setup + Layout~~ | ✓ Completo | — |
 | ~~Módulo 1: Auth + RBAC~~ | ✓ Completo | Módulo 0 |
-| Módulo 2: Inventory | ⬜ Siguiente | Módulo 1 |
-| Módulo 3: Purchases | ⬜ Pendiente | Módulo 2 |
+| ~~Módulo 2: Inventory~~ | ✓ Completo (specs unitarios pendientes) | Módulo 1 |
+| Módulo 3: Purchases | ⬜ Siguiente | Módulo 2 |
 | Módulo 4: Sales | ⬜ Pendiente | Módulo 3 |
 | Módulo 5: Reports | ⬜ Pendiente | Módulo 4 |
 

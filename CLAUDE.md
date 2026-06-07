@@ -217,7 +217,12 @@ modules/<modulo>/
 
 El paquete `core/` contiene configuración transversal:
 - `core/config/` — Configuración de arranque (`DataInitializer` — crea el admin inicial)
-- `core/exception/` — Manejo centralizado de excepciones
+- `core/exception/` — Manejo centralizado de excepciones:
+  - `GlobalExceptionHandler` (`@RestControllerAdvice`) — mapea excepciones tipadas a códigos HTTP semánticos
+  - `ResourceNotFoundException` → HTTP 404 (entidad buscada no existe)
+  - `DuplicateResourceException` → HTTP 409 (nombre/SKU ya registrado)
+  - `BusinessRuleException` → HTTP 422 (regla de negocio violada: stock insuficiente, dependencias activas, cantidad inválida)
+  - `RuntimeException` genérica → HTTP 500 (error de infraestructura real; solo para `resolveAuthenticatedUser()`)
 - `core/security/` — Configuración de Spring Security, utilidades JWT y CORS
 
 ## Dependencias clave
@@ -609,9 +614,13 @@ return productMapper.toResponseDTO(productRepository.save(product));
 
 ```java
 if (!productRepository.findByCategoryIdAndActiveTrue(id).isEmpty()) {
-    throw new RuntimeException("La categoría tiene productos activos asignados.");
+    throw new BusinessRuleException(
+        "No se puede desactivar la categoría: tiene productos activos asignados. " +
+        "Reasigne o desactive los productos antes de continuar.");
 }
 ```
+
+- **Excepciones tipadas — nunca `RuntimeException` para errores de negocio**: usar las clases de `core/exception/` para que `GlobalExceptionHandler` devuelva el código HTTP correcto. `RuntimeException` genérica solo es aceptable para errores de infraestructura real (BD caída, JWT incoherente con la tabla de usuarios).
 
 - **Defensa en profundidad**: mantener validaciones en el servicio aunque el DTO ya las tenga con anotaciones Jakarta, para proteger invocaciones directas al servicio sin pasar por el controlador.
 
@@ -1177,9 +1186,9 @@ assertFalse(jwtUtils.validateToken(expiredToken));
 - Controladores:
   - `CategoryController` — `POST /`, `GET /active`, `PUT /{id}`, `DELETE /{id}`
   - `ProductController` — `POST /`, `GET /{id}`, `PUT /{id}`, `DELETE /{id}`, `GET /sku/{sku}`, `GET /category/{id}`, `GET /low-stock`, `POST /movement`, `GET /{id}/movements`
-- Tests (Tipo A): `CategoryServiceImplTest` (9), `ProductServiceImplTest` (20)
-- Tests (Tipo B): `CategoryControllerTest` (6), `ProductControllerTest` (10)
-- Tests (Tipo D): `ProductRepositoryTest` (4 — `findLowStockProducts` con `availableStock`, `findProductsWithActiveReservations`)
+- Tests (Tipo A): `CategoryServiceImplTest` (9), `ProductServiceImplTest` (24)
+- Tests (Tipo B): `CategoryControllerTest` (6), `ProductControllerTest` (13)
+- Tests (Tipo D): `ProductRepositoryTest` (10 — `findLowStockProducts` con `availableStock`, `findProductsWithActiveReservations`, `searchProducts` con 6 combinaciones de filtros)
 
 ### Módulo `purchases` — completo
 
@@ -1249,20 +1258,20 @@ assertFalse(jwtUtils.validateToken(expiredToken));
   4. Flujo completo MANAGER: crea categoría, producto, orden de compra y la aprueba — verifica en BD que `approvedByUsername` es el usuario MANAGER
   5. Token con firma manipulada → 403 (verifica try-catch real del filtro JWT)
 
-### Suite de tests actual: 365 tests — 0 fallos
+### Suite de tests actual: 378 tests — 0 fallos
 
 ```
-Tipo A (Mockito):            171 tests
-Tipo B (@WebMvcTest):         82 tests
+Tipo A (Mockito):            175 tests
+Tipo B (@WebMvcTest):         85 tests
 Tipo B* (con seguridad):      45 tests  (+12 RBAC reports)
 Tipo C (@SpringBootTest):     51 tests
-Tipo D (@DataJpaTest):        16 tests
+Tipo D (@DataJpaTest):        22 tests
 ──────────────────────────────────────
-TOTAL MAVEN:                 365 tests
+TOTAL MAVEN:                 378 tests
 Tests E2E curl:              129 tests  (fuera del pipeline Maven)
 ```
 
-Cobertura JaCoCo: **84.6% líneas · 87.5% métodos · 61.6% ramas**
+Cobertura JaCoCo: **84.5% líneas · 87.0% métodos · 61.8% ramas**
 
 Nota: `core.config` (DataInitializer) excluido del check JaCoCo — bootstrap code.
 
@@ -1374,6 +1383,23 @@ más general.
 validación E2E (curl real) O con tests Tipo B* (`@WebMvcTest` + `@Import(SecurityConfig.class)`
 sin `addFilters=false`). Los tests Tipo B estándar con `addFilters=false` nunca detectarán
 este tipo de error.
+
+### Bug 9: HTTP 500 genérico para todos los errores de negocio
+
+**Síntoma**: cualquier error de negocio — recurso no encontrado, nombre/SKU duplicado, stock insuficiente, categoría con productos activos — devolvía HTTP 500. El frontend no podía diferenciar entre un error de infraestructura real y un error de negocio operable.
+
+**Causa**: todos los servicios lanzaban `throw new RuntimeException(mensaje)` para cualquier condición de error. `GlobalExceptionHandler` mapeaba toda `RuntimeException` a HTTP 500 sin distinción.
+
+**Por qué los tests no lo detectaron**: los tests Tipo A (Mockito) verifican que se lanza una excepción pero no su tipo exacto ni el código HTTP resultante. Los tests Tipo B mockean el servicio — nunca ejecutan el handler real. Solo la validación E2E con curl detectó que el código HTTP era incorrecto para operaciones de negocio normales.
+
+**Corrección**: crear jerarquía de excepciones tipadas en `core/exception/`:
+- `ResourceNotFoundException extends RuntimeException` → HTTP 404
+- `DuplicateResourceException extends RuntimeException` → HTTP 409
+- `BusinessRuleException extends RuntimeException` → HTTP 422
+
+Registrar un `@ExceptionHandler` por clase en `GlobalExceptionHandler`, en orden de especificidad (antes que el handler genérico de `RuntimeException`). En los servicios, lanzar la excepción semántica correspondiente en lugar de `RuntimeException`. `resolveAuthenticatedUser()` mantiene `RuntimeException` — si el JWT es válido pero el usuario no existe en BD, es un error de infraestructura genuino.
+
+**Lección**: diseñar la jerarquía de excepciones en el primer módulo. Cuatro tipos cubren el 95% de los casos de una API REST: 400 (validación de input — gestionado por `@Valid`), 404, 409, 422. No usar `RuntimeException` genérica para errores de negocio anticipados.
 
 ### Regla general para prevenir bugs de integración
 

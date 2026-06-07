@@ -8,6 +8,9 @@ import com.codigo2enter.almacenes.modules.inventory.mapper.CategoryMapper;
 import com.codigo2enter.almacenes.modules.inventory.model.Category;
 import com.codigo2enter.almacenes.modules.inventory.repository.CategoryRepository;
 import com.codigo2enter.almacenes.modules.inventory.repository.ProductRepository;
+import com.codigo2enter.almacenes.core.exception.BusinessRuleException;
+import com.codigo2enter.almacenes.core.exception.DuplicateResourceException;
+import com.codigo2enter.almacenes.core.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -56,7 +59,7 @@ public class CategoryServiceImpl implements CategoryService {
         // Validar unicidad del nombre antes de intentar persistir.
         // findByName devuelve Optional, isPresent() indica duplicado.
         categoryRepository.findByName(dto.getName()).ifPresent(existing -> {
-            throw new RuntimeException(
+            throw new DuplicateResourceException(
                 "Ya existe una categoría con el nombre '" + dto.getName() + "'."
             );
         });
@@ -112,14 +115,14 @@ public class CategoryServiceImpl implements CategoryService {
     @Override
     public CategoryDTO updateCategory(Long id, CategoryDTO dto) {
         Category category = categoryRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException(
+                .orElseThrow(() -> new ResourceNotFoundException(
                     "Categoría con id " + id + " no encontrada."
                 ));
 
         // Validar que el nuevo nombre no pertenezca a otra categoría distinta.
         categoryRepository.findByName(dto.getName()).ifPresent(existing -> {
             if (!existing.getId().equals(id)) {
-                throw new RuntimeException(
+                throw new DuplicateResourceException(
                     "Ya existe otra categoría con el nombre '" + dto.getName() + "'."
                 );
             }
@@ -150,7 +153,7 @@ public class CategoryServiceImpl implements CategoryService {
     @Override
     public void deactivateCategory(Long id) {
         Category category = categoryRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException(
+                .orElseThrow(() -> new ResourceNotFoundException(
                     "Categoría con id " + id + " no encontrada."
                 ));
 
@@ -158,7 +161,7 @@ public class CategoryServiceImpl implements CategoryService {
         // findByCategoryIdAndActiveTrue devuelve lista vacía si no hay productos —
         // isEmpty() es la forma más directa de verificarlo sin contar registros.
         if (!productRepository.findByCategoryIdAndActiveTrue(id).isEmpty()) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                 "No se puede desactivar la categoría: tiene productos activos asignados. " +
                 "Reasigne o desactive los productos antes de continuar."
             );

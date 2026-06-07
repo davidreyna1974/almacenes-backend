@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
+import java.util.Collection;
 import java.util.Date;
 import java.util.List;
 import java.util.Set;
@@ -82,14 +83,16 @@ public class JwtUtils {
      * sin necesidad de consultar la BD en cada request.
      *
      * @param token JWT compacto del que extraer los roles
-     * @return lista de nombres de roles; lista vacía si el claim no existe o no es una lista
+     * @return lista de nombres de roles; lista vacía si el claim no existe o no es una colección
      */
-    @SuppressWarnings("unchecked")
     public List<String> extractRoles(String token) {
         Claims claims = parseClaims(token);
         Object rolesObj = claims.get("roles");
-        if (rolesObj instanceof List<?> list) {
-            return list.stream()
+        // JJWT 0.12.x deserializa el claim 'roles' como Collection (puede ser List o Set
+        // dependiendo de la versión y del ObjectMapper). Usar Collection<?> en lugar de
+        // List<?> evita que un cambio de tipo de deserialización vacíe las autoridades.
+        if (rolesObj instanceof Collection<?> col) {
+            return col.stream()
                     .filter(String.class::isInstance)
                     .map(String.class::cast)
                     .toList();

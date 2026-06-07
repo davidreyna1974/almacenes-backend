@@ -8,6 +8,9 @@ import com.codigo2enter.almacenes.modules.inventory.model.Category;
 import com.codigo2enter.almacenes.modules.inventory.model.Product;
 import com.codigo2enter.almacenes.modules.inventory.repository.CategoryRepository;
 import com.codigo2enter.almacenes.modules.inventory.repository.ProductRepository;
+import com.codigo2enter.almacenes.core.exception.BusinessRuleException;
+import com.codigo2enter.almacenes.core.exception.DuplicateResourceException;
+import com.codigo2enter.almacenes.core.exception.ResourceNotFoundException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -137,13 +140,13 @@ class CategoryServiceImplTest {
      * save() nunca debe invocarse — la validación debe cortar el flujo de inmediato.
      */
     @Test
-    @DisplayName("createCategory: debe lanzar excepción cuando el nombre ya existe")
+    @DisplayName("createCategory: debe lanzar DuplicateResourceException cuando el nombre ya existe")
     void shouldThrowWhenCategoryNameAlreadyExists() {
         // ARRANGE
         when(categoryRepository.findByName("Herramientas")).thenReturn(Optional.of(entity));
 
         // ACT + ASSERT
-        assertThrows(RuntimeException.class,
+        assertThrows(DuplicateResourceException.class,
                 () -> categoryService.createCategory(inputDTO));
         verify(categoryRepository, never()).save(any());
     }
@@ -204,13 +207,13 @@ class CategoryServiceImplTest {
      * Error: el id no corresponde a ninguna categoría en la base de datos.
      */
     @Test
-    @DisplayName("updateCategory: debe lanzar excepción cuando la categoría no existe")
+    @DisplayName("updateCategory: debe lanzar ResourceNotFoundException cuando la categoría no existe")
     void shouldThrowWhenCategoryNotFoundOnUpdate() {
         // ARRANGE
         when(categoryRepository.findById(99L)).thenReturn(Optional.empty());
 
         // ACT + ASSERT
-        assertThrows(RuntimeException.class,
+        assertThrows(ResourceNotFoundException.class,
                 () -> categoryService.updateCategory(99L, inputDTO));
     }
 
@@ -218,7 +221,7 @@ class CategoryServiceImplTest {
      * Error: el nuevo nombre ya está registrado en una categoría DIFERENTE (id=2L).
      */
     @Test
-    @DisplayName("updateCategory: debe lanzar excepción cuando el nuevo nombre pertenece a otra categoría")
+    @DisplayName("updateCategory: debe lanzar DuplicateResourceException cuando el nuevo nombre pertenece a otra categoría")
     void shouldThrowWhenNewNameBelongsToAnotherCategory() {
         // ARRANGE
         Category otherCategory = Category.builder().id(2L).name("Herramientas").active(true).build();
@@ -227,7 +230,7 @@ class CategoryServiceImplTest {
         when(categoryRepository.findByName("Herramientas")).thenReturn(Optional.of(otherCategory));
 
         // ACT + ASSERT
-        assertThrows(RuntimeException.class,
+        assertThrows(DuplicateResourceException.class,
                 () -> categoryService.updateCategory(1L, inputDTO));
     }
 
@@ -260,13 +263,13 @@ class CategoryServiceImplTest {
      * Error: el id no corresponde a ninguna categoría.
      */
     @Test
-    @DisplayName("deactivateCategory: debe lanzar excepción cuando la categoría no existe")
+    @DisplayName("deactivateCategory: debe lanzar ResourceNotFoundException cuando la categoría no existe")
     void shouldThrowWhenCategoryNotFoundOnDeactivate() {
         // ARRANGE
         when(categoryRepository.findById(99L)).thenReturn(Optional.empty());
 
         // ACT + ASSERT
-        assertThrows(RuntimeException.class,
+        assertThrows(ResourceNotFoundException.class,
                 () -> categoryService.deactivateCategory(99L));
         verify(productRepository, never()).findByCategoryIdAndActiveTrue(any());
     }
@@ -276,7 +279,7 @@ class CategoryServiceImplTest {
      * La desactivación debe bloquearse para evitar dejar FKs huérfanas.
      */
     @Test
-    @DisplayName("deactivateCategory: debe lanzar excepción cuando la categoría tiene productos activos")
+    @DisplayName("deactivateCategory: debe lanzar BusinessRuleException cuando la categoría tiene productos activos")
     void shouldThrowWhenCategoryHasActiveProducts() {
         // ARRANGE
         Product activeProduct = Product.builder().id(1L).sku("TOOL-001").active(true).build();
@@ -286,7 +289,7 @@ class CategoryServiceImplTest {
                 .thenReturn(List.of(activeProduct));
 
         // ACT + ASSERT
-        assertThrows(RuntimeException.class,
+        assertThrows(BusinessRuleException.class,
                 () -> categoryService.deactivateCategory(1L));
         verify(categoryRepository, never()).save(any());
     }

@@ -1,5 +1,8 @@
 package com.codigo2enter.almacenes.modules.inventory.service;
 
+import com.codigo2enter.almacenes.core.exception.BusinessRuleException;
+import com.codigo2enter.almacenes.core.exception.DuplicateResourceException;
+import com.codigo2enter.almacenes.core.exception.ResourceNotFoundException;
 import com.codigo2enter.almacenes.modules.inventory.dto.ProductRequestDTO;
 import com.codigo2enter.almacenes.modules.inventory.dto.ProductResponseDTO;
 import com.codigo2enter.almacenes.modules.inventory.dto.StockMovementRequestDTO;
@@ -180,13 +183,13 @@ class ProductServiceImplTest {
      * save() nunca debe invocarse — la validación corta el flujo de inmediato.
      */
     @Test
-    @DisplayName("createProduct: debe lanzar excepción cuando el SKU ya existe")
+    @DisplayName("createProduct: debe lanzar DuplicateResourceException cuando el SKU ya existe")
     void shouldThrowWhenSkuAlreadyExists() {
         // ARRANGE
         when(productRepository.existsBySku("TOOL-001")).thenReturn(true);
 
         // ACT + ASSERT
-        assertThrows(RuntimeException.class,
+        assertThrows(DuplicateResourceException.class,
                 () -> productService.createProduct(requestDTO));
 
         verify(productRepository, never()).save(any());
@@ -197,14 +200,14 @@ class ProductServiceImplTest {
      * La búsqueda del producto nunca debe persistirse si la categoría es inválida.
      */
     @Test
-    @DisplayName("createProduct: debe lanzar excepción cuando la categoría no existe")
+    @DisplayName("createProduct: debe lanzar ResourceNotFoundException cuando la categoría no existe")
     void shouldThrowWhenCategoryNotFoundOnCreate() {
         // ARRANGE
         when(productRepository.existsBySku("TOOL-001")).thenReturn(false);
         when(categoryRepository.findById(1L)).thenReturn(Optional.empty());
 
         // ACT + ASSERT
-        assertThrows(RuntimeException.class,
+        assertThrows(ResourceNotFoundException.class,
                 () -> productService.createProduct(requestDTO));
 
         verify(productRepository, never()).save(any());
@@ -242,13 +245,13 @@ class ProductServiceImplTest {
      * Error: el id no corresponde a ningún producto en la base de datos.
      */
     @Test
-    @DisplayName("updateProduct: debe lanzar excepción cuando el producto no existe")
+    @DisplayName("updateProduct: debe lanzar ResourceNotFoundException cuando el producto no existe")
     void shouldThrowWhenProductNotFoundOnUpdate() {
         // ARRANGE
         when(productRepository.findById(99L)).thenReturn(Optional.empty());
 
         // ACT + ASSERT
-        assertThrows(RuntimeException.class,
+        assertThrows(ResourceNotFoundException.class,
                 () -> productService.updateProduct(99L, requestDTO));
     }
 
@@ -258,7 +261,7 @@ class ProductServiceImplTest {
      * al SKU que ya tiene el producto 2.
      */
     @Test
-    @DisplayName("updateProduct: debe lanzar excepción cuando el SKU pertenece a otro producto")
+    @DisplayName("updateProduct: debe lanzar DuplicateResourceException cuando el SKU pertenece a otro producto")
     void shouldThrowWhenSkuBelongsToAnotherProduct() {
         // ARRANGE — otro producto con el mismo SKU pero id distinto
         Product otherProduct = Product.builder()
@@ -271,7 +274,7 @@ class ProductServiceImplTest {
         when(productRepository.findBySku("TOOL-001")).thenReturn(Optional.of(otherProduct));
 
         // ACT + ASSERT
-        assertThrows(RuntimeException.class,
+        assertThrows(DuplicateResourceException.class,
                 () -> productService.updateProduct(1L, requestDTO));
 
         verify(productRepository, never()).save(any());
@@ -363,7 +366,7 @@ class ProductServiceImplTest {
      * por lo que findById nunca debe invocarse.
      */
     @Test
-    @DisplayName("registerStockMovement: debe lanzar excepción cuando el tipo de movimiento es inválido")
+    @DisplayName("registerStockMovement: debe lanzar BusinessRuleException cuando el tipo de movimiento es inválido")
     void shouldThrowWhenMovementTypeIsInvalid() {
         // ARRANGE — tipo inválido, no coincide con ningún valor del enum MovementType
         StockMovementRequestDTO request = StockMovementRequestDTO.builder()
@@ -371,7 +374,7 @@ class ProductServiceImplTest {
                 .build();
 
         // ACT + ASSERT — falla en la conversión, antes de buscar el producto
-        assertThrows(RuntimeException.class,
+        assertThrows(BusinessRuleException.class,
                 () -> productService.registerStockMovement(request));
 
         verify(productRepository, never()).findById(any());
@@ -384,7 +387,7 @@ class ProductServiceImplTest {
      * sin pasar por el @Valid del controlador.
      */
     @Test
-    @DisplayName("registerStockMovement: debe lanzar excepción cuando la cantidad es cero o negativa")
+    @DisplayName("registerStockMovement: debe lanzar BusinessRuleException cuando la cantidad es cero o negativa")
     void shouldThrowWhenQuantityIsZeroOrNegative() {
         // ARRANGE — quantity=0 debe ser rechazado por el servicio
         StockMovementRequestDTO request = StockMovementRequestDTO.builder()
@@ -394,7 +397,7 @@ class ProductServiceImplTest {
         when(productRepository.findById(1L)).thenReturn(Optional.of(product));
 
         // ACT + ASSERT
-        assertThrows(RuntimeException.class,
+        assertThrows(BusinessRuleException.class,
                 () -> productService.registerStockMovement(request));
 
         verify(stockMovementRepository, never()).save(any());
@@ -406,7 +409,7 @@ class ProductServiceImplTest {
      * El stock del producto no debe modificarse y no debe guardarse movimiento.
      */
     @Test
-    @DisplayName("registerStockMovement: debe lanzar excepción cuando el stock es insuficiente para OUT")
+    @DisplayName("registerStockMovement: debe lanzar BusinessRuleException cuando el stock es insuficiente para OUT")
     void shouldThrowWhenInsufficientStockForOutMovement() {
         // ARRANGE — solicitamos más unidades de las disponibles (100 > 50)
         StockMovementRequestDTO request = StockMovementRequestDTO.builder()
@@ -416,7 +419,7 @@ class ProductServiceImplTest {
         when(productRepository.findById(1L)).thenReturn(Optional.of(product));
 
         // ACT + ASSERT
-        assertThrows(RuntimeException.class,
+        assertThrows(BusinessRuleException.class,
                 () -> productService.registerStockMovement(request));
 
         // El stock no debe haber cambiado y no debe guardarse ningún movimiento
@@ -573,13 +576,13 @@ class ProductServiceImplTest {
      * Error: no existe ningún producto con el SKU buscado.
      */
     @Test
-    @DisplayName("getBySku: debe lanzar excepción cuando el SKU no existe")
+    @DisplayName("getBySku: debe lanzar ResourceNotFoundException cuando el SKU no existe")
     void shouldThrowWhenSkuNotFound() {
         // ARRANGE
         when(productRepository.findBySku("INEXISTENTE")).thenReturn(Optional.empty());
 
         // ACT + ASSERT
-        assertThrows(RuntimeException.class,
+        assertThrows(ResourceNotFoundException.class,
                 () -> productService.getBySku("INEXISTENTE"));
     }
 
@@ -617,13 +620,13 @@ class ProductServiceImplTest {
      * el cliente no podría distinguir "categoría vacía" de "categoría inexistente".
      */
     @Test
-    @DisplayName("getByCategoryId: debe lanzar excepción cuando la categoría no existe")
+    @DisplayName("getByCategoryId: debe lanzar ResourceNotFoundException cuando la categoría no existe")
     void shouldThrowWhenCategoryNotFoundOnGetByCategoryId() {
         // ARRANGE
         when(categoryRepository.existsById(99L)).thenReturn(false);
 
         // ACT + ASSERT
-        assertThrows(RuntimeException.class,
+        assertThrows(ResourceNotFoundException.class,
                 () -> productService.getByCategoryId(99L));
 
         verify(productRepository, never()).findByCategoryIdAndActiveTrue(any());
@@ -656,13 +659,13 @@ class ProductServiceImplTest {
      * Error: el id no corresponde a ningún producto existente.
      */
     @Test
-    @DisplayName("deactivateProduct: debe lanzar excepción cuando el producto no existe")
+    @DisplayName("deactivateProduct: debe lanzar ResourceNotFoundException cuando el producto no existe")
     void shouldThrowWhenProductNotFoundOnDeactivate() {
         // ARRANGE
         when(productRepository.findById(99L)).thenReturn(Optional.empty());
 
         // ACT + ASSERT
-        assertThrows(RuntimeException.class,
+        assertThrows(ResourceNotFoundException.class,
                 () -> productService.deactivateProduct(99L));
     }
 
@@ -708,13 +711,13 @@ class ProductServiceImplTest {
      * mismo problema que getByCategoryId con ID inexistente.
      */
     @Test
-    @DisplayName("getStockMovementsByProduct: debe lanzar excepción cuando el producto no existe")
+    @DisplayName("getStockMovementsByProduct: debe lanzar ResourceNotFoundException cuando el producto no existe")
     void shouldThrowWhenProductNotFoundOnGetMovements() {
         // ARRANGE
         when(productRepository.findById(99L)).thenReturn(Optional.empty());
 
         // ACT + ASSERT
-        assertThrows(RuntimeException.class,
+        assertThrows(ResourceNotFoundException.class,
                 () -> productService.getStockMovementsByProduct(99L));
 
         verify(stockMovementRepository, never()).findByProductIdOrderByCreatedAtDesc(any());

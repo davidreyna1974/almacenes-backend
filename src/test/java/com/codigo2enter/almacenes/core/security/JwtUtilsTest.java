@@ -10,6 +10,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
+import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -173,5 +174,47 @@ class JwtUtilsTest {
 
         assertFalse(result,
                 "Un token expirado debe ser rechazado aunque su firma sea válida");
+    }
+
+    /**
+     * Verifica que extractRoles devuelva correctamente un rol único.
+     *
+     * Regresión para BUG-11: extractRoles usaba instanceof List<?> pero JJWT 0.12.x
+     * puede deserializar el claim 'roles' como un tipo Collection que no es List,
+     * devolviendo lista vacía → usuario autenticado sin autoridades → 403 en todos
+     * los endpoints protegidos por hasRole/hasAnyRole.
+     *
+     * Si este test falla con extractRoles() devolviendo [], significa que JJWT volvió
+     * a cambiar el tipo de deserialización y el instanceof Collection<?> dejó de cubrir.
+     */
+    @Test
+    @DisplayName("extractRoles debe retornar el rol correcto — regresión BUG-11 (instanceof List vs Collection)")
+    void shouldExtractSingleRoleCorrectly() {
+        String token = jwtUtils.generateToken(TEST_USERNAME, Set.of("ROLE_WAREHOUSEMAN"));
+
+        List<String> roles = jwtUtils.extractRoles(token);
+
+        assertFalse(roles.isEmpty(),
+                "extractRoles no debe retornar lista vacía — si falla, JJWT cambió el tipo de deserialización");
+        assertEquals(1, roles.size(), "Debe haber exactamente 1 rol");
+        assertTrue(roles.contains("ROLE_WAREHOUSEMAN"),
+                "El rol ROLE_WAREHOUSEMAN debe estar presente con el prefijo ROLE_ intacto");
+    }
+
+    /**
+     * Verifica que extractRoles devuelva todos los roles cuando hay múltiples.
+     * Un usuario con ROLE_ADMIN puede tener también otros roles secundarios.
+     */
+    @Test
+    @DisplayName("extractRoles debe retornar todos los roles cuando el token tiene múltiples")
+    void shouldExtractMultipleRolesCorrectly() {
+        Set<String> multipleRoles = Set.of("ROLE_ADMIN", "ROLE_MANAGER");
+        String token = jwtUtils.generateToken(TEST_USERNAME, multipleRoles);
+
+        List<String> extractedRoles = jwtUtils.extractRoles(token);
+
+        assertEquals(2, extractedRoles.size(), "Deben extraerse los 2 roles del token");
+        assertTrue(extractedRoles.contains("ROLE_ADMIN"), "ROLE_ADMIN debe estar presente");
+        assertTrue(extractedRoles.contains("ROLE_MANAGER"), "ROLE_MANAGER debe estar presente");
     }
 }

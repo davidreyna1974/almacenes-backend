@@ -1,6 +1,9 @@
 package com.codigo2enter.almacenes.modules.inventory.service;
 
 import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
+import com.codigo2enter.almacenes.core.exception.BusinessRuleException;
+import com.codigo2enter.almacenes.core.exception.DuplicateResourceException;
+import com.codigo2enter.almacenes.core.exception.ResourceNotFoundException;
 import com.codigo2enter.almacenes.modules.auth.model.User;
 import com.codigo2enter.almacenes.modules.auth.repository.UserRepository;
 import com.codigo2enter.almacenes.modules.inventory.dto.ProductRequestDTO;
@@ -63,7 +66,7 @@ public class ProductServiceImpl implements ProductService {
     @Override
     public ProductResponseDTO createProduct(ProductRequestDTO dto) {
         if (productRepository.existsBySku(dto.getSku())) {
-            throw new RuntimeException(
+            throw new DuplicateResourceException(
                 "Ya existe un producto con el SKU '" + dto.getSku() + "'."
             );
         }
@@ -102,7 +105,7 @@ public class ProductServiceImpl implements ProductService {
         // Validar que el nuevo SKU no pertenezca a otro producto distinto.
         productRepository.findBySku(dto.getSku()).ifPresent(existing -> {
             if (!existing.getId().equals(id)) {
-                throw new RuntimeException(
+                throw new DuplicateResourceException(
                     "El SKU '" + dto.getSku() + "' ya está en uso por otro producto."
                 );
             }
@@ -187,7 +190,7 @@ public class ProductServiceImpl implements ProductService {
         try {
             type = MovementType.valueOf(request.getType());
         } catch (IllegalArgumentException e) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                 "Tipo de movimiento inválido: '" + request.getType() + "'. Use 'IN' o 'OUT'."
             );
         }
@@ -197,7 +200,7 @@ public class ProductServiceImpl implements ProductService {
         // Defensa en profundidad: valida quantity > 0 aunque el DTO ya lo restringe
         // con @Min(1) para el caso en que el método sea llamado sin pasar por @Valid.
         if (request.getQuantity() <= 0) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                 "La cantidad debe ser mayor a cero. Valor recibido: " + request.getQuantity() + "."
             );
         }
@@ -216,7 +219,7 @@ public class ProductServiceImpl implements ProductService {
         if (type == MovementType.OUT) {
             int available = product.getCurrentStock() - product.getReservedStock();
             if (available - request.getQuantity() < 0) {
-                throw new RuntimeException(
+                throw new BusinessRuleException(
                     "Stock disponible insuficiente. " +
                     "Disponible (no reservado): " + available +
                     ", solicitado: " + request.getQuantity() + "."
@@ -260,7 +263,7 @@ public class ProductServiceImpl implements ProductService {
     @Transactional(readOnly = true)
     public ProductResponseDTO getBySku(String sku) {
         Product product = productRepository.findBySku(sku)
-                .orElseThrow(() -> new RuntimeException(
+                .orElseThrow(() -> new ResourceNotFoundException(
                     "Producto con SKU '" + sku + "' no encontrado."
                 ));
         return productMapper.toResponseDTO(product);
@@ -278,7 +281,7 @@ public class ProductServiceImpl implements ProductService {
     @Transactional(readOnly = true)
     public List<ProductResponseDTO> getByCategoryId(Long categoryId) {
         if (!categoryRepository.existsById(categoryId)) {
-            throw new RuntimeException(
+            throw new ResourceNotFoundException(
                 "Categoría con id " + categoryId + " no encontrada."
             );
         }
@@ -298,7 +301,7 @@ public class ProductServiceImpl implements ProductService {
     @Transactional(readOnly = true)
     public PageResponseDTO<ProductResponseDTO> getByCategoryId(Long categoryId, int page, int size) {
         if (!categoryRepository.existsById(categoryId)) {
-            throw new RuntimeException(
+            throw new ResourceNotFoundException(
                 "Categoría con id " + categoryId + " no encontrada."
             );
         }
@@ -390,7 +393,7 @@ public class ProductServiceImpl implements ProductService {
      */
     private Product findProductOrThrow(Long id) {
         return productRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException(
+                .orElseThrow(() -> new ResourceNotFoundException(
                     "Producto con id " + id + " no encontrado."
                 ));
     }
@@ -413,19 +416,19 @@ public class ProductServiceImpl implements ProductService {
      */
     private Category resolveCategory(Long categoryId) {
         return categoryRepository.findById(categoryId)
-                .orElseThrow(() -> new RuntimeException(
+                .orElseThrow(() -> new ResourceNotFoundException(
                     "Categoría con id " + categoryId + " no encontrada."
                 ));
     }
 
     /**
-     * Busca un proveedor por ID o lanza RuntimeException si no existe.
+     * Busca un proveedor por ID o lanza ResourceNotFoundException si no existe.
      * Usado en createProduct y updateProduct para validar que el supplierId
      * del DTO corresponde a un proveedor real antes de asignarlo al producto.
      */
     private Supplier resolveSupplier(Long supplierId) {
         return supplierRepository.findById(supplierId)
-                .orElseThrow(() -> new RuntimeException(
+                .orElseThrow(() -> new ResourceNotFoundException(
                     "Proveedor con id " + supplierId + " no encontrado."
                 ));
     }

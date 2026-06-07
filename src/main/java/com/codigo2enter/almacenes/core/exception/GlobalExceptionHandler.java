@@ -12,6 +12,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+
 /**
  * Manejador global de excepciones para todos los controladores REST.
  *
@@ -28,16 +29,39 @@ import java.util.stream.Collectors;
 public class GlobalExceptionHandler {
 
     /**
-     * Captura todas las RuntimeException lanzadas desde los servicios.
-     *
-     * Los servicios del sistema usan RuntimeException para señalar violaciones
-     * de reglas de negocio (SKU duplicado, stock insuficiente, estado inválido,
-     * entidad no encontrada). Se mapean a 500 para mantener compatibilidad con
-     * el comportamiento documentado en el archivo de pruebas E2E.
-     *
-     * Mejora futura: distinguir por tipo de excepción (NotFoundException → 404,
-     * DuplicateException → 409, ValidationException → 400) para comunicar mejor
-     * la naturaleza del error al cliente.
+     * Entidad no encontrada → HTTP 404 Not Found.
+     * Lanzada desde los servicios cuando findById / findBySku / findByName
+     * no encuentran el registro solicitado.
+     */
+    @ExceptionHandler(ResourceNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleResourceNotFound(ResourceNotFoundException ex) {
+        return buildResponse(HttpStatus.NOT_FOUND, ex.getMessage());
+    }
+
+    /**
+     * Restricción de unicidad violada → HTTP 409 Conflict.
+     * Lanzada cuando se intenta crear o actualizar con un SKU o nombre ya existente.
+     */
+    @ExceptionHandler(DuplicateResourceException.class)
+    public ResponseEntity<Map<String, Object>> handleDuplicateResource(DuplicateResourceException ex) {
+        return buildResponse(HttpStatus.CONFLICT, ex.getMessage());
+    }
+
+    /**
+     * Regla de negocio violada → HTTP 422 Unprocessable Entity.
+     * Lanzada por stock insuficiente, tipo de movimiento inválido,
+     * categoría con productos activos, etc.
+     */
+    @ExceptionHandler(BusinessRuleException.class)
+    public ResponseEntity<Map<String, Object>> handleBusinessRule(BusinessRuleException ex) {
+        return buildResponse(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage());
+    }
+
+    /**
+     * Captura las RuntimeException no tipadas que queden en el sistema.
+     * Solo deben llegar aquí errores genuinos de infraestructura
+     * (usuario autenticado no encontrado, fallo de BD, etc.) — cualquier
+     * error de negocio debe lanzar una excepción específica.
      */
     @ExceptionHandler(RuntimeException.class)
     public ResponseEntity<Map<String, Object>> handleRuntimeException(RuntimeException ex) {

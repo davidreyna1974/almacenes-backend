@@ -825,6 +825,15 @@ con mocks no detectaron se documentan con el siguiente patrón:
   `ChangeDetectorRef.detectChanges()` inmediatamente después de mutar el estado
   dentro del callback de error. Alternativa: usar Angular Signals.
 
+- **HTTP 500 genérico para errores de negocio**: todos los servicios lanzan
+  `RuntimeException` para cualquier condición de error. El `GlobalExceptionHandler`
+  los mapea todos a HTTP 500 — el cliente no puede distinguir entre 404, 409 y 422.
+  Corrección: diseñar la jerarquía de excepciones tipadas desde el primer módulo:
+  `ResourceNotFoundException` → 404, `DuplicateResourceException` → 409,
+  `BusinessRuleException` → 422. Registrar un `@ExceptionHandler` específico por
+  clase antes del handler genérico de `RuntimeException`. Solo usar `RuntimeException`
+  genérica para errores de infraestructura genuinos (BD caída, usuario JWT no en tabla).
+
 ---
 
 ## U10. Protocolo pre-código — Verificación de contratos API (proyectos cliente-servidor)

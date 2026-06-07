@@ -5,6 +5,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
@@ -116,6 +117,44 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
            "WHERE p.reservedStock > 0 AND p.active = true " +
            "ORDER BY p.reservedStock DESC")
     List<Product> findProductsWithActiveReservations();
+
+    /**
+     * Búsqueda combinada de productos con filtros opcionales.
+     *
+     * Siempre filtra active = true (catálogo operativo).
+     * Cada parámetro es opcional: si llega null, la condición se omite
+     * gracias al patrón (:param IS NULL OR ...) de JPQL/Hibernate.
+     *
+     * search    → busca coincidencia parcial (LIKE %term%) en sku o name,
+     *             ignorando mayúsculas/minúsculas con LOWER().
+     * categoryId → filtra por categoría exacta.
+     * status     → filtra por estado exacto (AVAILABLE, DISCONTINUED, etc.).
+     * supplierId → filtra por proveedor exacto.
+     *
+     * countQuery separado evita el JOIN innecesario de la proyección completa
+     * al ejecutar el COUNT para calcular totalPages.
+     */
+    @Query(value =
+           "SELECT p FROM Product p " +
+           "WHERE p.active = true " +
+           "AND (:search IS NULL OR LOWER(p.sku) LIKE LOWER(CONCAT('%', CAST(:search AS string), '%')) " +
+           "     OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:search AS string), '%'))) " +
+           "AND (:categoryId IS NULL OR p.category.id = :categoryId) " +
+           "AND (:status IS NULL OR p.status = :status) " +
+           "AND (:supplierId IS NULL OR p.supplier.id = :supplierId)",
+           countQuery =
+           "SELECT COUNT(p) FROM Product p " +
+           "WHERE p.active = true " +
+           "AND (:search IS NULL OR LOWER(p.sku) LIKE LOWER(CONCAT('%', CAST(:search AS string), '%')) " +
+           "     OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:search AS string), '%'))) " +
+           "AND (:categoryId IS NULL OR p.category.id = :categoryId) " +
+           "AND (:status IS NULL OR p.status = :status) " +
+           "AND (:supplierId IS NULL OR p.supplier.id = :supplierId)")
+    Page<Product> searchProducts(@Param("search") String search,
+                                  @Param("categoryId") Long categoryId,
+                                  @Param("status") String status,
+                                  @Param("supplierId") Long supplierId,
+                                  Pageable pageable);
 
     // ── QUERIES ANALÍTICAS PARA EL MÓDULO REPORTS ──────────────────────────
 

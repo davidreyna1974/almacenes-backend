@@ -40,6 +40,33 @@ public class ProductController {
     private final ProductService productService;
 
     /**
+     * GET /api/v1/inventory/products
+     *
+     * Búsqueda paginada de productos activos con filtros opcionales combinables.
+     * Este es el endpoint principal del catálogo de productos del frontend.
+     *
+     * Parámetros opcionales — si se omiten, se retornan todos los productos activos:
+     *   search     → búsqueda parcial (case-insensitive) sobre sku y nombre
+     *   categoryId → filtra por categoría exacta
+     *   status     → filtra por estado (AVAILABLE, DISCONTINUED, OUT_OF_STOCK)
+     *   supplierId → filtra por proveedor exacto
+     *   page / size → paginación (defaults: 0 / 20)
+     *
+     * @return 200 OK con PageResponseDTO de productos que cumplen los criterios
+     */
+    @GetMapping
+    public ResponseEntity<PageResponseDTO<ProductResponseDTO>> searchProducts(
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) Long categoryId,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) Long supplierId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(
+                productService.searchProducts(search, categoryId, status, supplierId, page, size));
+    }
+
+    /**
      * POST /api/v1/inventory/products
      *
      * Registra un nuevo producto en el inventario.

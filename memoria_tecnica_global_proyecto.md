@@ -125,6 +125,35 @@ justifica. Un monolito bien estructurado por módulos es más mantenible a esta 
 [error.interceptor.ts] detecta 403 → redirige a /login con mensaje
 ```
 
+### Endpoint de búsqueda de productos (catálogo principal)
+
+```
+GET /api/v1/inventory/products
+    ?search=taladro        (opcional) búsqueda parcial en sku y name, case-insensitive
+    &categoryId=1          (opcional) filtra por categoría exacta
+    &status=AVAILABLE      (opcional) filtra por estado: AVAILABLE | DISCONTINUED | OUT_OF_STOCK
+    &supplierId=2          (opcional) filtra por proveedor exacto
+    &page=0 &size=20       (opcional, defaults 0/20)
+
+← 200 OK  PageResponseDTO<ProductResponseDTO>
+
+Comportamiento:
+  - Siempre filtra active = true (soft-delete excluido implícitamente).
+  - Sin parámetros → todos los productos activos paginados.
+  - search busca en SKU (LIKE) y nombre (LIKE) simultáneamente con OR.
+  - Los demás filtros se combinan con AND entre sí y con search.
+  - Ordenado por name ASC.
+  - JPQL usa CAST(:search AS string) para evitar el error lower(bytea)
+    de PostgreSQL cuando search es null (Hibernate 6 + PostgreSQL 15).
+
+Implementación frontend: ProductService.search(params) en
+  src/app/modules/inventory/services/product.service.ts
+```
+
+⚠️ **Nota histórica**: antes de esta implementación (2026-06-06) no existía ningún
+endpoint GET para el catálogo de productos con búsqueda de texto. El endpoint
+`GET /products/sku/{sku}` solo hace lookup exacto (1 resultado o 404).
+
 ### Formato de errores del backend
 
 Todos los errores pasan por `GlobalExceptionHandler`:
@@ -532,7 +561,7 @@ de forma reactiva sin depender de zone.js.
 ### L8: Verificar contratos de API contra OpenAPI ANTES de escribir código frontend
 
 **Problema (Frontend Módulo 2 — Inventory)**:
-- El endpoint `GET /api/v1/inventory/products` fue listado en la propuesta como existente → no existe.
+- El endpoint `GET /api/v1/inventory/products` fue listado en la propuesta como existente → no existía al implementar el frontend. **Implementado el 2026-06-06** con búsqueda combinada por sku/name y filtros opcionales (categoryId, status, supplierId).
 - `POST /movement` fue documentado como retornando `StockMovementResponseDTO` → retorna 204 void.
 - El campo del nombre del proveedor fue asumido como `name` → el backend usa `companyName`.
 - Los tres errores se propagaron al código y solo se detectaron en el browser con datos reales.

@@ -72,6 +72,74 @@ class ProductControllerTest {
     }
 
     // =========================================================================
+    // GET /api/v1/inventory/products  (búsqueda con filtros opcionales)
+    // =========================================================================
+
+    /**
+     * Sin parámetros → retorna todos los productos activos paginados.
+     * Verifica que el endpoint GET base está mapeado y delega al servicio.
+     */
+    @Test
+    @DisplayName("GET /products: sin parámetros debe retornar 200 con todos los productos activos")
+    void shouldReturnAllActiveProductsWhenNoParams() throws Exception {
+        // ARRANGE
+        PageResponseDTO<ProductResponseDTO> page = PageResponseDTO.<ProductResponseDTO>builder()
+                .content(List.of(response))
+                .currentPage(0).totalPages(1).totalElements(1).size(20)
+                .first(true).last(true).build();
+        when(productService.searchProducts(null, null, null, null, 0, 20)).thenReturn(page);
+
+        // ACT + ASSERT
+        mockMvc.perform(get("/api/v1/inventory/products"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].sku").value("TOOL-001"));
+    }
+
+    /**
+     * Con search=taladro → delega la búsqueda al servicio con ese término.
+     * Verifica que el parámetro ?search se mapea correctamente.
+     */
+    @Test
+    @DisplayName("GET /products?search=taladro: debe retornar 200 con los productos que coincidan")
+    void shouldReturnProductsMatchingSearch() throws Exception {
+        // ARRANGE
+        PageResponseDTO<ProductResponseDTO> page = PageResponseDTO.<ProductResponseDTO>builder()
+                .content(List.of(response))
+                .currentPage(0).totalPages(1).totalElements(1).size(20)
+                .first(true).last(true).build();
+        when(productService.searchProducts("taladro", null, null, null, 0, 20)).thenReturn(page);
+
+        // ACT + ASSERT
+        mockMvc.perform(get("/api/v1/inventory/products").param("search", "taladro"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].name").value("Taladro percutor"));
+    }
+
+    /**
+     * Con categoryId=1, status=AVAILABLE, supplierId=1 → todos los filtros activos.
+     * Verifica que los tres parámetros de filtro se pasan correctamente al servicio.
+     */
+    @Test
+    @DisplayName("GET /products: con filtros categoryId + status + supplierId debe retornar 200")
+    void shouldReturnProductsWithAllFilters() throws Exception {
+        // ARRANGE
+        PageResponseDTO<ProductResponseDTO> page = PageResponseDTO.<ProductResponseDTO>builder()
+                .content(List.of(response))
+                .currentPage(0).totalPages(1).totalElements(1).size(20)
+                .first(true).last(true).build();
+        when(productService.searchProducts(null, 1L, "AVAILABLE", 1L, 0, 20)).thenReturn(page);
+
+        // ACT + ASSERT
+        mockMvc.perform(get("/api/v1/inventory/products")
+                        .param("categoryId", "1")
+                        .param("status", "AVAILABLE")
+                        .param("supplierId", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1));
+    }
+
+    // =========================================================================
     // POST /api/v1/inventory/products
     // =========================================================================
 

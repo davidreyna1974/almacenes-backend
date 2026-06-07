@@ -1401,6 +1401,22 @@ Registrar un `@ExceptionHandler` por clase en `GlobalExceptionHandler`, en orden
 
 **Lección**: diseñar la jerarquía de excepciones en el primer módulo. Cuatro tipos cubren el 95% de los casos de una API REST: 400 (validación de input — gestionado por `@Valid`), 404, 409, 422. No usar `RuntimeException` genérica para errores de negocio anticipados.
 
+### Bug 10: `currentStock` modificable directamente en PUT — rotura de la integridad del Kardex
+
+**Síntoma**: al editar un producto, cambiar `currentStock` en el formulario modificaba el stock directamente en BD sin generar ningún registro en `stock_movements`. La suma acumulada del Kardex dejaba de coincidir con el stock real.
+
+**Causa**: `updateFromDTO` en `ProductMapper.java` mapeaba `currentStock` del DTO al campo de la entidad, igual que cualquier otro campo editable. No había ninguna restricción que diferenciara un campo auditable de uno de negocio libre.
+
+**Regla**: `currentStock` solo puede cambiar mediante `registerStockMovement()` (POST /movement). En `updateFromDTO`, ignorar explícitamente:
+```java
+@Mapping(target = "currentStock", ignore = true)  // solo via registerStockMovement
+void updateFromDTO(ProductRequestDTO dto, @MappingTarget Product product);
+```
+
+**Aplica a todos los módulos futuros**: cualquier campo cuyo historial de cambios sea un requisito de negocio (auditoría, trazabilidad, integridad financiera) debe protegerse con `ignore = true` en `updateFromDTO`. El mapper `toEntity()` (creación) puede mantenerlo.
+
+---
+
 ### Regla general para prevenir bugs de integración
 
 Ante cualquier nuevo endpoint, verificar con **curl real** O con **@SpringBootTest** antes de dar por terminado:

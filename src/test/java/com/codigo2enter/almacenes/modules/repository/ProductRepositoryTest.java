@@ -243,6 +243,199 @@ class ProductRepositoryTest {
             "Producto con reservedStock=0 NO debe aparecer en la lista de reservas activas");
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // searchProducts() — búsqueda combinada con filtros opcionales
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Sin filtros → retorna todos los productos activos de la BD.
+     * Al pasar todos los parámetros como null, la query omite todos los WHERE
+     * opcionales y solo filtra active = true.
+     */
+    @Test
+    void searchProducts_sinFiltros_retornaTodosLosActivos() {
+        // ARRANGE — dos productos activos
+        Product p1 = productRepository.save(Product.builder()
+                .sku("SRCH-A-" + System.currentTimeMillis())
+                .name("Martillo de carpintero")
+                .price(new BigDecimal("25.00")).unitCost(new BigDecimal("15.00"))
+                .currentStock(30).reservedStock(0).minimumStock(5)
+                .status("AVAILABLE").active(true).category(category).supplier(supplier)
+                .createdBy(testUser).build());
+
+        Product p2 = productRepository.save(Product.builder()
+                .sku("SRCH-B-" + System.currentTimeMillis())
+                .name("Destornillador Phillips")
+                .price(new BigDecimal("10.00")).unitCost(new BigDecimal("6.00"))
+                .currentStock(50).reservedStock(0).minimumStock(5)
+                .status("AVAILABLE").active(true).category(category).supplier(supplier)
+                .createdBy(testUser).build());
+
+        // ACT
+        org.springframework.data.domain.Page<Product> result = productRepository.searchProducts(
+                null, null, null, null,
+                org.springframework.data.domain.PageRequest.of(0, 50,
+                        org.springframework.data.domain.Sort.by("name").ascending()));
+
+        List<Long> ids = result.getContent().stream().map(Product::getId).toList();
+
+        // ASSERT
+        assertTrue(ids.contains(p1.getId()), "Debe incluir el primer producto activo");
+        assertTrue(ids.contains(p2.getId()), "Debe incluir el segundo producto activo");
+    }
+
+    /**
+     * search="martillo" → coincide con nombre y no con sku de otro producto.
+     * Verifica la búsqueda parcial en name.
+     */
+    @Test
+    void searchProducts_porNombre_retornaCoincidencias() {
+        long ts = System.currentTimeMillis();
+        Product conCoin = productRepository.save(Product.builder()
+                .sku("SRCH-NAME-" + ts)
+                .name("Martillo de acero " + ts)
+                .price(new BigDecimal("30.00")).unitCost(new BigDecimal("18.00"))
+                .currentStock(20).reservedStock(0).minimumStock(3)
+                .status("AVAILABLE").active(true).category(category).supplier(supplier)
+                .createdBy(testUser).build());
+
+        Product sinCoin = productRepository.save(Product.builder()
+                .sku("SRCH-OTHER-" + ts)
+                .name("Llave inglesa " + ts)
+                .price(new BigDecimal("20.00")).unitCost(new BigDecimal("12.00"))
+                .currentStock(15).reservedStock(0).minimumStock(3)
+                .status("AVAILABLE").active(true).category(category).supplier(supplier)
+                .createdBy(testUser).build());
+
+        org.springframework.data.domain.Page<Product> result = productRepository.searchProducts(
+                "Martillo", null, null, null,
+                org.springframework.data.domain.PageRequest.of(0, 50,
+                        org.springframework.data.domain.Sort.by("name").ascending()));
+
+        List<Long> ids = result.getContent().stream().map(Product::getId).toList();
+        assertTrue(ids.contains(conCoin.getId()),
+                "Producto con 'Martillo' en el nombre debe aparecer");
+        assertFalse(ids.contains(sinCoin.getId()),
+                "Producto con 'Llave' en el nombre no debe aparecer");
+    }
+
+    /**
+     * search="SKU-SRCH-SKU" → coincide con el SKU exacto buscando por prefijo.
+     * Verifica la búsqueda parcial en sku.
+     */
+    @Test
+    void searchProducts_porSku_retornaCoincidencias() {
+        long ts = System.currentTimeMillis();
+        String uniquePrefix = "UXSKU-" + ts;
+
+        Product conSku = productRepository.save(Product.builder()
+                .sku(uniquePrefix + "-001")
+                .name("Producto SKU Test")
+                .price(new BigDecimal("50.00")).unitCost(new BigDecimal("30.00"))
+                .currentStock(10).reservedStock(0).minimumStock(2)
+                .status("AVAILABLE").active(true).category(category).supplier(supplier)
+                .createdBy(testUser).build());
+
+        org.springframework.data.domain.Page<Product> result = productRepository.searchProducts(
+                uniquePrefix, null, null, null,
+                org.springframework.data.domain.PageRequest.of(0, 50,
+                        org.springframework.data.domain.Sort.by("name").ascending()));
+
+        List<Long> ids = result.getContent().stream().map(Product::getId).toList();
+        assertTrue(ids.contains(conSku.getId()),
+                "Producto cuyo SKU contiene el prefijo buscado debe aparecer");
+    }
+
+    /**
+     * Filtro por status=DISCONTINUED → solo retorna productos con ese estado.
+     */
+    @Test
+    void searchProducts_porStatus_retornaSoloEseEstado() {
+        long ts = System.currentTimeMillis();
+        Product disponible = productRepository.save(Product.builder()
+                .sku("ST-AVAIL-" + ts).name("Producto disponible " + ts)
+                .price(new BigDecimal("40.00")).unitCost(new BigDecimal("24.00"))
+                .currentStock(10).reservedStock(0).minimumStock(2)
+                .status("AVAILABLE").active(true).category(category).supplier(supplier)
+                .createdBy(testUser).build());
+
+        Product descontinuado = productRepository.save(Product.builder()
+                .sku("ST-DISC-" + ts).name("Producto descontinuado " + ts)
+                .price(new BigDecimal("40.00")).unitCost(new BigDecimal("24.00"))
+                .currentStock(5).reservedStock(0).minimumStock(2)
+                .status("DISCONTINUED").active(true).category(category).supplier(supplier)
+                .createdBy(testUser).build());
+
+        org.springframework.data.domain.Page<Product> result = productRepository.searchProducts(
+                null, null, "DISCONTINUED", null,
+                org.springframework.data.domain.PageRequest.of(0, 50,
+                        org.springframework.data.domain.Sort.by("name").ascending()));
+
+        List<Long> ids = result.getContent().stream().map(Product::getId).toList();
+        assertTrue(ids.contains(descontinuado.getId()),
+                "Producto DISCONTINUED debe aparecer al filtrar por ese estado");
+        assertFalse(ids.contains(disponible.getId()),
+                "Producto AVAILABLE no debe aparecer al filtrar por DISCONTINUED");
+    }
+
+    /**
+     * Filtro por categoryId → solo retorna productos de esa categoría.
+     */
+    @Test
+    void searchProducts_porCategoria_retornaSoloDeCategoriaFiltrada() {
+        long ts = System.currentTimeMillis();
+
+        Category otraCategoria = categoryRepository.save(Category.builder()
+                .name("OtraCat-" + ts).description("Otra cat").createdBy(testUser).build());
+
+        Product enMiCategoria = productRepository.save(Product.builder()
+                .sku("CAT-MINE-" + ts).name("Prod en mi categoria")
+                .price(new BigDecimal("30.00")).unitCost(new BigDecimal("18.00"))
+                .currentStock(10).reservedStock(0).minimumStock(2)
+                .status("AVAILABLE").active(true).category(category).supplier(supplier)
+                .createdBy(testUser).build());
+
+        Product enOtraCategoria = productRepository.save(Product.builder()
+                .sku("CAT-OTHER-" + ts).name("Prod en otra categoria")
+                .price(new BigDecimal("30.00")).unitCost(new BigDecimal("18.00"))
+                .currentStock(10).reservedStock(0).minimumStock(2)
+                .status("AVAILABLE").active(true).category(otraCategoria).supplier(supplier)
+                .createdBy(testUser).build());
+
+        org.springframework.data.domain.Page<Product> result = productRepository.searchProducts(
+                null, category.getId(), null, null,
+                org.springframework.data.domain.PageRequest.of(0, 50,
+                        org.springframework.data.domain.Sort.by("name").ascending()));
+
+        List<Long> ids = result.getContent().stream().map(Product::getId).toList();
+        assertTrue(ids.contains(enMiCategoria.getId()),
+                "Producto de la categoría filtrada debe aparecer");
+        assertFalse(ids.contains(enOtraCategoria.getId()),
+                "Producto de otra categoría no debe aparecer");
+    }
+
+    /**
+     * Producto inactivo nunca aparece en searchProducts, sin importar los filtros.
+     */
+    @Test
+    void searchProducts_productoInactivo_nuncaAparece() {
+        long ts = System.currentTimeMillis();
+        productRepository.save(Product.builder()
+                .sku("INACT-SRCH-" + ts).name("Inactivo buscable " + ts)
+                .price(new BigDecimal("20.00")).unitCost(new BigDecimal("12.00"))
+                .currentStock(5).reservedStock(0).minimumStock(2)
+                .status("AVAILABLE").active(false).category(category).supplier(supplier)
+                .createdBy(testUser).build());
+
+        org.springframework.data.domain.Page<Product> result = productRepository.searchProducts(
+                null, null, null, null,
+                org.springframework.data.domain.PageRequest.of(0, 50,
+                        org.springframework.data.domain.Sort.by("name").ascending()));
+
+        assertTrue(result.getContent().stream().allMatch(Product::isActive),
+                "searchProducts nunca debe retornar productos inactivos");
+    }
+
     @Test
     void findProductsWithActiveReservations_sinReservas_retornaListaVacia() {
         // No insertamos ningún producto con reservedStock > 0 en este test

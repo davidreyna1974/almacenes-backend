@@ -426,6 +426,128 @@ class ProductServiceImplTest {
     }
 
     // =========================================================================
+    // searchProducts
+    // =========================================================================
+
+    /**
+     * Sin parámetros (todos null) → retorna todos los productos activos paginados.
+     * Verifica que el repositorio es invocado y el resultado se mapea correctamente.
+     */
+    @Test
+    @DisplayName("searchProducts: sin filtros debe retornar todos los productos activos paginados")
+    void shouldReturnAllProductsWhenNoFilters() {
+        // ARRANGE
+        org.springframework.data.domain.PageImpl<Product> productPage =
+                new org.springframework.data.domain.PageImpl<>(List.of(product));
+        when(productRepository.searchProducts(null, null, null, null,
+                org.springframework.data.domain.PageRequest.of(0, 20,
+                        org.springframework.data.domain.Sort.by("name").ascending())))
+                .thenReturn(productPage);
+        when(productMapper.toResponseDTO(product)).thenReturn(responseDTO);
+
+        // ACT
+        com.codigo2enter.almacenes.core.dto.PageResponseDTO<ProductResponseDTO> result =
+                productService.searchProducts(null, null, null, null, 0, 20);
+
+        // ASSERT
+        assertNotNull(result);
+        assertEquals(1, result.getTotalElements());
+        verify(productRepository).searchProducts(null, null, null, null,
+                org.springframework.data.domain.PageRequest.of(0, 20,
+                        org.springframework.data.domain.Sort.by("name").ascending()));
+    }
+
+    /**
+     * Con search="taladro" → el servicio normaliza el término y lo pasa al repositorio.
+     */
+    @Test
+    @DisplayName("searchProducts: con término de búsqueda debe filtrar por sku y nombre")
+    void shouldSearchByTermAndReturnMatchingProducts() {
+        // ARRANGE
+        org.springframework.data.domain.PageImpl<Product> productPage =
+                new org.springframework.data.domain.PageImpl<>(List.of(product));
+        when(productRepository.searchProducts(
+                org.mockito.ArgumentMatchers.eq("taladro"),
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.any()))
+                .thenReturn(productPage);
+        when(productMapper.toResponseDTO(product)).thenReturn(responseDTO);
+
+        // ACT
+        com.codigo2enter.almacenes.core.dto.PageResponseDTO<ProductResponseDTO> result =
+                productService.searchProducts("taladro", null, null, null, 0, 20);
+
+        // ASSERT
+        assertNotNull(result);
+        assertEquals(1, result.getTotalElements());
+    }
+
+    /**
+     * Search en blanco ("   ") → se normaliza a null para activar el IS NULL de JPQL.
+     * Verifica que el servicio no pasa strings vacíos al repositorio.
+     */
+    @Test
+    @DisplayName("searchProducts: término en blanco debe normalizarse a null")
+    void shouldNormalizeBlankSearchToNull() {
+        // ARRANGE
+        org.springframework.data.domain.PageImpl<Product> productPage =
+                new org.springframework.data.domain.PageImpl<>(List.of(product));
+        when(productRepository.searchProducts(
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.any()))
+                .thenReturn(productPage);
+        when(productMapper.toResponseDTO(product)).thenReturn(responseDTO);
+
+        // ACT
+        productService.searchProducts("   ", null, null, null, 0, 20);
+
+        // ASSERT — el repositorio recibe null, no la cadena en blanco
+        verify(productRepository).searchProducts(
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.any());
+    }
+
+    /**
+     * Con todos los filtros combinados → el servicio los pasa íntegros al repositorio.
+     */
+    @Test
+    @DisplayName("searchProducts: con todos los filtros debe pasarlos al repositorio")
+    void shouldPassAllFiltersToRepository() {
+        // ARRANGE
+        org.springframework.data.domain.PageImpl<Product> productPage =
+                new org.springframework.data.domain.PageImpl<>(List.of(product));
+        when(productRepository.searchProducts(
+                org.mockito.ArgumentMatchers.eq("drill"),
+                org.mockito.ArgumentMatchers.eq(1L),
+                org.mockito.ArgumentMatchers.eq("AVAILABLE"),
+                org.mockito.ArgumentMatchers.eq(1L),
+                org.mockito.ArgumentMatchers.any()))
+                .thenReturn(productPage);
+        when(productMapper.toResponseDTO(product)).thenReturn(responseDTO);
+
+        // ACT
+        com.codigo2enter.almacenes.core.dto.PageResponseDTO<ProductResponseDTO> result =
+                productService.searchProducts("drill", 1L, "AVAILABLE", 1L, 0, 20);
+
+        // ASSERT
+        assertNotNull(result);
+        verify(productRepository).searchProducts(
+                org.mockito.ArgumentMatchers.eq("drill"),
+                org.mockito.ArgumentMatchers.eq(1L),
+                org.mockito.ArgumentMatchers.eq("AVAILABLE"),
+                org.mockito.ArgumentMatchers.eq(1L),
+                org.mockito.ArgumentMatchers.any());
+    }
+
+    // =========================================================================
     // getBySku
     // =========================================================================
 

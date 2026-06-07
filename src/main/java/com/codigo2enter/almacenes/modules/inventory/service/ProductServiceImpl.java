@@ -310,6 +310,25 @@ public class ProductServiceImpl implements ProductService {
     /**
      * {@inheritDoc}
      *
+     * Normaliza search: cadena en blanco o nula → null, para que el patrón
+     * (:search IS NULL OR ...) de JPQL omita la condición correctamente.
+     * El resultado se ordena por name ASC — criterio estándar para catálogos.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public PageResponseDTO<ProductResponseDTO> searchProducts(String search, Long categoryId,
+                                                              String status, Long supplierId,
+                                                              int page, int size) {
+        String normalizedSearch = (search != null && !search.isBlank()) ? search.trim() : null;
+        PageRequest pageable = PageRequest.of(page, size, Sort.by("name").ascending());
+        Page<Product> result = productRepository.searchProducts(
+                normalizedSearch, categoryId, status, supplierId, pageable);
+        return PageResponseDTO.from(result.map(productMapper::toResponseDTO));
+    }
+
+    /**
+     * {@inheritDoc}
+     *
      * Soft delete: setActive(false) sin borrar el registro.
      * Hibernate dirty-checking persiste el cambio al cerrar la transacción.
      */

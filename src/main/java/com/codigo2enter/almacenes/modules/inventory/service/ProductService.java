@@ -100,6 +100,28 @@ public interface ProductService {
     PageResponseDTO<ProductResponseDTO> getByCategoryId(Long categoryId, int page, int size);
 
     /**
+     * Busca productos activos con filtros opcionales combinables.
+     *
+     * Todos los parámetros son opcionales — si llegan null o en blanco se omiten.
+     * search    → coincidencia parcial en sku o name (case-insensitive).
+     * categoryId → filtra por categoría exacta.
+     * status     → filtra por estado exacto (AVAILABLE, DISCONTINUED, OUT_OF_STOCK).
+     * supplierId → filtra por proveedor exacto.
+     * Cuando se omiten todos los parámetros, retorna todos los productos activos.
+     *
+     * @param search     término de búsqueda libre (sku o nombre)
+     * @param categoryId id de categoría para filtrar
+     * @param status     estado del producto para filtrar
+     * @param supplierId id de proveedor para filtrar
+     * @param page       número de página (base 0)
+     * @param size       cantidad de registros por página
+     * @return página de productos activos que coinciden con los criterios
+     */
+    PageResponseDTO<ProductResponseDTO> searchProducts(String search, Long categoryId,
+                                                       String status, Long supplierId,
+                                                       int page, int size);
+
+    /**
      * Desactiva lógicamente un producto (soft delete: active = false).
      *
      * @param id identificador del producto a desactivar

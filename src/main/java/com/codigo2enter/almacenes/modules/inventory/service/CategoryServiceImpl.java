@@ -100,6 +100,22 @@ public class CategoryServiceImpl implements CategoryService {
     /**
      * {@inheritDoc}
      *
+     * Normaliza el término de búsqueda (null/blank → null) para que el
+     * patrón :search IS NULL del repositorio retorne todas las categorías
+     * cuando no se introduce ningún texto.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public PageResponseDTO<CategoryDTO> searchCategories(String search, int page, int size) {
+        String normalized = (search != null && !search.isBlank()) ? search.trim() : null;
+        PageRequest pageable = PageRequest.of(page, size);
+        Page<Category> result = categoryRepository.searchCategories(normalized, pageable);
+        return PageResponseDTO.from(result.map(categoryMapper::toDTO));
+    }
+
+    /**
+     * {@inheritDoc}
+     *
      * Flujo de validaciones antes de actualizar:
      *   1. Verifica que la categoría exista.
      *   2. Valida que el nuevo nombre no esté en uso por una categoría DIFERENTE.

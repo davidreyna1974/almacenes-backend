@@ -63,17 +63,19 @@ public class CategoryController {
     /**
      * GET /api/v1/inventory/categories/active
      *
-     * Retorna todas las categorías con active = true.
-     * Utilizado por Angular para poblar los selectores de asignación
-     * de categoría en formularios de creación y edición de productos.
+     * Retorna categorías activas paginadas, con búsqueda opcional por nombre.
+     * La búsqueda es insensible a mayúsculas y acentos (f_unaccent en PostgreSQL).
+     * Si search se omite o está vacío, retorna todas las categorías activas.
      *
-     * @return 200 OK con la lista de categorías activas (puede ser vacía)
+     * @param search texto a buscar en nombre (opcional)
+     * @return 200 OK con la página de categorías activas
      */
     @GetMapping("/active")
     public ResponseEntity<PageResponseDTO<CategoryDTO>> getAllActiveCategories(
+            @RequestParam(required = false) String search,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-        return ResponseEntity.ok(categoryService.getAllActiveCategories(page, size));
+        return ResponseEntity.ok(categoryService.searchCategories(search, page, size));
     }
 
     /**

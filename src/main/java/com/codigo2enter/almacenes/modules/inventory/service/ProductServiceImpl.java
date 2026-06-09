@@ -325,7 +325,7 @@ public class ProductServiceImpl implements ProductService {
                                                               String status, Long supplierId,
                                                               int page, int size) {
         String normalizedSearch = (search != null && !search.isBlank()) ? search.trim() : null;
-        PageRequest pageable = PageRequest.of(page, size, Sort.by("name").ascending());
+        PageRequest pageable = PageRequest.of(page, size);
         Page<Product> result = productRepository.searchProducts(
                 normalizedSearch, categoryId, status, supplierId, pageable);
         return PageResponseDTO.from(result.map(productMapper::toResponseDTO));

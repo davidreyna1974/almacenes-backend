@@ -41,6 +41,17 @@ public interface CategoryService {
     PageResponseDTO<CategoryDTO> getAllActiveCategories(int page, int size);
 
     /**
+     * Búsqueda paginada de categorías activas con filtro de texto opcional.
+     * La búsqueda es insensible a mayúsculas y acentos (f_unaccent en PostgreSQL).
+     *
+     * @param search   texto a buscar en name; null retorna todas las activas
+     * @param page     número de página (base 0)
+     * @param size     cantidad de registros por página
+     * @return PageResponseDTO con las categorías que coinciden
+     */
+    PageResponseDTO<CategoryDTO> searchCategories(String search, int page, int size);
+
+    /**
      * Actualiza los datos de una categoría existente.
      *
      * @param id  identificador de la categoría a modificar

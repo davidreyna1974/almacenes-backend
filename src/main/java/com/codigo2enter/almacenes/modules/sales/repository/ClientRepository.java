@@ -4,6 +4,8 @@ import com.codigo2enter.almacenes.modules.sales.model.Client;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -59,4 +61,33 @@ public interface ClientRepository extends JpaRepository<Client, Long> {
      * Más eficiente que findByEmail() para validaciones de unicidad.
      */
     boolean existsByEmail(String email);
+
+    /**
+     * Búsqueda de clientes activos con filtro de texto opcional.
+     *
+     * search → coincidencia parcial en name, rfc o contact_name, insensible a
+     *          mayúsculas Y acentos usando f_unaccent() (PostgreSQL extension 'unaccent').
+     *          Si search es null, retorna todos los clientes activos.
+     *
+     * Query nativa porque JPQL no expone funciones PostgreSQL personalizadas.
+     * Índices funcionales idx_clients_unaccent_name e idx_clients_unaccent_rfc
+     * aceleran la consulta.
+     */
+    @Query(value =
+           "SELECT c.* FROM clients c " +
+           "WHERE c.active = true " +
+           "AND (:search IS NULL OR (" +
+           "     f_unaccent(lower(c.name))                        LIKE '%' || f_unaccent(lower(CAST(:search AS text))) || '%' " +
+           "  OR f_unaccent(lower(COALESCE(c.rfc,'')))            LIKE '%' || f_unaccent(lower(CAST(:search AS text))) || '%' " +
+           "  OR f_unaccent(lower(COALESCE(c.contact_name,'')))   LIKE '%' || f_unaccent(lower(CAST(:search AS text))) || '%')) " +
+           "ORDER BY c.name ASC",
+           countQuery =
+           "SELECT COUNT(*) FROM clients c " +
+           "WHERE c.active = true " +
+           "AND (:search IS NULL OR (" +
+           "     f_unaccent(lower(c.name))                        LIKE '%' || f_unaccent(lower(CAST(:search AS text))) || '%' " +
+           "  OR f_unaccent(lower(COALESCE(c.rfc,'')))            LIKE '%' || f_unaccent(lower(CAST(:search AS text))) || '%' " +
+           "  OR f_unaccent(lower(COALESCE(c.contact_name,'')))   LIKE '%' || f_unaccent(lower(CAST(:search AS text))) || '%'))",
+           nativeQuery = true)
+    Page<Client> searchClients(@Param("search") String search, Pageable pageable);
 }

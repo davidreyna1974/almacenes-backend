@@ -68,6 +68,18 @@ public class ClientServiceImpl implements ClientService {
         return PageResponseDTO.from(result.map(clientMapper::toDTO));
     }
 
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public PageResponseDTO<ClientDTO> searchClients(String search, int page, int size) {
+        String normalized = (search != null && !search.isBlank()) ? search.trim() : null;
+        PageRequest pageable = PageRequest.of(page, size);
+        Page<Client> result = clientRepository.searchClients(normalized, pageable);
+        return PageResponseDTO.from(result.map(clientMapper::toDTO));
+    }
+
     @Override
     @Transactional(readOnly = true)
     public ClientDTO findById(Long id) {

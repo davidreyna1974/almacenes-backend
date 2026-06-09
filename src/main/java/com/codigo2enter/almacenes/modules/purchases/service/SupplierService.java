@@ -41,6 +41,18 @@ public interface SupplierService {
     PageResponseDTO<SupplierDTO> getAllActiveSuppliers(int page, int size);
 
     /**
+     * Búsqueda paginada de proveedores activos con filtro de texto opcional.
+     * La búsqueda es insensible a mayúsculas y acentos (f_unaccent en PostgreSQL).
+     * Busca en company_name y rfc simultáneamente.
+     *
+     * @param search   texto a buscar; null retorna todos los activos
+     * @param page     número de página (base 0)
+     * @param size     cantidad de registros por página
+     * @return PageResponseDTO con los proveedores que coinciden
+     */
+    PageResponseDTO<SupplierDTO> searchSuppliers(String search, int page, int size);
+
+    /**
      * Busca un proveedor por su identificador.
      *
      * @param id identificador del proveedor

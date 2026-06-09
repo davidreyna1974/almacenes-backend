@@ -4,6 +4,8 @@ import com.codigo2enter.almacenes.modules.purchases.model.Supplier;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -85,4 +87,31 @@ public interface SupplierRepository extends JpaRepository<Supplier, Long> {
      * @return página de proveedores activos
      */
     Page<Supplier> findByActiveTrue(Pageable pageable);
+
+    /**
+     * Búsqueda de proveedores activos con filtro de texto opcional.
+     *
+     * search → coincidencia parcial en company_name o rfc, insensible a
+     *          mayúsculas Y acentos usando f_unaccent() (PostgreSQL extension 'unaccent').
+     *          Si search es null, retorna todos los proveedores activos.
+     *
+     * Query nativa porque JPQL no expone funciones PostgreSQL personalizadas.
+     * Índices funcionales idx_suppliers_unaccent_company e idx_suppliers_unaccent_rfc
+     * aceleran la consulta.
+     */
+    @Query(value =
+           "SELECT s.* FROM suppliers s " +
+           "WHERE s.active = true " +
+           "AND (:search IS NULL OR (" +
+           "     f_unaccent(lower(s.company_name)) LIKE '%' || f_unaccent(lower(CAST(:search AS text))) || '%' " +
+           "  OR f_unaccent(lower(s.rfc))          LIKE '%' || f_unaccent(lower(CAST(:search AS text))) || '%')) " +
+           "ORDER BY s.company_name ASC",
+           countQuery =
+           "SELECT COUNT(*) FROM suppliers s " +
+           "WHERE s.active = true " +
+           "AND (:search IS NULL OR (" +
+           "     f_unaccent(lower(s.company_name)) LIKE '%' || f_unaccent(lower(CAST(:search AS text))) || '%' " +
+           "  OR f_unaccent(lower(s.rfc))          LIKE '%' || f_unaccent(lower(CAST(:search AS text))) || '%'))",
+           nativeQuery = true)
+    Page<Supplier> searchSuppliers(@Param("search") String search, Pageable pageable);
 }

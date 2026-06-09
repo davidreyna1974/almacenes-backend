@@ -4,6 +4,8 @@ import com.codigo2enter.almacenes.modules.inventory.model.Category;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -48,4 +50,28 @@ public interface CategoryRepository extends JpaRepository<Category, Long> {
      * @return página de categorías activas
      */
     Page<Category> findByActiveTrue(Pageable pageable);
+
+    /**
+     * Búsqueda de categorías activas con filtro de texto opcional.
+     *
+     * search → coincidencia parcial en name, insensible a mayúsculas Y acentos
+     *          usando f_unaccent() (PostgreSQL extension 'unaccent').
+     *          Si search es null, retorna todas las categorías activas.
+     *
+     * Query nativa porque JPQL no expone funciones PostgreSQL personalizadas.
+     * Índice funcional idx_categories_unaccent_name acelera la consulta.
+     */
+    @Query(value =
+           "SELECT c.* FROM categories c " +
+           "WHERE c.active = true " +
+           "AND (:search IS NULL OR " +
+           "     f_unaccent(lower(c.name)) LIKE '%' || f_unaccent(lower(CAST(:search AS text))) || '%') " +
+           "ORDER BY c.name ASC",
+           countQuery =
+           "SELECT COUNT(*) FROM categories c " +
+           "WHERE c.active = true " +
+           "AND (:search IS NULL OR " +
+           "     f_unaccent(lower(c.name)) LIKE '%' || f_unaccent(lower(CAST(:search AS text))) || '%')",
+           nativeQuery = true)
+    Page<Category> searchCategories(@Param("search") String search, Pageable pageable);
 }

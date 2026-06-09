@@ -62,17 +62,19 @@ public class SupplierController {
     /**
      * GET /api/v1/purchases/suppliers/active
      *
-     * Retorna todos los proveedores con active = true.
-     * Alimenta los selectores desplegables de Angular al crear o editar
-     * una orden de compra. Los proveedores dados de baja no aparecen.
+     * Retorna proveedores activos paginados, con búsqueda opcional por razón social o RFC.
+     * La búsqueda es insensible a mayúsculas y acentos (f_unaccent en PostgreSQL).
+     * Si search se omite o está vacío, retorna todos los proveedores activos.
      *
-     * @return 200 OK con la lista de proveedores activos (puede ser vacía)
+     * @param search texto a buscar en company_name o rfc (opcional)
+     * @return 200 OK con la página de proveedores activos
      */
     @GetMapping("/active")
     public ResponseEntity<PageResponseDTO<SupplierDTO>> getAllActiveSuppliers(
+            @RequestParam(required = false) String search,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-        return ResponseEntity.ok(supplierService.getAllActiveSuppliers(page, size));
+        return ResponseEntity.ok(supplierService.searchSuppliers(search, page, size));
     }
 
     /**

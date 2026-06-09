@@ -1,6 +1,9 @@
 package com.codigo2enter.almacenes.modules.purchases.service;
 
 import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
+import com.codigo2enter.almacenes.core.exception.BusinessRuleException;
+import com.codigo2enter.almacenes.core.exception.DuplicateResourceException;
+import com.codigo2enter.almacenes.core.exception.ResourceNotFoundException;
 import com.codigo2enter.almacenes.modules.auth.model.User;
 import com.codigo2enter.almacenes.modules.auth.repository.UserRepository;
 import com.codigo2enter.almacenes.modules.purchases.dto.SupplierDTO;
@@ -46,11 +49,11 @@ public class SupplierServiceImpl implements SupplierService {
     @Override
     public SupplierDTO createSupplier(SupplierDTO dto) {
         if (supplierRepository.existsByRfc(dto.getRfc())) {
-            throw new RuntimeException(
+            throw new DuplicateResourceException(
                     "Ya existe un proveedor con el RFC '" + dto.getRfc() + "'.");
         }
         if (supplierRepository.existsByCompanyName(dto.getCompanyName())) {
-            throw new RuntimeException(
+            throw new DuplicateResourceException(
                     "Ya existe un proveedor con la razón social '" + dto.getCompanyName() + "'.");
         }
 
@@ -91,6 +94,18 @@ public class SupplierServiceImpl implements SupplierService {
      */
     @Override
     @Transactional(readOnly = true)
+    public PageResponseDTO<SupplierDTO> searchSuppliers(String search, int page, int size) {
+        String normalized = (search != null && !search.isBlank()) ? search.trim() : null;
+        PageRequest pageable = PageRequest.of(page, size);
+        Page<Supplier> result = supplierRepository.searchSuppliers(normalized, pageable);
+        return PageResponseDTO.from(result.map(supplierMapper::toDTO));
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    @Transactional(readOnly = true)
     public SupplierDTO findById(Long id) {
         return supplierMapper.toDTO(findSupplierOrThrow(id));
     }
@@ -110,14 +125,14 @@ public class SupplierServiceImpl implements SupplierService {
 
         supplierRepository.findByRfc(dto.getRfc()).ifPresent(existing -> {
             if (!existing.getId().equals(id)) {
-                throw new RuntimeException(
+                throw new DuplicateResourceException(
                         "El RFC '" + dto.getRfc() + "' ya está en uso por otro proveedor.");
             }
         });
 
         supplierRepository.findByCompanyName(dto.getCompanyName()).ifPresent(existing -> {
             if (!existing.getId().equals(id)) {
-                throw new RuntimeException(
+                throw new DuplicateResourceException(
                         "La razón social '" + dto.getCompanyName() + "' ya está en uso por otro proveedor.");
             }
         });
@@ -146,7 +161,7 @@ public class SupplierServiceImpl implements SupplierService {
         Supplier supplier = findSupplierOrThrow(id);
 
         if (!purchaseOrderRepository.findActiveOrdersBySupplier(id).isEmpty()) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                     "No se puede desactivar el proveedor: tiene órdenes de compra " +
                     "en estado PENDING o APPROVED. Cancélelas o recíbalas primero.");
         }
@@ -167,7 +182,7 @@ public class SupplierServiceImpl implements SupplierService {
      */
     private Supplier findSupplierOrThrow(Long id) {
         return supplierRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException(
+                .orElseThrow(() -> new ResourceNotFoundException(
                         "Proveedor con id " + id + " no encontrado."));
     }
 

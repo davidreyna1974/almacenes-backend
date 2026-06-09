@@ -123,33 +123,40 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
      *
      * Siempre filtra active = true (catálogo operativo).
      * Cada parámetro es opcional: si llega null, la condición se omite
-     * gracias al patrón (:param IS NULL OR ...) de JPQL/Hibernate.
+     * gracias al patrón (:param IS NULL OR ...).
      *
-     * search    → busca coincidencia parcial (LIKE %term%) en sku o name,
-     *             ignorando mayúsculas/minúsculas con LOWER().
+     * search    → búsqueda parcial (LIKE %term%) en sku o name,
+     *             insensible a mayúsculas Y acentos usando f_unaccent()
+     *             (PostgreSQL extension 'unaccent', función wrapper inmutable
+     *             creada en almacen_db para permitir su uso en índices).
      * categoryId → filtra por categoría exacta.
      * status     → filtra por estado exacto (AVAILABLE, DISCONTINUED, etc.).
      * supplierId → filtra por proveedor exacto.
      *
-     * countQuery separado evita el JOIN innecesario de la proyección completa
-     * al ejecutar el COUNT para calcular totalPages.
+     * Query nativa (nativeQuery=true) porque JPQL no expone funciones
+     * PostgreSQL personalizadas. El countQuery separado evita el JOIN
+     * innecesario de la proyección completa al calcular totalPages.
      */
     @Query(value =
-           "SELECT p FROM Product p " +
+           "SELECT p.* FROM products p " +
            "WHERE p.active = true " +
-           "AND (:search IS NULL OR LOWER(p.sku) LIKE LOWER(CONCAT('%', CAST(:search AS string), '%')) " +
-           "     OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:search AS string), '%'))) " +
-           "AND (:categoryId IS NULL OR p.category.id = :categoryId) " +
-           "AND (:status IS NULL OR p.status = :status) " +
-           "AND (:supplierId IS NULL OR p.supplier.id = :supplierId)",
+           "AND (:search IS NULL OR (" +
+           "     f_unaccent(lower(p.sku))  LIKE '%' || f_unaccent(lower(CAST(:search AS text))) || '%' " +
+           "  OR f_unaccent(lower(p.name)) LIKE '%' || f_unaccent(lower(CAST(:search AS text))) || '%')) " +
+           "AND (:categoryId IS NULL OR p.category_id = :categoryId) " +
+           "AND (:status IS NULL OR p.status = CAST(:status AS text)) " +
+           "AND (:supplierId IS NULL OR p.supplier_id = :supplierId) " +
+           "ORDER BY p.name ASC",
            countQuery =
-           "SELECT COUNT(p) FROM Product p " +
+           "SELECT COUNT(*) FROM products p " +
            "WHERE p.active = true " +
-           "AND (:search IS NULL OR LOWER(p.sku) LIKE LOWER(CONCAT('%', CAST(:search AS string), '%')) " +
-           "     OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:search AS string), '%'))) " +
-           "AND (:categoryId IS NULL OR p.category.id = :categoryId) " +
-           "AND (:status IS NULL OR p.status = :status) " +
-           "AND (:supplierId IS NULL OR p.supplier.id = :supplierId)")
+           "AND (:search IS NULL OR (" +
+           "     f_unaccent(lower(p.sku))  LIKE '%' || f_unaccent(lower(CAST(:search AS text))) || '%' " +
+           "  OR f_unaccent(lower(p.name)) LIKE '%' || f_unaccent(lower(CAST(:search AS text))) || '%')) " +
+           "AND (:categoryId IS NULL OR p.category_id = :categoryId) " +
+           "AND (:status IS NULL OR p.status = CAST(:status AS text)) " +
+           "AND (:supplierId IS NULL OR p.supplier_id = :supplierId)",
+           nativeQuery = true)
     Page<Product> searchProducts(@Param("search") String search,
                                   @Param("categoryId") Long categoryId,
                                   @Param("status") String status,

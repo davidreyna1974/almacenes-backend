@@ -18,6 +18,18 @@ public interface ClientService {
      */
     PageResponseDTO<ClientDTO> getAllActiveClients(int page, int size);
 
+    /**
+     * Búsqueda paginada de clientes activos con filtro de texto opcional.
+     * La búsqueda es insensible a mayúsculas y acentos (f_unaccent en PostgreSQL).
+     * Busca en name, rfc y contact_name simultáneamente.
+     *
+     * @param search   texto a buscar; null retorna todos los activos
+     * @param page     número de página (base 0)
+     * @param size     cantidad de registros por página
+     * @return PageResponseDTO con los clientes que coinciden
+     */
+    PageResponseDTO<ClientDTO> searchClients(String search, int page, int size);
+
     ClientDTO findById(Long id);
     ClientDTO updateClient(Long id, ClientDTO dto);
     void deactivateClient(Long id);

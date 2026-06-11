@@ -32,6 +32,7 @@ debe agregarse también a este archivo en su momento.
 - U8.  Patrones de tests
 - U9.  Documentación de bugs (Lecciones aprendidas)
 - U10. Protocolo pre-código — Verificación de contratos API (proyectos cliente-servidor)
+- U11. Protocolo obligatorio de pruebas browser — Propuestas A–D
 
 **BLOQUE TÉCNICO** — específico del stack [STACK]; reemplazar por equivalente
 
@@ -160,17 +161,51 @@ Regresiones en módulos anteriores:
   - Diferencia: +X tests, 0 fallos nuevos
 ```
 
+### `casos_de_prueba_modulo_<nombre>.md`
+
+Documento de casos de prueba creado **antes de escribir código**, junto con la propuesta.
+Define el criterio de aceptación del módulo. Un módulo no está "done" si hay casos sin ✅ PASS.
+
+**Formato de cada caso:**
+
+| ID | Pantalla | Categoría | Descripción | Rol(es) | Resultado esperado | Estado | Notas |
+|---|---|---|---|---|---|---|---|
+
+**Categorías obligatorias** — deben existir casos para todas en cada pantalla:
+
+| Categoría | Qué cubre |
+|---|---|
+| `SEC` | Acceso directo por URL con rol no autorizado → debe redirigir/denegar |
+| `RBAC` | Elementos UI/API que aparecen/desaparecen según rol |
+| `CRUD` | Crear, leer, editar, eliminar — flujos completos incluyendo recarga |
+| `VAL` | Validaciones: campo vacío, mínimo, máximo, formato, tipo |
+| `BSRCH` | Búsquedas: parcial, case insensitive, accent insensitive, sin resultados |
+| `UI` | Todos los botones, íconos y acciones verificados uno a uno |
+| `FLOW` | Flujos de estado/negocio: máquina de estados, transiciones, bloqueos |
+| `RN` | Reglas de negocio del backend: qué rechaza, con qué código y mensaje |
+| `ERR` | Mensajes de error: validación, backend (4xx/5xx), red caída |
+| `EMPTY` | Estados vacíos: sin datos iniciales vs sin resultados de búsqueda |
+| `VIS` | Visual: colores, espaciado, truncado, tooltips |
+
+**Estados de la columna Estado:**
+- `✅ PASS` — verificado en browser/client y funciona correctamente
+- `❌ FAIL` — bug encontrado (documentar en §8 de la memoria técnica)
+- `⏳ PENDIENTE` — no ejecutado aún
+- `N/A` — no aplica para este módulo/contexto
+
 ### Convención de nombres y ubicación
 
 ```
 # Raíz del repositorio (junto a CLAUDE.md)
 propuesta_modulo_[nombre].txt          # backend
 propuesta_modulo_[nombre]_frontend.txt # frontend
+casos_de_prueba_modulo_[nombre].md     # backend y/o frontend
 memoria_tecnica_modulo_[nombre].md
 memoria_tecnica_modulo_[nombre]_frontend.md
 ```
 
 - Propuesta → `.txt` (documento de planificación, sin formato especial)
+- Casos de prueba → `.md` (tabla de casos, criterio de aceptación)
 - Memoria técnica → `.md` (con formato, tablas y bloques de código)
 
 ---
@@ -421,6 +456,51 @@ construir una lista de usuarios válidos.
 3. Validar reglas de negocio (unicidad, dependencias) — queries adicionales
 4. Ejecutar la operación principal
 
+### Tablas con celdas truncadas — nunca `display:block` en la celda raíz
+
+En tablas HTML o frameworks de tabla (Angular Material, etc.), aplicar truncado de texto
+con un **elemento wrapper interno** (`<div>`, `<span>`), nunca directamente en la celda (`<td>`):
+
+```html
+<!-- ❌ rompe alineación de filas -->
+<td class="cell-truncate">{{ value }}</td>
+
+<!-- ✅ correcto -->
+<td><div class="cell-truncate">{{ value }}</div></td>
+```
+
+```css
+.cell-truncate { display: block; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+```
+
+### Tabs con badges de cantidad — cargar counts al inicio; separar del mapa de datos
+
+Cuando una pantalla usa tabs con badge numérico:
+1. Al cargar: pedir datos completos para el tab activo + `totalElements` (size=1) para los demás en paralelo.
+2. Usar **estructuras separadas**: `counts: Map<Status, number>` solo para badges; `pages: Map<Status, PageData>` solo para datos de tabla. Mezclar ambos bloquea la carga completa al hacer clic.
+3. Al actualizar (tras una acción): limpiar ambos mapas y recargar.
+
+### Navegación lista → detalle → lista: preservar estado con query params
+
+Al navegar de una lista con tabs/filtros a un detalle, siempre pasar el estado relevante
+como query param para poder restaurarlo al volver:
+
+```
+// Al navegar al detalle
+navigate(['/detail', id], { queryParams: { from: activeTab } })
+
+// Al volver desde el detalle
+const from = route.snapshot.queryParamMap.get('from');
+navigate(['/list'], from ? { queryParams: { tab: from } } : {})
+
+// Al cargar la lista
+const tab = route.snapshot.queryParamMap.get('tab');
+if (tab) activeTab = tab;
+```
+
+El usuario no debe perder el contexto (tab activa, scroll, filtro) por el hecho de
+abrir y cerrar un detalle.
+
 ---
 
 ## U5. Patrones de base de datos
@@ -570,6 +650,11 @@ toda la política de acceso en un solo lugar.
 
 **Orden de las reglas**: las más específicas van antes que las generales.
 Una regla general que precede a una específica anula la específica.
+
+**Guard en rutas anidadas (frontend)**: el guard/middleware del módulo padre NO se hereda
+automáticamente a las rutas child. Cada ruta child con restricción de rol propia debe declarar
+su guard explícitamente. Ocultar un ítem de menú/sidebar no reemplaza al guard — es UX, no
+seguridad. Verificar siempre con acceso directo por URL (ver Propuesta C en U11).
 
 ### Bootstrap del primer usuario admin
 
@@ -903,6 +988,73 @@ propaga el error al código.
 - **Endpoint asumido que no existe**: la request llega al servidor y retorna 403/404.
   Los tests con mocks nunca fallan porque nunca llegan a la red.
   Solo se detecta en el browser con backend real.
+
+---
+
+## U11. Protocolo obligatorio de pruebas browser — Propuestas A–D
+
+> **Origen**: Frontend Almacenes — Módulo 3 (Purchases). El módulo se declaró completo
+> antes de estar funcionando. Múltiples bugs de seguridad, lógica y UX solo se descubrieron
+> cuando se realizaron pruebas explícitas en browser con cada rol.
+> Estas cuatro propuestas son la respuesta sistémica y aplican a **TODOS** los módulos futuros.
+
+### Propuesta A — Documento de casos de prueba por módulo (pre-código)
+
+`casos_de_prueba_modulo_<nombre>.md` se crea **antes de escribir una sola línea de
+implementación**, junto con la propuesta del módulo. Ver formato en U2.
+
+**El documento es el criterio de aceptación.** Un módulo no está "done" si hay casos sin ✅ PASS.
+
+### Propuesta B — Prueba de interfaz por componente, no por módulo
+
+> Un componente no está terminado hasta que TODOS sus casos tienen `✅ PASS`
+> verificado en la interfaz real (browser/cliente) con el rol correcto.
+
+No avanzar al siguiente componente hasta completar las pruebas del actual.
+No acumular deuda de verificación para el final del módulo.
+
+**Por qué**: los bugs de RBAC, validaciones y UX solo se detectan en la interfaz real
+con datos reales y credenciales del rol correcto. Los tests unitarios no los detectan.
+
+### Propuesta C — Gate de seguridad de rutas/endpoints (obligatorio al agregar cualquier ruta)
+
+Al agregar CUALQUIER ruta nueva:
+
+```
+[ ] La ruta tiene guard/middleware de autenticación configurado
+[ ] La ruta tiene restricción de rol(es) con los roles que SÍ tienen acceso
+[ ] Se ejecutó el caso SEC del documento con el rol MENOS privilegiado sin acceso
+    (acceso directo por URL/curl en el cliente real, no solo ocultar el enlace en el menú)
+[ ] El menú/sidebar ocultar el ítem NO cuenta como protección — la ruta necesita su propio guard
+[ ] En frameworks con rutas anidadas (Angular, Next.js, React Router):
+    el guard del padre NO se hereda automáticamente a rutas child —
+    cada ruta child con restricción propia debe declarar su guard explícitamente
+```
+
+### Propuesta D — Redefinición de "done" para declarar módulo completo
+
+**No continuar al siguiente módulo hasta que se cumplan las 4 condiciones:**
+
+```
+[ ] 1. Todos los casos del documento de pruebas tienen estado ✅ PASS
+[ ] 2. Suite de tests automatizados → 0 fallos; cobertura ≥ umbral del proyecto
+[ ] 3. Las pruebas de interfaz de todos los roles con acceso están ejecutadas y documentadas
+[ ] 4. La columna "Estado" del documento de casos de prueba está completamente llena
+         (ninguna fila con ⏳ PENDIENTE)
+```
+
+**Si el usuario pide continuar al siguiente módulo y alguna condición no se cumple:**
+indicar explícitamente qué condición falta antes de avanzar.
+
+### Checklist de apertura de módulo (antes de codificar)
+
+```
+[ ] propuesta_modulo_<nombre>.txt creada
+[ ] casos_de_prueba_modulo_<nombre>.md creada con TODOS los casos definidos
+    (categorías: SEC, RBAC, CRUD, VAL, BSRCH, UI, FLOW, RN, ERR, EMPTY, VIS)
+[ ] memoria_tecnica_modulo_<nombre>.md iniciada
+[ ] Gate de seguridad verificado para todas las rutas del módulo (Propuesta C)
+```
 
 ---
 

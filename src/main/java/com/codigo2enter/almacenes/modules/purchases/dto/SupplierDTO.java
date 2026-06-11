@@ -35,7 +35,7 @@ public class SupplierDTO {
     /** RFC fiscal mexicano — identificador único ante el SAT.
      *  El servicio valida unicidad antes de crear o actualizar. */
     @NotBlank(message = "El RFC es obligatorio")
-    @Size(max = 13, message = "El RFC no puede exceder 13 caracteres")
+    @Size(min = 12, max = 13, message = "El RFC debe tener entre 12 y 13 caracteres")
     private String rfc;
 
     /** Razón social del proveedor.

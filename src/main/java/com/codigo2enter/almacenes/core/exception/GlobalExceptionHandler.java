@@ -3,6 +3,7 @@ package com.codigo2enter.almacenes.core.exception;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -55,6 +56,27 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(BusinessRuleException.class)
     public ResponseEntity<Map<String, Object>> handleBusinessRule(BusinessRuleException ex) {
         return buildResponse(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage());
+    }
+
+    /**
+     * Credenciales incorrectas en login → HTTP 401 Unauthorized.
+     * Lanzada por UserServiceImpl.login() cuando el usuario no existe,
+     * está inactivo, o la contraseña no coincide. El mensaje genérico
+     * ("Credenciales incorrectas.") no distingue el motivo para no
+     * filtrar información sobre la existencia de cuentas.
+     */
+    @ExceptionHandler(BadCredentialsException.class)
+    public ResponseEntity<Map<String, Object>> handleBadCredentials(BadCredentialsException ex) {
+        return buildResponse(HttpStatus.UNAUTHORIZED, ex.getMessage());
+    }
+
+    /**
+     * Demasiados intentos de login fallidos → HTTP 429 Too Many Requests.
+     * Lanzada por UserServiceImpl.login() vía LoginAttemptService (BUG-INV-17).
+     */
+    @ExceptionHandler(TooManyAttemptsException.class)
+    public ResponseEntity<Map<String, Object>> handleTooManyAttempts(TooManyAttemptsException ex) {
+        return buildResponse(HttpStatus.TOO_MANY_REQUESTS, ex.getMessage());
     }
 
     /**

@@ -1,6 +1,7 @@
 package com.codigo2enter.almacenes.modules.purchases.service;
 
 import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
+import com.codigo2enter.almacenes.core.exception.BusinessRuleException;
 import com.codigo2enter.almacenes.modules.auth.model.User;
 import com.codigo2enter.almacenes.modules.auth.repository.UserRepository;
 import com.codigo2enter.almacenes.modules.inventory.dto.StockMovementRequestDTO;
@@ -96,7 +97,7 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
         }
 
         calculateTotal(order);
-        return purchaseOrderMapper.toResponseDTO(purchaseOrderRepository.save(order));
+        return toResponseDTOFiltered(purchaseOrderRepository.save(order));
     }
 
     /**
@@ -105,7 +106,7 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
     @Override
     @Transactional(readOnly = true)
     public PurchaseOrderResponseDTO findById(Long id) {
-        return purchaseOrderMapper.toResponseDTO(findOrderOrThrow(id));
+        return toResponseDTOFiltered(findOrderOrThrow(id));
     }
 
     /**
@@ -121,11 +122,11 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
         try {
             statusEnum = PurchaseOrderStatus.valueOf(status);
         } catch (IllegalArgumentException e) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                     "Estado inválido: '" + status + "'. Valores permitidos: " +
                     "PENDING, APPROVED, RECEIVED, CANCELLED.");
         }
-        return purchaseOrderMapper.toResponseDTOList(
+        return toResponseDTOListFiltered(
                 purchaseOrderRepository.findByStatus(statusEnum));
     }
 
@@ -142,13 +143,13 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
         try {
             statusEnum = PurchaseOrderStatus.valueOf(status);
         } catch (IllegalArgumentException e) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                     "Estado inválido: '" + status + "'. Valores permitidos: " +
                     "PENDING, APPROVED, RECEIVED, CANCELLED.");
         }
         PageRequest pageable = PageRequest.of(page, size, Sort.by("createdAt").descending());
         Page<PurchaseOrder> result = purchaseOrderRepository.findByStatus(statusEnum, pageable);
-        return PageResponseDTO.from(result.map(purchaseOrderMapper::toResponseDTO));
+        return PageResponseDTO.from(result.map(this::toResponseDTOFiltered));
     }
 
     /**
@@ -158,7 +159,7 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
     @Transactional(readOnly = true)
     public List<PurchaseOrderResponseDTO> findBySupplierId(Long supplierId) {
         findSupplierOrThrow(supplierId);
-        return purchaseOrderMapper.toResponseDTOList(
+        return toResponseDTOListFiltered(
                 purchaseOrderRepository.findBySupplierId(supplierId));
     }
 
@@ -182,12 +183,12 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
         try {
             statusEnum = PurchaseOrderStatus.valueOf(status);
         } catch (IllegalArgumentException e) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                     "Estado inválido: '" + status + "'. Valores permitidos: " +
                     "PENDING, APPROVED, RECEIVED, CANCELLED.");
         }
         findSupplierOrThrow(supplierId);
-        return purchaseOrderMapper.toResponseDTOList(
+        return toResponseDTOListFiltered(
                 purchaseOrderRepository.findBySupplierIdAndStatus(supplierId, statusEnum));
     }
 
@@ -203,7 +204,7 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
         productRepository.findById(productId)
                 .orElseThrow(() -> new RuntimeException(
                         "Producto con id " + productId + " no encontrado."));
-        return purchaseOrderMapper.toResponseDTOList(
+        return toResponseDTOListFiltered(
                 purchaseOrderRepository.findByProductId(productId));
     }
 
@@ -223,7 +224,7 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
         order.setNotes(dto.getNotes());
         order.setUpdatedAt(LocalDateTime.now());
 
-        return purchaseOrderMapper.toResponseDTO(order);
+        return toResponseDTOFiltered(order);
     }
 
     /**
@@ -237,12 +238,12 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
         PurchaseOrder order = findOrderOrThrow(id);
 
         if (order.getStatus() != PurchaseOrderStatus.PENDING) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                     "Solo se pueden aprobar órdenes en estado PENDING. " +
                     "Estado actual: " + order.getStatus());
         }
         if (order.getDetails().isEmpty()) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                     "No se puede aprobar una orden sin líneas de detalle.");
         }
 
@@ -251,7 +252,7 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
         order.setApprovedBy(resolveAuthenticatedUser());
         order.setUpdatedAt(LocalDateTime.now());
 
-        return purchaseOrderMapper.toResponseDTO(order);
+        return toResponseDTOFiltered(order);
     }
 
     /**
@@ -267,7 +268,7 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
         PurchaseOrder order = findOrderOrThrow(id);
 
         if (order.getStatus() != PurchaseOrderStatus.APPROVED) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                     "Solo se pueden recibir órdenes en estado APPROVED. " +
                     "Estado actual: " + order.getStatus());
         }
@@ -288,7 +289,7 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
         order.setReceivedBy(resolveAuthenticatedUser());
         order.setUpdatedAt(LocalDateTime.now());
 
-        return purchaseOrderMapper.toResponseDTO(order);
+        return toResponseDTOFiltered(order);
     }
 
     /**
@@ -301,11 +302,11 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
         PurchaseOrder order = findOrderOrThrow(id);
 
         if (order.getStatus() == PurchaseOrderStatus.RECEIVED) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                     "No se puede cancelar una orden ya recibida.");
         }
         if (order.getStatus() == PurchaseOrderStatus.CANCELLED) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                     "La orden ya está cancelada.");
         }
 
@@ -314,7 +315,7 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
         order.setCancelledBy(resolveAuthenticatedUser());
         order.setUpdatedAt(LocalDateTime.now());
 
-        return purchaseOrderMapper.toResponseDTO(order);
+        return toResponseDTOFiltered(order);
     }
 
     /**
@@ -334,7 +335,7 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
 
         if (purchaseOrderDetailRepository.existsByPurchaseOrderIdAndProductId(
                 orderId, dto.getProductId())) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                     "El producto '" + product.getName() + "' ya está en esta orden. " +
                     "Use el endpoint de actualización para cambiar la cantidad.");
         }
@@ -351,7 +352,7 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
         calculateTotal(order);
         order.setUpdatedAt(LocalDateTime.now());
 
-        return purchaseOrderMapper.toResponseDTO(purchaseOrderRepository.save(order));
+        return toResponseDTOFiltered(purchaseOrderRepository.save(order));
     }
 
     /**
@@ -378,7 +379,7 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
         calculateTotal(order);
         order.setUpdatedAt(LocalDateTime.now());
 
-        return purchaseOrderMapper.toResponseDTO(purchaseOrderRepository.save(order));
+        return toResponseDTOFiltered(purchaseOrderRepository.save(order));
     }
 
     /**
@@ -460,7 +461,7 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
      */
     private void validatePending(PurchaseOrder order, String action) {
         if (order.getStatus() != PurchaseOrderStatus.PENDING) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                     "Solo se pueden " + action + " órdenes en estado PENDING. " +
                     "Estado actual: " + order.getStatus());
         }
@@ -482,5 +483,61 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
             candidate = "OC-" + year + "-" + String.format("%04d", count);
         } while (purchaseOrderRepository.findByOrderNumber(candidate).isPresent());
         return candidate;
+    }
+
+    /**
+     * Indica si el usuario autenticado tiene ÚNICAMENTE ROLE_WAREHOUSEMAN, sin
+     * ROLE_ADMIN ni ROLE_MANAGER. Estos dos últimos siempre ven los montos
+     * completos (un usuario con ADMIN+WAREHOUSEMAN, como el seed admin, no
+     * se considera "solo WAREHOUSEMAN").
+     */
+    private boolean isWarehousemanOnly() {
+        var authorities = SecurityContextHolder.getContext().getAuthentication().getAuthorities();
+        boolean isWarehouseman = authorities.stream()
+                .anyMatch(a -> a.getAuthority().equals("ROLE_WAREHOUSEMAN"));
+        boolean hasFinancialAccess = authorities.stream()
+                .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN")
+                        || a.getAuthority().equals("ROLE_MANAGER"));
+        return isWarehouseman && !hasFinancialAccess;
+    }
+
+    /**
+     * Oculta los campos financieros (totalAmount, unitPrice, subtotal) del DTO
+     * cuando el usuario autenticado es WAREHOUSEMAN sin ADMIN/MANAGER.
+     * Corrige BUG-M3-24 (Excessive Data Exposure — OWASP API3:2023): el backend
+     * no debe enviar montos a roles que el frontend ya oculta en la UI.
+     */
+    private void maskFinancialFields(PurchaseOrderResponseDTO dto) {
+        dto.setTotalAmount(null);
+        if (dto.getDetails() != null) {
+            dto.getDetails().forEach(detail -> {
+                detail.setUnitPrice(null);
+                detail.setSubtotal(null);
+            });
+        }
+    }
+
+    /**
+     * Mapea una orden a su DTO y aplica el filtrado de campos financieros
+     * según el rol del usuario autenticado.
+     */
+    private PurchaseOrderResponseDTO toResponseDTOFiltered(PurchaseOrder order) {
+        PurchaseOrderResponseDTO dto = purchaseOrderMapper.toResponseDTO(order);
+        if (isWarehousemanOnly()) {
+            maskFinancialFields(dto);
+        }
+        return dto;
+    }
+
+    /**
+     * Mapea una lista de órdenes a sus DTOs y aplica el filtrado de campos
+     * financieros según el rol del usuario autenticado.
+     */
+    private List<PurchaseOrderResponseDTO> toResponseDTOListFiltered(List<PurchaseOrder> orders) {
+        List<PurchaseOrderResponseDTO> dtos = purchaseOrderMapper.toResponseDTOList(orders);
+        if (isWarehousemanOnly()) {
+            dtos.forEach(this::maskFinancialFields);
+        }
+        return dtos;
     }
 }

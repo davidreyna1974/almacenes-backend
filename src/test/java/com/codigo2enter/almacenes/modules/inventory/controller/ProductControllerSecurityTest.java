@@ -1,6 +1,8 @@
 package com.codigo2enter.almacenes.modules.inventory.controller;
 
 import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
+import com.codigo2enter.almacenes.core.security.JwtAccessDeniedHandler;
+import com.codigo2enter.almacenes.core.security.JwtAuthenticationEntryPoint;
 import com.codigo2enter.almacenes.core.security.JwtUtils;
 import com.codigo2enter.almacenes.core.security.SecurityConfig;
 import com.codigo2enter.almacenes.modules.inventory.dto.ProductResponseDTO;
@@ -43,7 +45,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *   Rule D: GET /products           → todos los roles autenticados reciben 200
  */
 @WebMvcTest(ProductController.class)
-@Import(SecurityConfig.class)
+@Import({SecurityConfig.class, JwtAuthenticationEntryPoint.class, JwtAccessDeniedHandler.class})
 class ProductControllerSecurityTest {
 
     @Autowired

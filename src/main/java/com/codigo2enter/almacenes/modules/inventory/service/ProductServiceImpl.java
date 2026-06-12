@@ -25,6 +25,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -133,7 +134,7 @@ public class ProductServiceImpl implements ProductService {
     @Override
     @Transactional(readOnly = true)
     public List<ProductResponseDTO> getLowStockProducts() {
-        return productMapper.toResponseDTOList(productRepository.findLowStockProducts());
+        return redactUnitCost(productMapper.toResponseDTOList(productRepository.findLowStockProducts()));
     }
 
     /**
@@ -148,7 +149,7 @@ public class ProductServiceImpl implements ProductService {
     public PageResponseDTO<ProductResponseDTO> getLowStockProducts(int page, int size) {
         PageRequest pageable = PageRequest.of(page, size, Sort.by("id").ascending());
         Page<Product> result = productRepository.findLowStockProducts(pageable);
-        return PageResponseDTO.from(result.map(productMapper::toResponseDTO));
+        return redactUnitCost(PageResponseDTO.from(result.map(productMapper::toResponseDTO)));
     }
 
     /**
@@ -255,7 +256,7 @@ public class ProductServiceImpl implements ProductService {
     @Override
     @Transactional(readOnly = true)
     public ProductResponseDTO getById(Long id) {
-        return productMapper.toResponseDTO(findProductOrThrow(id));
+        return redactUnitCost(productMapper.toResponseDTO(findProductOrThrow(id)));
     }
 
     /**
@@ -268,7 +269,7 @@ public class ProductServiceImpl implements ProductService {
                 .orElseThrow(() -> new ResourceNotFoundException(
                     "Producto con SKU '" + sku + "' no encontrado."
                 ));
-        return productMapper.toResponseDTO(product);
+        return redactUnitCost(productMapper.toResponseDTO(product));
     }
 
     /**
@@ -287,9 +288,9 @@ public class ProductServiceImpl implements ProductService {
                 "Categoría con id " + categoryId + " no encontrada."
             );
         }
-        return productMapper.toResponseDTOList(
+        return redactUnitCost(productMapper.toResponseDTOList(
             productRepository.findByCategoryIdAndActiveTrue(categoryId)
-        );
+        ));
     }
 
     /**
@@ -309,7 +310,7 @@ public class ProductServiceImpl implements ProductService {
         }
         PageRequest pageable = PageRequest.of(page, size, Sort.by("name").ascending());
         Page<Product> result = productRepository.findByCategoryIdAndActiveTrue(categoryId, pageable);
-        return PageResponseDTO.from(result.map(productMapper::toResponseDTO));
+        return redactUnitCost(PageResponseDTO.from(result.map(productMapper::toResponseDTO)));
     }
 
     /**
@@ -328,7 +329,7 @@ public class ProductServiceImpl implements ProductService {
         PageRequest pageable = PageRequest.of(page, size);
         Page<Product> result = productRepository.searchProducts(
                 normalizedSearch, categoryId, status, supplierId, pageable);
-        return PageResponseDTO.from(result.map(productMapper::toResponseDTO));
+        return redactUnitCost(PageResponseDTO.from(result.map(productMapper::toResponseDTO)));
     }
 
     /**
@@ -409,6 +410,43 @@ public class ProductServiceImpl implements ProductService {
         return userRepository.findByUsername(username)
                 .orElseThrow(() -> new RuntimeException(
                         "Usuario autenticado no encontrado en el sistema."));
+    }
+
+    /**
+     * Determina si el usuario autenticado puede ver unitCost (costo de compra).
+     * Solo ADMIN y MANAGER tienen visibilidad de datos financieros — WAREHOUSEMAN
+     * y SALES no, aunque puedan leer el catálogo de productos (BUG-INV-11).
+     */
+    private boolean canViewUnitCost() {
+        return SecurityContextHolder.getContext().getAuthentication().getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority)
+                .anyMatch(role -> role.equals("ROLE_ADMIN") || role.equals("ROLE_MANAGER"));
+    }
+
+    /**
+     * Oculta unitCost (lo deja en null) si el usuario autenticado no tiene
+     * permiso para ver datos financieros (BUG-INV-11). Se aplica a cada
+     * endpoint de lectura antes de retornar la respuesta.
+     */
+    private ProductResponseDTO redactUnitCost(ProductResponseDTO dto) {
+        if (!canViewUnitCost()) {
+            dto.setUnitCost(null);
+        }
+        return dto;
+    }
+
+    private List<ProductResponseDTO> redactUnitCost(List<ProductResponseDTO> dtos) {
+        if (!canViewUnitCost()) {
+            dtos.forEach(dto -> dto.setUnitCost(null));
+        }
+        return dtos;
+    }
+
+    private PageResponseDTO<ProductResponseDTO> redactUnitCost(PageResponseDTO<ProductResponseDTO> page) {
+        if (!canViewUnitCost()) {
+            page.getContent().forEach(dto -> dto.setUnitCost(null));
+        }
+        return page;
     }
 
     /**

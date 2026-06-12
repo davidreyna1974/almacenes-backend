@@ -68,7 +68,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
     ReservationController.class,
     ReportController.class
 })
-@Import(SecurityConfig.class)
+@Import({SecurityConfig.class, JwtAuthenticationEntryPoint.class, JwtAccessDeniedHandler.class})
 class SecurityFilterTest {
 
     @Autowired MockMvc mockMvc;
@@ -112,12 +112,12 @@ class SecurityFilterTest {
     // ─────────────────────────────────────────────────────────────────────────
 
     @Test
-    void login_createUser_admin_sinToken_retorna403() throws Exception {
-        // POST /auth/users requiere ROLE_ADMIN — sin token debe retornar 403
+    void login_createUser_admin_sinToken_retorna401() throws Exception {
+        // POST /auth/users requiere ROLE_ADMIN — sin token debe retornar 401 (BUG-INV-09)
         mockMvc.perform(post("/api/v1/auth/users")
                 .contentType("application/json")
                 .content("{\"username\":\"nuevo\",\"password\":\"P1234567!\",\"email\":\"n@t.com\",\"roles\":[\"ROLE_WAREHOUSEMAN\"]}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
@@ -135,65 +135,65 @@ class SecurityFilterTest {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // BLOQUE 2 — Rutas protegidas sin JWT: rechazadas con 403
+    // BLOQUE 2 — Rutas protegidas sin JWT: rechazadas con 401 (BUG-INV-09)
     // ─────────────────────────────────────────────────────────────────────────
 
     @Test
-    void categorias_sinToken_retorna403() throws Exception {
+    void categorias_sinToken_retorna401() throws Exception {
         mockMvc.perform(get("/api/v1/inventory/categories/active"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
-    void crearCategoria_sinToken_retorna403() throws Exception {
+    void crearCategoria_sinToken_retorna401() throws Exception {
         mockMvc.perform(post("/api/v1/inventory/categories")
                 .contentType("application/json")
                 .content("{\"name\":\"X\"}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
-    void productos_sinToken_retorna403() throws Exception {
+    void productos_sinToken_retorna401() throws Exception {
         mockMvc.perform(get("/api/v1/inventory/products/low-stock"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
-    void crearProducto_sinToken_retorna403() throws Exception {
+    void crearProducto_sinToken_retorna401() throws Exception {
         mockMvc.perform(post("/api/v1/inventory/products")
                 .contentType("application/json")
                 .content("{}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
-    void proveedores_sinToken_retorna403() throws Exception {
+    void proveedores_sinToken_retorna401() throws Exception {
         mockMvc.perform(get("/api/v1/purchases/suppliers/active"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
-    void ordenes_sinToken_retorna403() throws Exception {
+    void ordenes_sinToken_retorna401() throws Exception {
         mockMvc.perform(get("/api/v1/purchases/orders/status/PENDING"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
-    void clientes_sinToken_retorna403() throws Exception {
+    void clientes_sinToken_retorna401() throws Exception {
         mockMvc.perform(get("/api/v1/sales/clients/active"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
-    void ordenesVenta_sinToken_retorna403() throws Exception {
+    void ordenesVenta_sinToken_retorna401() throws Exception {
         mockMvc.perform(get("/api/v1/sales/orders/status/PENDING"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
-    void reservaciones_sinToken_retorna403() throws Exception {
+    void reservaciones_sinToken_retorna401() throws Exception {
         mockMvc.perform(get("/api/v1/sales/reservations/summary"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -263,31 +263,32 @@ class SecurityFilterTest {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // BLOQUE 4 — Token inválido: rechazado con 403
+    // BLOQUE 4 — Token inválido: rechazado con 401 (BUG-INV-09)
     // ─────────────────────────────────────────────────────────────────────────
 
     @Test
-    void recursos_conTokenManipulado_retorna403() throws Exception {
+    void recursos_conTokenManipulado_retorna401() throws Exception {
         // Firma manipulada → extractUsername lanza excepción
         // El filtro la captura silenciosamente y no establece autenticación
-        // Spring Security ve request sin autenticar en ruta protegida → 403
+        // Spring Security ve request sin autenticar en ruta protegida → 401
+        // (JwtAuthenticationEntryPoint — "no autenticado", distinto de 403 "sin rol")
         when(jwtUtils.extractUsername("token.manipulado"))
                 .thenThrow(new RuntimeException("JWT signature does not match"));
 
         mockMvc.perform(get("/api/v1/inventory/products/low-stock")
                 .header("Authorization", "Bearer token.manipulado"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
-    void recursos_conTokenNoValidado_retorna403() throws Exception {
+    void recursos_conTokenNoValidado_retorna401() throws Exception {
         // Token técnicamente parseado pero inválido (expirado, revocado, etc.)
         when(jwtUtils.extractUsername(TOKEN)).thenReturn("tester01");
         when(jwtUtils.validateToken(TOKEN)).thenReturn(false);
 
         mockMvc.perform(get("/api/v1/inventory/categories/active")
                 .header("Authorization", BEARER))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -445,9 +446,10 @@ class SecurityFilterTest {
     // ─────────────────────────────────────────────────────────────────────────
 
     @Test
-    void reports_sinJwt_retorna403() throws Exception {
+    void reports_sinJwt_retorna401() throws Exception {
+        // Sin JWT → 401 (BUG-INV-09). 403 queda reservado para "autenticado sin rol".
         mockMvc.perform(get("/api/v1/reports/dashboard/executive"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 
     @Test

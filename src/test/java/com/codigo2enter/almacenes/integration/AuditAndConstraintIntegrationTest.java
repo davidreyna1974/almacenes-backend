@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.*;
  *   3. approvedBy/receivedBy/cancelledBy persisten en BD (Bug 3 de CLAUDE.md)
  *   4. unitCost capturado en detalle de venta y congelado post-APPROVED
  *   5. Ciclo completo PENDING→APPROVED→DELIVERED con verificación de stock
- *   6. Sin JWT → 403, no 500 (la auditoria NOT NULL no llega a Hibernate)
+ *   6. Sin JWT → 401, no 500 (la auditoria NOT NULL no llega a Hibernate)
  *
  * Por qué son necesarios:
  *   Los tests con Mockito devuelven el objeto configurado en @BeforeEach,
@@ -57,12 +57,12 @@ class AuditAndConstraintIntegrationTest {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // TEST 1 — Sin JWT → 403 (Spring Security intercepta ANTES de Hibernate)
+    // TEST 1 — Sin JWT → 401 (Spring Security intercepta ANTES de Hibernate)
     // ─────────────────────────────────────────────────────────────────────────
 
     @Test
     @Order(1)
-    void sinJwt_crearCategoria_retorna403_noLlegaAHibernate() {
+    void sinJwt_crearCategoria_retorna401_noLlegaAHibernate() {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
 
@@ -72,10 +72,13 @@ class AuditAndConstraintIntegrationTest {
             String.class
         );
 
-        // Spring Security debe bloquear con 403 antes de que el request
-        // llegue al controlador → Hibernate nunca recibe createdBy=null
-        assertEquals(HttpStatus.FORBIDDEN, resp.getStatusCode(),
-            "Sin JWT debe retornar 403, no 500 ni 201");
+        // BUG-INV-09: Spring Security debe bloquear con 401 (no autenticado,
+        // sin JWT) antes de que el request llegue al controlador → Hibernate
+        // nunca recibe createdBy=null. JwtAuthenticationEntryPoint responde 401;
+        // 403 queda reservado para "autenticado pero sin el rol requerido"
+        // (ver JwtAccessDeniedHandler).
+        assertEquals(HttpStatus.UNAUTHORIZED, resp.getStatusCode(),
+            "Sin JWT debe retornar 401, no 500 ni 201");
     }
 
     // ─────────────────────────────────────────────────────────────────────────

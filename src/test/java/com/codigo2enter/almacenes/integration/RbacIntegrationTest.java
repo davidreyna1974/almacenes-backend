@@ -476,7 +476,8 @@ class RbacIntegrationTest {
      *
      * Esto prueba la cadena real: el filtro llama a jwtUtils.validateToken()
      * que lanza JwtException → el filtro captura la excepción y deja pasar
-     * el request sin autenticar → Spring Security devuelve 403.
+     * el request sin autenticar → Spring Security (BUG-INV-09: JwtAuthenticationEntryPoint)
+     * devuelve 401, no 403 — 403 queda reservado para "autenticado pero sin el rol".
      *
      * SecurityFilterTest ya cubre este caso con un mock, pero aquí se verifica
      * que JJWT real detecta la manipulación y que el try-catch del filtro
@@ -484,7 +485,7 @@ class RbacIntegrationTest {
      */
     @Test
     @Order(17)
-    void tokenConFirmaManipulada_rutaProtegida_retorna403() {
+    void tokenConFirmaManipulada_rutaProtegida_retorna401() {
         assertNotNull(tokenAdmin, "Requiere tokenAdmin");
 
         // Alterar el último carácter de la firma (tercer segmento del JWT)
@@ -498,8 +499,8 @@ class RbacIntegrationTest {
         ResponseEntity<String> resp = restTemplate.exchange(
             base + "/inventory/categories/active",
             HttpMethod.GET, new HttpEntity<>(jsonHeaders(tokenManipulado)), String.class);
-        assertEquals(HttpStatus.FORBIDDEN, resp.getStatusCode(),
-            "Token con firma alterada debe retornar 403, no 200 ni 500. " +
+        assertEquals(HttpStatus.UNAUTHORIZED, resp.getStatusCode(),
+            "Token con firma alterada debe retornar 401, no 200 ni 500. " +
             "Si devuelve 500, el filtro no captura la JwtException de JJWT. " +
             "Si devuelve 200, el filtro no valida la firma.");
     }

@@ -1,6 +1,7 @@
 package com.codigo2enter.almacenes.core.security;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -17,6 +18,7 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -40,6 +42,26 @@ public class SecurityConfig {
      * Se inyecta aquí para registrarlo en la cadena de filtros de Spring Security.
      */
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+
+    /**
+     * Responde 401 cuando la petición no tiene autenticación válida en el
+     * SecurityContext (token ausente, malformado o expirado). BUG-INV-09.
+     */
+    private final JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint;
+
+    /**
+     * Responde 403 cuando el usuario está autenticado pero no tiene el rol
+     * requerido por la ruta. BUG-INV-09.
+     */
+    private final JwtAccessDeniedHandler jwtAccessDeniedHandler;
+
+    /**
+     * Orígenes permitidos para CORS, separados por comas (configurable vía
+     * la variable de entorno CORS_ALLOWED_ORIGINS — ver application.yaml).
+     * Por defecto solo el frontend Angular de desarrollo (localhost:4200).
+     */
+    @Value("${cors.allowed-origins}")
+    private String allowedOrigins;
 
     /**
      * Registra BCryptPasswordEncoder como bean disponible en todo el contexto.
@@ -219,6 +241,19 @@ public class SecurityConfig {
                 session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
             )
 
+            // 3.1 MANEJO DE EXCEPCIONES DE SEGURIDAD (BUG-INV-09)
+            //     Por defecto, Spring Security usa Http403ForbiddenEntryPoint, que
+            //     responde 403 tanto para "no autenticado" como para "sin rol".
+            //     Se reemplaza por dos manejadores distintos:
+            //     - authenticationEntryPoint: 401 cuando no hay autenticación válida
+            //       (token ausente, inválido o expirado).
+            //     - accessDeniedHandler: 403 cuando el usuario está autenticado pero
+            //       no tiene el rol requerido por la ruta.
+            .exceptionHandling(ex -> ex
+                .authenticationEntryPoint(jwtAuthenticationEntryPoint)
+                .accessDeniedHandler(jwtAccessDeniedHandler)
+            )
+
             // 4. REGISTRAR EL FILTRO JWT EN LA CADENA DE SEGURIDAD
             //    addFilterBefore coloca JwtAuthenticationFilter ANTES de
             //    UsernamePasswordAuthenticationFilter (el filtro estándar de
@@ -232,15 +267,23 @@ public class SecurityConfig {
     }
 
     /**
-     * Configuración CORS para desarrollo — permite cualquier origen, método y header.
+     * Configuración CORS — restringe los orígenes permitidos a la lista configurada
+     * en cors.allowed-origins (por defecto solo http://localhost:4200 en desarrollo).
      * Habilita el flujo OPTIONS (preflight) requerido por los navegadores antes de
      * enviar peticiones cross-origin con headers personalizados como Authorization.
-     * En producción se reemplaza la lista de orígenes por el dominio del frontend.
+     *
+     * BUG-INV-15: anteriormente se usaba setAllowedOriginPatterns(List.of("*")) junto
+     * con setAllowCredentials(true) — Spring refleja el header Origin recibido,
+     * permitiendo a CUALQUIER origen enviar credenciales (JWT). Con setAllowedOrigins
+     * y una lista explícita, solo los orígenes configurados reciben
+     * Access-Control-Allow-Origin + Access-Control-Allow-Credentials: true.
      */
     @Bean
     CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOriginPatterns(List.of("*"));
+        config.setAllowedOrigins(Arrays.stream(allowedOrigins.split(","))
+                .map(String::trim)
+                .toList());
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
         config.setAllowCredentials(true);

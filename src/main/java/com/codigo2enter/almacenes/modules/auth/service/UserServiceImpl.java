@@ -1,6 +1,7 @@
 package com.codigo2enter.almacenes.modules.auth.service;
 
 import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
+import com.codigo2enter.almacenes.core.exception.TooManyAttemptsException;
 import com.codigo2enter.almacenes.core.security.JwtUtils;
 import com.codigo2enter.almacenes.modules.auth.dto.*;
 import com.codigo2enter.almacenes.modules.auth.mapper.UserMapper;
@@ -12,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -33,29 +35,46 @@ public class UserServiceImpl implements UserService {
     private final UserMapper userMapper;
     private final PasswordEncoder passwordEncoder;
     private final JwtUtils jwtUtils;
+    private final LoginAttemptService loginAttemptService;
 
     // ── Autenticación ─────────────────────────────────────────────────────
 
     @Override
     @Transactional(readOnly = true)
     public AuthResponseDTO login(AuthRequestDTO request) {
-        User user = userRepository.findByUsername(request.getUsername())
-                .orElseThrow(() -> new RuntimeException("Credenciales incorrectas."));
+        String username = request.getUsername();
 
-        if (!user.isActive()) {
-            throw new RuntimeException("Credenciales incorrectas.");
+        if (loginAttemptService.isBlocked(username)) {
+            throw new TooManyAttemptsException(
+                "Demasiados intentos fallidos. Intenta nuevamente en "
+                    + loginAttemptService.getRemainingLockoutMinutes(username) + " minuto(s)."
+            );
         }
 
-        if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
-            throw new RuntimeException("Credenciales incorrectas.");
+        try {
+            User user = userRepository.findByUsername(username)
+                    .orElseThrow(() -> new BadCredentialsException("Credenciales incorrectas."));
+
+            if (!user.isActive()) {
+                throw new BadCredentialsException("Credenciales incorrectas.");
+            }
+
+            if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
+                throw new BadCredentialsException("Credenciales incorrectas.");
+            }
+
+            loginAttemptService.loginSucceeded(username);
+
+            Set<String> roles = user.getRoles().stream()
+                    .map(Role::getName)
+                    .collect(Collectors.toSet());
+
+            String token = jwtUtils.generateToken(user.getUsername(), roles);
+            return AuthResponseDTO.builder().token(token).build();
+        } catch (BadCredentialsException ex) {
+            loginAttemptService.loginFailed(username);
+            throw ex;
         }
-
-        Set<String> roles = user.getRoles().stream()
-                .map(Role::getName)
-                .collect(Collectors.toSet());
-
-        String token = jwtUtils.generateToken(user.getUsername(), roles);
-        return AuthResponseDTO.builder().token(token).build();
     }
 
     // ── Gestión de usuarios (ADMIN) ───────────────────────────────────────

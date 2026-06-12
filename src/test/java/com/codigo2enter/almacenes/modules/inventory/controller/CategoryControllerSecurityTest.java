@@ -1,6 +1,8 @@
 package com.codigo2enter.almacenes.modules.inventory.controller;
 
 import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
+import com.codigo2enter.almacenes.core.security.JwtAccessDeniedHandler;
+import com.codigo2enter.almacenes.core.security.JwtAuthenticationEntryPoint;
 import com.codigo2enter.almacenes.core.security.JwtUtils;
 import com.codigo2enter.almacenes.core.security.SecurityConfig;
 import com.codigo2enter.almacenes.modules.inventory.dto.CategoryDTO;
@@ -42,7 +44,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *   - WAREHOUSEMAN y SALES pueden leer categorías activas → 200
  */
 @WebMvcTest(CategoryController.class)
-@Import(SecurityConfig.class)
+@Import({SecurityConfig.class, JwtAuthenticationEntryPoint.class, JwtAccessDeniedHandler.class})
 class CategoryControllerSecurityTest {
 
     @Autowired

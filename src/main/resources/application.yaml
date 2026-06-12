@@ -27,6 +27,12 @@ jwt:
   # Ejemplo: export JWT_SECRET=$(openssl rand -hex 32)
   secret: ${JWT_SECRET:4a8f3b2e9c1d7f6a0b5e2c8d4f1a9b3e7c0d6f2a5b8e3c1d9f4a7b0e2c6d8f1}
 
+cors:
+  # Lista separada por comas de orígenes permitidos para peticiones cross-origin con
+  # credenciales (JWT en header Authorization). NUNCA usar "*" combinado con credentials.
+  # PRODUCCIÓN: establecer CORS_ALLOWED_ORIGINS con el(los) dominio(s) real(es) del frontend.
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:4200}
+
 springdoc:
   api-docs:
     path: /v3/api-docs

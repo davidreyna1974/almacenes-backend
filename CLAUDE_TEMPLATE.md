@@ -456,6 +456,35 @@ construir una lista de usuarios válidos.
 3. Validar reglas de negocio (unicidad, dependencias) — queries adicionales
 4. Ejecutar la operación principal
 
+### Higiene de datos de prueba (pruebas de seguridad en BD compartida)
+
+Cuando una prueba manual de seguridad (XSS, SQLi, etc.) crea un registro real en la
+base de datos para verificar que el sistema lo rechaza o lo neutraliza, identificar
+ese registro con un prefijo reconocible en el campo de nombre/descripción (ej.
+`"[QA] "` o `"TEST_"`).
+
+Al cerrar la ronda de pruebas, antes de declarar el módulo "done":
+- Verificar que no quedan registros activos con ese prefijo, o con payloads de prueba
+  evidentes (`<script>`, `' OR 1=1`, etc.) en las tablas afectadas.
+- Desactivar (soft delete) o eliminar esos registros usando los mecanismos estándar
+  de la aplicación (no `DELETE` directo en BD salvo que el dominio no tenga soft
+  delete).
+
+**Por qué**: un registro de prueba con un payload visible (aunque no sea explotable
+porque el frontend lo escapa correctamente) queda como "basura" visible en listados,
+demos y, si no se limpia, en producción.
+
+### Combinación de llamadas dependientes de RBAC (`forkJoin` / agregación en frontend)
+
+Cuando el frontend combina varias llamadas en paralelo (ej. `forkJoin` en Angular) para
+poblar un formulario, y esas llamadas tienen reglas RBAC distintas entre sí, el backend
+debe responder con el código HTTP correcto (401/403, nunca 500) para la fuente
+restringida. El frontend debe envolver cada llamada dependiente de rol con un manejador
+de error que devuelva un valor por defecto seguro (lista vacía, etc.) en vez de
+propagar el error — un 403 en una fuente no debe romper las demás fuentes de la misma
+combinación. Probar el formulario/pantalla completa con CADA rol que tiene acceso
+parcial, no solo con el rol de mayor privilegio.
+
 ### Tablas con celdas truncadas — nunca `display:block` en la celda raíz
 
 En tablas HTML o frameworks de tabla (Angular Material, etc.), aplicar truncado de texto
@@ -655,6 +684,41 @@ Una regla general que precede a una específica anula la específica.
 automáticamente a las rutas child. Cada ruta child con restricción de rol propia debe declarar
 su guard explícitamente. Ocultar un ítem de menú/sidebar no reemplaza al guard — es UX, no
 seguridad. Verificar siempre con acceso directo por URL (ver Propuesta C en U11).
+
+### Matriz de campos sensibles × roles — diseñar la redacción ANTES de implementar el endpoint
+
+Antes de implementar cualquier endpoint de lectura cuyo DTO contenga datos sensibles
+(precios, costos, márgenes, límites de crédito, descuentos, datos personales, etc.),
+documentar una matriz de visibilidad por rol:
+
+| Campo | `ADMIN` | `MANAGER` | `[ROL_3]` | `[ROL_4]` |
+|---|---|---|---|---|
+| `[campoSensible]` | valor real | valor real | `null` | `null` |
+
+Para cada campo redactado en algún rol:
+1. Escribir primero el test de redacción por rol (`@Test shouldRedactXxxForRole...`).
+2. Implementar una función de redacción centralizada (`redactXxx(dto, role)`) aplicada
+   en TODOS los endpoints de lectura que devuelvan ese DTO, no solo el "principal".
+3. Verificar en el frontend que el campo está AUSENTE del DOM para los roles sin acceso
+   (no solo oculto con CSS).
+
+**Por qué**: detectar una fuga de datos sensibles en el browser significa que ya se
+filtró por al menos un endpoint durante el desarrollo. Diseñar la matriz primero
+convierte la redacción en un requisito explícito desde el día 1.
+
+### Distinción 401 (no autenticado) vs 403 (sin permiso) + rate limiting de autenticación
+
+Configurar desde el primer commit un `AuthenticationEntryPoint` propio (401 — sin token,
+token inválido/expirado/firma manipulada) y un `AccessDeniedHandler` propio (403 —
+autenticado pero sin el rol/permiso requerido) — nunca depender del
+`Http403ForbiddenEntryPoint` por defecto de Spring Security, que responde 403 para
+ambos casos y rompe la semántica RFC 7235 y la lógica de "sesión expirada" del frontend.
+
+Cualquier endpoint de autenticación (login, recuperación de contraseña, cambio de PIN,
+etc.) implementa rate limiting/lockout desde el primer commit: N intentos fallidos por
+usuario (case-insensitive) → bloqueo temporal → 429 Too Many Requests. No diferir esto
+a una corrección posterior — es más costoso retrofitearlo (incluye actualizar
+suites de tests de seguridad existentes).
 
 ### Bootstrap del primer usuario admin
 

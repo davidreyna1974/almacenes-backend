@@ -1,5 +1,6 @@
 package com.codigo2enter.almacenes.modules.auth.service;
 
+import com.codigo2enter.almacenes.core.exception.TooManyAttemptsException;
 import com.codigo2enter.almacenes.core.security.JwtUtils;
 import com.codigo2enter.almacenes.modules.auth.dto.*;
 import com.codigo2enter.almacenes.modules.auth.mapper.UserMapper;
@@ -14,6 +15,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -34,6 +36,7 @@ class UserServiceImplTest {
     @Mock UserMapper userMapper;
     @Mock PasswordEncoder passwordEncoder;
     @Mock JwtUtils jwtUtils;
+    @Mock LoginAttemptService loginAttemptService;
     @InjectMocks UserServiceImpl userService;
 
     private User user;
@@ -69,6 +72,7 @@ class UserServiceImplTest {
         lenient().when(userMapper.toResponseDTO(any())).thenReturn(responseDTO);
         lenient().when(userMapper.toResponseDTOList(any())).thenReturn(List.of(responseDTO));
         lenient().when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hashed");
+        lenient().when(loginAttemptService.isBlocked(anyString())).thenReturn(false);
     }
 
     @AfterEach
@@ -124,6 +128,39 @@ class UserServiceImplTest {
 
         userService.login(new AuthRequestDTO("tester", "Pass123!"));
         verify(jwtUtils).generateToken(eq("tester"), eq(Set.of("ROLE_WAREHOUSEMAN")));
+    }
+
+    @Test
+    void login_usuarioBloqueado_debeLanzarTooManyAttempts() {
+        when(loginAttemptService.isBlocked("tester")).thenReturn(true);
+        when(loginAttemptService.getRemainingLockoutMinutes("tester")).thenReturn(15L);
+
+        TooManyAttemptsException ex = assertThrows(TooManyAttemptsException.class,
+                () -> userService.login(new AuthRequestDTO("tester", "Pass123!")));
+        assertTrue(ex.getMessage().contains("15"));
+        verify(userRepository, never()).findByUsername("tester");
+    }
+
+    @Test
+    void login_passwordIncorrecto_debeRegistrarIntentoFallido() {
+        when(userRepository.findByUsername("tester")).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("wrong", user.getPassword())).thenReturn(false);
+
+        assertThrows(BadCredentialsException.class,
+                () -> userService.login(new AuthRequestDTO("tester", "wrong")));
+        verify(loginAttemptService).loginFailed("tester");
+        verify(loginAttemptService, never()).loginSucceeded(anyString());
+    }
+
+    @Test
+    void login_credencialesCorrectas_debeReiniciarIntentos() {
+        when(userRepository.findByUsername("tester")).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("Pass123!", user.getPassword())).thenReturn(true);
+        when(jwtUtils.generateToken(anyString(), anySet())).thenReturn("tok");
+
+        userService.login(new AuthRequestDTO("tester", "Pass123!"));
+        verify(loginAttemptService).loginSucceeded("tester");
+        verify(loginAttemptService, never()).loginFailed(anyString());
     }
 
     // ── createUser ────────────────────────────────────────────────────────

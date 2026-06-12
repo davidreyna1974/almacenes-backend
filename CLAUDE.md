@@ -432,6 +432,43 @@ El sistema implementa 4 roles con acceso diferenciado por URL en `SecurityConfig
 
 ---
 
+## ⚠️ Lecciones mandatorias L29-L33 (revisión de bugs 2026-06-11/12, frontend Inventory — aplican a TODOS los módulos backend)
+
+> Origen: revisión completa de bugs del módulo Inventory (BUG-INV-07/09/10/11/12/13/14/17/18),
+> documentada en `memoria_tecnica_global_proyecto.md` §9. Son **mandatorias desde el diseño
+> inicial** de cualquier módulo backend nuevo (Sales en adelante), no correcciones
+> retroactivas opcionales.
+
+- **L29 — Matriz de campos sensibles × roles**: antes de implementar cualquier endpoint
+  de lectura, documentar en la Sección 4 de la memoria técnica del módulo qué campos del
+  DTO son sensibles (precios, costos, márgenes, límites de crédito, descuentos, etc.) y
+  qué valor recibe cada rol (valor real vs `null`). Escribir el test de redacción por rol
+  ANTES de implementar el campo (`@Test shouldRedactXxxForRole...`). Implementar una
+  función de redacción centralizada (ej. `redactXxx(dto, role)`) y aplicarla en TODOS los
+  endpoints de lectura que devuelvan ese DTO — no solo en el endpoint "principal". (Origen:
+  BUG-INV-11 — `unitCost` expuesto en 7 endpoints de `ProductServiceImpl`.)
+- **L30 — 401 vs 403 + rate limiting de login**: `JwtAuthenticationEntryPoint` (401 — no
+  autenticado: sin token / inválido / expirado / firma manipulada) y
+  `JwtAccessDeniedHandler` (403 — autenticado sin el rol requerido) ya están configurados
+  globalmente en `SecurityConfig` — **nunca revertir a `Http403ForbiddenEntryPoint`**.
+  Cualquier endpoint de autenticación nuevo (login, recuperación de contraseña, cambio de
+  PIN, etc.) implementa rate limiting/lockout desde el primer commit (patrón
+  `LoginAttemptService`: N intentos fallidos por usuario, case-insensitive, → 429 Too Many
+  Requests). (Origen: BUG-INV-09, BUG-INV-17.)
+- **L31/L32 — UI (diálogos, paginador, estilos de tabla)**: aplican al frontend — ver
+  `casos_de_prueba_modulo_TEMPLATE.md` y CLAUDE.md del frontend. No requieren cambios en
+  el backend salvo que la implementación de paginación/filtros no soporte `page=0` al
+  recibir un nuevo `search`/filtro (verificar que sí lo soporta).
+- **L33 — `forkJoin`/datos de prueba**: el backend debe responder con el código HTTP
+  correcto (403/404, nunca 500) cuando un rol sin permiso consulta un endpoint usado en
+  combinaciones `forkJoin` del frontend, para que el `catchError` del cliente funcione
+  correctamente. Datos creados durante pruebas de seguridad (payloads XSS/SQLi en
+  `companyName`, `name`, etc.) se identifican con prefijo `[QA] `/`TEST_` y se
+  desactivan/eliminan (soft delete) antes de cerrar el módulo — verificar con una query
+  de limpieza al cierre de cada ronda de pruebas. (Origen: BUG-INV-12, BUG-INV-18.)
+
+---
+
 ## Columnas de auditoría
 
 ### Esquema de tablas y columnas presentes

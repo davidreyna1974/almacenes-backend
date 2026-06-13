@@ -24,6 +24,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -73,20 +74,20 @@ public class SaleOrderServiceImpl implements SaleOrderService {
         }
 
         calculateTotal(order);
-        return saleOrderMapper.toResponseDTO(saleOrderRepository.save(order));
+        return redactUnitCost(saleOrderMapper.toResponseDTO(saleOrderRepository.save(order)));
     }
 
     @Override
     @Transactional(readOnly = true)
     public SaleOrderResponseDTO findById(Long id) {
-        return saleOrderMapper.toResponseDTO(findOrderOrThrow(id));
+        return redactUnitCost(saleOrderMapper.toResponseDTO(findOrderOrThrow(id)));
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<SaleOrderResponseDTO> findByStatus(String status) {
-        return saleOrderMapper.toResponseDTOList(
-                saleOrderRepository.findByStatus(parseStatus(status)));
+        return redactUnitCost(saleOrderMapper.toResponseDTOList(
+                saleOrderRepository.findByStatus(parseStatus(status))));
     }
 
     /**
@@ -100,7 +101,7 @@ public class SaleOrderServiceImpl implements SaleOrderService {
     public PageResponseDTO<SaleOrderResponseDTO> findByStatus(String status, int page, int size) {
         PageRequest pageable = PageRequest.of(page, size, Sort.by("createdAt").descending());
         Page<SaleOrder> result = saleOrderRepository.findByStatus(parseStatus(status), pageable);
-        return PageResponseDTO.from(result.map(saleOrderMapper::toResponseDTO));
+        return redactUnitCost(PageResponseDTO.from(result.map(saleOrderMapper::toResponseDTO)));
     }
 
     @Override
@@ -109,8 +110,8 @@ public class SaleOrderServiceImpl implements SaleOrderService {
         if (!clientRepository.existsById(clientId)) {
             throw new ResourceNotFoundException("Cliente con id " + clientId + " no encontrado.");
         }
-        return saleOrderMapper.toResponseDTOList(
-                saleOrderRepository.findByClientId(clientId));
+        return redactUnitCost(saleOrderMapper.toResponseDTOList(
+                saleOrderRepository.findByClientId(clientId)));
     }
 
     @Override
@@ -119,24 +120,24 @@ public class SaleOrderServiceImpl implements SaleOrderService {
         if (!clientRepository.existsById(clientId)) {
             throw new ResourceNotFoundException("Cliente con id " + clientId + " no encontrado.");
         }
-        return saleOrderMapper.toResponseDTOList(
-                saleOrderRepository.findByClientIdAndStatus(clientId, parseStatus(status)));
+        return redactUnitCost(saleOrderMapper.toResponseDTOList(
+                saleOrderRepository.findByClientIdAndStatus(clientId, parseStatus(status))));
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<SaleOrderResponseDTO> findByProductId(Long productId) {
         findActiveProductOrThrow(productId);
-        return saleOrderMapper.toResponseDTOList(
-                saleOrderRepository.findByProductId(productId));
+        return redactUnitCost(saleOrderMapper.toResponseDTOList(
+                saleOrderRepository.findByProductId(productId)));
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<SaleOrderResponseDTO> findByProductIdAndStatus(Long productId, String status) {
         findActiveProductOrThrow(productId);
-        return saleOrderMapper.toResponseDTOList(
-                saleOrderRepository.findByProductIdAndStatus(productId, parseStatus(status)));
+        return redactUnitCost(saleOrderMapper.toResponseDTOList(
+                saleOrderRepository.findByProductIdAndStatus(productId, parseStatus(status))));
     }
 
     @Override
@@ -148,7 +149,7 @@ public class SaleOrderServiceImpl implements SaleOrderService {
         order.setNotes(dto.getNotes());
         order.setUpdatedAt(LocalDateTime.now());
         order.setUpdatedBy(resolveAuthenticatedUser());
-        return saleOrderMapper.toResponseDTO(saleOrderRepository.save(order));
+        return redactUnitCost(saleOrderMapper.toResponseDTO(saleOrderRepository.save(order)));
     }
 
     /**
@@ -198,7 +199,7 @@ public class SaleOrderServiceImpl implements SaleOrderService {
         order.setApprovedBy(actor);
         order.setUpdatedAt(LocalDateTime.now());
         order.setUpdatedBy(actor);
-        return saleOrderMapper.toResponseDTO(saleOrderRepository.save(order));
+        return redactUnitCost(saleOrderMapper.toResponseDTO(saleOrderRepository.save(order)));
     }
 
     /**
@@ -246,7 +247,7 @@ public class SaleOrderServiceImpl implements SaleOrderService {
         order.setDeliveredBy(actor);
         order.setUpdatedAt(LocalDateTime.now());
         order.setUpdatedBy(actor);
-        return saleOrderMapper.toResponseDTO(saleOrderRepository.save(order));
+        return redactUnitCost(saleOrderMapper.toResponseDTO(saleOrderRepository.save(order)));
     }
 
     @Override
@@ -274,7 +275,7 @@ public class SaleOrderServiceImpl implements SaleOrderService {
         order.setCancelledBy(actor);
         order.setUpdatedAt(LocalDateTime.now());
         order.setUpdatedBy(actor);
-        return saleOrderMapper.toResponseDTO(saleOrderRepository.save(order));
+        return redactUnitCost(saleOrderMapper.toResponseDTO(saleOrderRepository.save(order)));
     }
 
     @Override
@@ -301,7 +302,7 @@ public class SaleOrderServiceImpl implements SaleOrderService {
         calculateTotal(order);
         order.setUpdatedAt(LocalDateTime.now());
         order.setUpdatedBy(resolveAuthenticatedUser());
-        return saleOrderMapper.toResponseDTO(saleOrderRepository.save(order));
+        return redactUnitCost(saleOrderMapper.toResponseDTO(saleOrderRepository.save(order)));
     }
 
     @Override
@@ -322,7 +323,7 @@ public class SaleOrderServiceImpl implements SaleOrderService {
         calculateTotal(order);
         order.setUpdatedAt(LocalDateTime.now());
         order.setUpdatedBy(resolveAuthenticatedUser());
-        return saleOrderMapper.toResponseDTO(saleOrderRepository.save(order));
+        return redactUnitCost(saleOrderMapper.toResponseDTO(saleOrderRepository.save(order)));
     }
 
     @Override
@@ -343,6 +344,33 @@ public class SaleOrderServiceImpl implements SaleOrderService {
     }
 
     // ─── Métodos privados ─────────────────────────────────────────────────────
+
+    /**
+     * L29 — unitCost (costo del producto) solo es visible para ADMIN/MANAGER.
+     * WAREHOUSEMAN y SALES no deben recibir el costo en details[].unitCost.
+     */
+    private boolean canViewUnitCost() {
+        return SecurityContextHolder.getContext().getAuthentication().getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority)
+                .anyMatch(role -> role.equals("ROLE_ADMIN") || role.equals("ROLE_MANAGER"));
+    }
+
+    private SaleOrderResponseDTO redactUnitCost(SaleOrderResponseDTO dto) {
+        if (!canViewUnitCost() && dto.getDetails() != null) {
+            dto.getDetails().forEach(detail -> detail.setUnitCost(null));
+        }
+        return dto;
+    }
+
+    private List<SaleOrderResponseDTO> redactUnitCost(List<SaleOrderResponseDTO> dtos) {
+        dtos.forEach(this::redactUnitCost);
+        return dtos;
+    }
+
+    private PageResponseDTO<SaleOrderResponseDTO> redactUnitCost(PageResponseDTO<SaleOrderResponseDTO> page) {
+        page.getContent().forEach(this::redactUnitCost);
+        return page;
+    }
 
     private SaleOrder findOrderOrThrow(Long id) {
         return saleOrderRepository.findById(id)

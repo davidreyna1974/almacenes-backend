@@ -1,6 +1,9 @@
 package com.codigo2enter.almacenes.modules.sales.service;
 
 import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
+import com.codigo2enter.almacenes.core.exception.BusinessRuleException;
+import com.codigo2enter.almacenes.core.exception.DuplicateResourceException;
+import com.codigo2enter.almacenes.core.exception.ResourceNotFoundException;
 import com.codigo2enter.almacenes.modules.auth.model.User;
 import com.codigo2enter.almacenes.modules.auth.repository.UserRepository;
 import com.codigo2enter.almacenes.modules.inventory.model.Product;
@@ -21,7 +24,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
-import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -105,7 +107,7 @@ public class SaleOrderServiceImpl implements SaleOrderService {
     @Transactional(readOnly = true)
     public List<SaleOrderResponseDTO> findByClientId(Long clientId) {
         if (!clientRepository.existsById(clientId)) {
-            throw new RuntimeException("Cliente con id " + clientId + " no encontrado.");
+            throw new ResourceNotFoundException("Cliente con id " + clientId + " no encontrado.");
         }
         return saleOrderMapper.toResponseDTOList(
                 saleOrderRepository.findByClientId(clientId));
@@ -115,7 +117,7 @@ public class SaleOrderServiceImpl implements SaleOrderService {
     @Transactional(readOnly = true)
     public List<SaleOrderResponseDTO> findByClientIdAndStatus(Long clientId, String status) {
         if (!clientRepository.existsById(clientId)) {
-            throw new RuntimeException("Cliente con id " + clientId + " no encontrado.");
+            throw new ResourceNotFoundException("Cliente con id " + clientId + " no encontrado.");
         }
         return saleOrderMapper.toResponseDTOList(
                 saleOrderRepository.findByClientIdAndStatus(clientId, parseStatus(status)));
@@ -159,11 +161,11 @@ public class SaleOrderServiceImpl implements SaleOrderService {
     public SaleOrderResponseDTO approveOrder(Long id) {
         SaleOrder order = findOrderOrThrow(id);
         if (order.getStatus() != SaleOrderStatus.PENDING) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                 "Solo se pueden aprobar órdenes en estado PENDING. Estado actual: " + order.getStatus());
         }
         if (order.getDetails().isEmpty()) {
-            throw new RuntimeException("No se puede aprobar una orden sin detalles.");
+            throw new BusinessRuleException("No se puede aprobar una orden sin detalles.");
         }
 
         // FASE 1: validar sin escribir
@@ -171,7 +173,7 @@ public class SaleOrderServiceImpl implements SaleOrderService {
             Product product = detail.getProduct();
             int available = product.getCurrentStock() - product.getReservedStock();
             if (available < detail.getQuantity()) {
-                throw new RuntimeException(
+                throw new BusinessRuleException(
                     "Stock disponible insuficiente para '" + product.getName() + "'. " +
                     "Disponible: " + available + ", solicitado: " + detail.getQuantity() + ".");
             }
@@ -179,20 +181,15 @@ public class SaleOrderServiceImpl implements SaleOrderService {
 
         // FASE 2: reservar.
         // saveAndFlush() fuerza el SQL UPDATE inmediatamente en lugar de esperar al
-        // commit de la transacción. Esto es necesario para que @Version haga la
-        // verificación de versión dentro de este try-catch. Con save() simple,
-        // el flush ocurre al cerrar la transacción (después de salir del try-catch)
-        // y ObjectOptimisticLockingFailureException llegaría al GlobalExceptionHandler
-        // sin el mensaje de negocio correcto.
-        try {
-            for (SaleOrderDetail detail : order.getDetails()) {
-                Product product = detail.getProduct();
-                product.setReservedStock(product.getReservedStock() + detail.getQuantity());
-                productRepository.saveAndFlush(product);
-            }
-        } catch (ObjectOptimisticLockingFailureException e) {
-            throw new RuntimeException(
-                "Stock modificado concurrentemente. Intente nuevamente.");
+        // commit de la transacción, de modo que ObjectOptimisticLockingFailureException
+        // se lance durante la ejecución de este método y la capture
+        // GlobalExceptionHandler.handleOptimisticLocking() como 409 Conflict con un
+        // mensaje de negocio claro ("Intente nuevamente"), en lugar de envolverla en
+        // un RuntimeException genérico (500).
+        for (SaleOrderDetail detail : order.getDetails()) {
+            Product product = detail.getProduct();
+            product.setReservedStock(product.getReservedStock() + detail.getQuantity());
+            productRepository.saveAndFlush(product);
         }
 
         User actor = resolveAuthenticatedUser();
@@ -214,7 +211,7 @@ public class SaleOrderServiceImpl implements SaleOrderService {
     public SaleOrderResponseDTO deliverOrder(Long id) {
         SaleOrder order = findOrderOrThrow(id);
         if (order.getStatus() != SaleOrderStatus.APPROVED) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                 "Solo se pueden entregar órdenes en estado APPROVED. Estado actual: " + order.getStatus());
         }
 
@@ -222,7 +219,7 @@ public class SaleOrderServiceImpl implements SaleOrderService {
         for (SaleOrderDetail detail : order.getDetails()) {
             Product product = detail.getProduct();
             if (product.getCurrentStock() < detail.getQuantity()) {
-                throw new RuntimeException(
+                throw new BusinessRuleException(
                     "Stock físico insuficiente para '" + product.getName() + "'. " +
                     "Físico: " + product.getCurrentStock() + ", requerido: " + detail.getQuantity() + ".");
             }
@@ -256,10 +253,10 @@ public class SaleOrderServiceImpl implements SaleOrderService {
     public SaleOrderResponseDTO cancelOrder(Long id) {
         SaleOrder order = findOrderOrThrow(id);
         if (order.getStatus() == SaleOrderStatus.DELIVERED) {
-            throw new RuntimeException("No se puede cancelar una orden ya entregada.");
+            throw new BusinessRuleException("No se puede cancelar una orden ya entregada.");
         }
         if (order.getStatus() == SaleOrderStatus.CANCELLED) {
-            throw new RuntimeException("La orden ya está cancelada.");
+            throw new BusinessRuleException("La orden ya está cancelada.");
         }
 
         // Liberar reservas solo si venía de APPROVED
@@ -288,7 +285,7 @@ public class SaleOrderServiceImpl implements SaleOrderService {
         Product product = findActiveProductOrThrow(dto.getProductId());
 
         if (saleOrderDetailRepository.existsBySaleOrderIdAndProductId(orderId, dto.getProductId())) {
-            throw new RuntimeException(
+            throw new DuplicateResourceException(
                 "El producto '" + product.getName() + "' ya existe en esta orden. " +
                 "Use la opción de actualizar detalle para cambiar la cantidad.");
         }
@@ -314,7 +311,7 @@ public class SaleOrderServiceImpl implements SaleOrderService {
 
         SaleOrderDetail detail = saleOrderDetailRepository
                 .findByIdAndSaleOrderId(detailId, orderId)
-                .orElseThrow(() -> new RuntimeException(
+                .orElseThrow(() -> new ResourceNotFoundException(
                     "Detalle con id " + detailId + " no encontrado en la orden " + orderId + "."));
 
         detail.setQuantity(dto.getQuantity());
@@ -335,7 +332,7 @@ public class SaleOrderServiceImpl implements SaleOrderService {
 
         SaleOrderDetail detail = saleOrderDetailRepository
                 .findByIdAndSaleOrderId(detailId, orderId)
-                .orElseThrow(() -> new RuntimeException(
+                .orElseThrow(() -> new ResourceNotFoundException(
                     "Detalle con id " + detailId + " no encontrado en la orden " + orderId + "."));
 
         order.getDetails().remove(detail);
@@ -349,22 +346,22 @@ public class SaleOrderServiceImpl implements SaleOrderService {
 
     private SaleOrder findOrderOrThrow(Long id) {
         return saleOrderRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException(
+                .orElseThrow(() -> new ResourceNotFoundException(
                     "Orden de venta con id " + id + " no encontrada."));
     }
 
     private Client findClientOrThrow(Long id) {
         return clientRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException(
+                .orElseThrow(() -> new ResourceNotFoundException(
                     "Cliente con id " + id + " no encontrado."));
     }
 
     private Product findActiveProductOrThrow(Long id) {
         Product product = productRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException(
+                .orElseThrow(() -> new ResourceNotFoundException(
                     "Producto con id " + id + " no encontrado."));
         if (!product.isActive()) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                 "El producto '" + product.getName() + "' no está activo.");
         }
         return product;
@@ -372,7 +369,7 @@ public class SaleOrderServiceImpl implements SaleOrderService {
 
     private void validatePending(SaleOrder order) {
         if (order.getStatus() != SaleOrderStatus.PENDING) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                 "Esta operación solo está permitida en órdenes PENDING. " +
                 "Estado actual: " + order.getStatus() + ".");
         }
@@ -396,7 +393,7 @@ public class SaleOrderServiceImpl implements SaleOrderService {
         try {
             return SaleOrderStatus.valueOf(status);
         } catch (IllegalArgumentException e) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                 "Estado inválido: '" + status + "'. Use PENDING, APPROVED, DELIVERED o CANCELLED.");
         }
     }

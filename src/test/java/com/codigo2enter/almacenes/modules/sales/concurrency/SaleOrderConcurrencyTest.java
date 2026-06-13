@@ -105,16 +105,17 @@ class SaleOrderConcurrencyTest {
      *
      * Resultado esperado:
      *   - Exactamente 1 aprobación con HTTP 200 (status APPROVED)
-     *   - Exactamente 1 aprobación rechazada (HTTP 500 — stock insuficiente
-     *     o colisión de versión detectada por Hibernate)
+     *   - Exactamente 1 aprobación rechazada (HTTP 409 — colisión de @Version detectada
+     *     por Hibernate, o HTTP 422 — stock disponible insuficiente)
      *   - product.reservedStock == 8 al final (nunca 16)
      *
      * La protección funciona por dos mecanismos complementarios:
      *   a) Si las transacciones se solapan en la fase de escritura:
-     *      @Version detecta la colisión → ObjectOptimisticLockingFailureException → 500
+     *      @Version detecta la colisión → ObjectOptimisticLockingFailureException → 409
      *   b) Si una transacción termina antes de que la otra lea el producto:
-     *      la segunda ve reservedStock=8, available=0 < 8, falla en validación → 500
-     *   Ambos resultan en el mismo comportamiento observable: HTTP 500 para la perdedora.
+     *      la segunda ve reservedStock=8, available=0 < 8, falla en validación → 422
+     *   (H1 — desde la migración a excepciones tipadas, ya no se devuelve 500 para
+     *   estos casos de negocio.)
      */
     @Test
     void concurrentApprove_stockInsuficienteParaAmbos_soloUnoAprobado() throws Exception {
@@ -126,27 +127,28 @@ class SaleOrderConcurrencyTest {
         List<ApprovalResult> results = launchConcurrentApprovals(List.of(order1, order2));
 
         long approved = results.stream().filter(r -> r.status() == 200).count();
-        long rejected = results.stream().filter(r -> r.status() == 500).count();
+        long rejected = results.stream().filter(r -> r.status() == 409 || r.status() == 422).count();
 
         assertEquals(1, approved,
             "Exactamente 1 aprobación debe tener éxito cuando el stock solo alcanza para una. " +
             "Resultados: " + results);
         assertEquals(1, rejected,
-            "Exactamente 1 aprobación debe ser rechazada. Resultados: " + results);
+            "Exactamente 1 aprobación debe ser rechazada con 409 (colisión @Version) " +
+            "o 422 (stock insuficiente). Resultados: " + results);
 
         // Verificar que el body del rechazo contiene un mensaje de negocio claro.
         //
         // Dos mensajes son válidos según el momento en que se produce la colisión:
         //   a) "concurrentemente" — si @Version detectó la colisión en la fase de escritura
-        //      (ObjectOptimisticLockingFailureException en el UPDATE de Hibernate)
+        //      (ObjectOptimisticLockingFailureException en el UPDATE de Hibernate) → 409
         //   b) "insuficiente"    — si la transacción ganadora ya commitó cuando la perdedora
-        //      leyó el producto, por lo que la validación previa detectó available < qty
+        //      leyó el producto, por lo que la validación previa detectó available < qty → 422
         //
         // Ambos mensajes son correctos: indican que la reserva fue rechazada por razones
         // de integridad. Lo que este test garantiza es que NUNCA se acepta silenciosamente
         // (200 OK) una reserva que excede el stock disponible.
         String rejectedBody = results.stream()
-                .filter(r -> r.status() == 500)
+                .filter(r -> r.status() == 409 || r.status() == 422)
                 .map(ApprovalResult::body)
                 .findFirst()
                 .orElse("");
@@ -259,9 +261,10 @@ class SaleOrderConcurrencyTest {
             ") > currentStock (" + currentStock + "). " +
             "El sistema reservó más unidades de las que físicamente existen.");
 
-        // Todos los rechazos deben incluir un mensaje de negocio reconocible
+        // Todos los rechazos deben incluir un mensaje de negocio reconocible,
+        // con 409 (colisión @Version) o 422 (stock insuficiente) — nunca 500 (H1).
         results.stream()
-               .filter(r -> r.status() == 500)
+               .filter(r -> r.status() == 409 || r.status() == 422)
                .forEach(r -> assertTrue(
                    r.body().contains("concurrentemente") || r.body().contains("insuficiente"),
                    "Cada rechazo debe explicar la causa. Body recibido: " + r.body()));

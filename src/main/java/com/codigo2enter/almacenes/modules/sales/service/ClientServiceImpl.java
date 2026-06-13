@@ -1,6 +1,9 @@
 package com.codigo2enter.almacenes.modules.sales.service;
 
 import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
+import com.codigo2enter.almacenes.core.exception.BusinessRuleException;
+import com.codigo2enter.almacenes.core.exception.DuplicateResourceException;
+import com.codigo2enter.almacenes.core.exception.ResourceNotFoundException;
 import com.codigo2enter.almacenes.modules.auth.model.User;
 import com.codigo2enter.almacenes.modules.auth.repository.UserRepository;
 import com.codigo2enter.almacenes.modules.sales.dto.ClientDTO;
@@ -33,12 +36,12 @@ public class ClientServiceImpl implements ClientService {
     public ClientDTO createClient(ClientDTO dto) {
         if (dto.getRfc() != null && !dto.getRfc().isBlank()
                 && clientRepository.existsByRfc(dto.getRfc())) {
-            throw new RuntimeException(
+            throw new DuplicateResourceException(
                 "Ya existe un cliente con el RFC '" + dto.getRfc() + "'.");
         }
         if (dto.getEmail() != null && !dto.getEmail().isBlank()
                 && clientRepository.existsByEmail(dto.getEmail())) {
-            throw new RuntimeException(
+            throw new DuplicateResourceException(
                 "Ya existe un cliente con el email '" + dto.getEmail() + "'.");
         }
 
@@ -93,7 +96,7 @@ public class ClientServiceImpl implements ClientService {
         if (dto.getRfc() != null && !dto.getRfc().isBlank()) {
             clientRepository.findByRfc(dto.getRfc()).ifPresent(existing -> {
                 if (!existing.getId().equals(id)) {
-                    throw new RuntimeException(
+                    throw new DuplicateResourceException(
                         "El RFC '" + dto.getRfc() + "' ya está en uso por otro cliente.");
                 }
             });
@@ -101,7 +104,7 @@ public class ClientServiceImpl implements ClientService {
         if (dto.getEmail() != null && !dto.getEmail().isBlank()) {
             clientRepository.findByEmail(dto.getEmail()).ifPresent(existing -> {
                 if (!existing.getId().equals(id)) {
-                    throw new RuntimeException(
+                    throw new DuplicateResourceException(
                         "El email '" + dto.getEmail() + "' ya está en uso por otro cliente.");
                 }
             });
@@ -117,7 +120,7 @@ public class ClientServiceImpl implements ClientService {
     public void deactivateClient(Long id) {
         Client client = findClientOrThrow(id);
         if (!saleOrderRepository.findActiveOrdersByClient(id).isEmpty()) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                 "El cliente tiene órdenes de venta activas (PENDING o APPROVED) y no puede desactivarse.");
         }
         client.setActive(false);
@@ -127,7 +130,7 @@ public class ClientServiceImpl implements ClientService {
 
     private Client findClientOrThrow(Long id) {
         return clientRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException(
+                .orElseThrow(() -> new ResourceNotFoundException(
                     "Cliente con id " + id + " no encontrado."));
     }
 

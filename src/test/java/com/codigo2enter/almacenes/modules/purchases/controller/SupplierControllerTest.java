@@ -158,7 +158,7 @@ class SupplierControllerTest {
                 .content(List.of(response, response2))
                 .currentPage(0).totalPages(1).totalElements(2).size(20)
                 .first(true).last(true).build();
-        when(supplierService.getAllActiveSuppliers(0, 20)).thenReturn(page);
+        when(supplierService.searchSuppliers(null, 0, 20)).thenReturn(page);
 
         // ACT + ASSERT
         mockMvc.perform(get("/api/v1/purchases/suppliers/active"))

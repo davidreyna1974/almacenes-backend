@@ -72,6 +72,16 @@ class RbacIntegrationTest {
     // Sufijo único por ejecución para evitar colisiones de nombre/RFC en la BD
     private static final String SUFFIX = "R" + (System.currentTimeMillis() % 100000);
 
+    /**
+     * Normaliza un RFC de prueba a la longitud requerida por
+     * {@code SupplierDTO.rfc} (@Size(min=12, max=13)) rellenando con
+     * ceros a la derecha o truncando si excede 13 caracteres.
+     */
+    private static String rfc12(String raw) {
+        String padded = raw.length() >= 12 ? raw : raw + "0".repeat(12 - raw.length());
+        return padded.length() > 13 ? padded.substring(0, 13) : padded;
+    }
+
     @BeforeEach
     void setUp() {
         base = "http://localhost:" + port + "/api/v1";
@@ -345,7 +355,7 @@ class RbacIntegrationTest {
 
         // 2. Admin crea proveedor (compartido con @Order(15))
         Map<String, String> supBody = new HashMap<>();
-        supBody.put("rfc",         "MGB" + SUFFIX);
+        supBody.put("rfc",         rfc12("MGB" + SUFFIX));
         supBody.put("companyName", "Proveedor RBAC " + SUFFIX);
         supBody.put("email",       "prov" + SUFFIX + "@rbac.com");
         ResponseEntity<Map> supResp = restTemplate.postForEntity(
@@ -539,7 +549,7 @@ class RbacIntegrationTest {
     @SuppressWarnings("unchecked")
     private Long crearProveedorComoAdmin(String rfc) {
         Map<String, String> body = new HashMap<>();
-        body.put("rfc",         rfc);
+        body.put("rfc",         rfc12(rfc));
         body.put("companyName", "Prov " + rfc);
         body.put("email",       rfc.toLowerCase() + "@rbac.com");
         ResponseEntity<Map> resp = restTemplate.postForEntity(

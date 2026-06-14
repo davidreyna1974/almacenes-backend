@@ -443,8 +443,7 @@ class ProductServiceImplTest {
         org.springframework.data.domain.PageImpl<Product> productPage =
                 new org.springframework.data.domain.PageImpl<>(List.of(product));
         when(productRepository.searchProducts(null, null, null, null,
-                org.springframework.data.domain.PageRequest.of(0, 20,
-                        org.springframework.data.domain.Sort.by("name").ascending())))
+                org.springframework.data.domain.PageRequest.of(0, 20)))
                 .thenReturn(productPage);
         when(productMapper.toResponseDTO(product)).thenReturn(responseDTO);
 
@@ -456,8 +455,7 @@ class ProductServiceImplTest {
         assertNotNull(result);
         assertEquals(1, result.getTotalElements());
         verify(productRepository).searchProducts(null, null, null, null,
-                org.springframework.data.domain.PageRequest.of(0, 20,
-                        org.springframework.data.domain.Sort.by("name").ascending()));
+                org.springframework.data.domain.PageRequest.of(0, 20));
     }
 
     /**

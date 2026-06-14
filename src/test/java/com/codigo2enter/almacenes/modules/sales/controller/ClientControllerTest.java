@@ -64,7 +64,7 @@ class ClientControllerTest {
                 .content(List.of(dto))
                 .currentPage(0).totalPages(1).totalElements(1).size(20)
                 .first(true).last(true).build();
-        when(clientService.getAllActiveClients(0, 20)).thenReturn(page);
+        when(clientService.searchClients(null, 0, 20)).thenReturn(page);
 
         mockMvc.perform(get(BASE + "/active"))
                 .andExpect(status().isOk())

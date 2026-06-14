@@ -50,6 +50,16 @@ class AuditAndConstraintIntegrationTest {
 
     private final String suffix = String.valueOf(System.currentTimeMillis() % 100000);
 
+    /**
+     * Normaliza un RFC de prueba a la longitud requerida por
+     * {@code SupplierDTO.rfc} (@Size(min=12, max=13)) rellenando con
+     * ceros a la derecha o truncando si excede 13 caracteres.
+     */
+    private static String rfc12(String raw) {
+        String padded = raw.length() >= 12 ? raw : raw + "0".repeat(12 - raw.length());
+        return padded.length() > 13 ? padded.substring(0, 13) : padded;
+    }
+
     @BeforeEach
     void setUp() {
         base = "http://localhost:" + port + "/api/v1";
@@ -539,7 +549,7 @@ class AuditAndConstraintIntegrationTest {
     @SuppressWarnings("unchecked")
     private Long crearProveedor(String rfc) {
         Map<String, String> body = new HashMap<>();
-        body.put("rfc",         rfc);
+        body.put("rfc",         rfc12(rfc));
         body.put("companyName", "Proveedor " + rfc);
         body.put("email",       rfc.toLowerCase() + "@test.com");
         ResponseEntity<Map> resp = restTemplate.postForEntity(

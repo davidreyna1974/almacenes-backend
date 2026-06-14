@@ -152,7 +152,7 @@ class CategoryControllerTest {
                 .content(List.of(response, response2))
                 .currentPage(0).totalPages(1).totalElements(2).size(20)
                 .first(true).last(true).build();
-        when(categoryService.getAllActiveCategories(0, 20)).thenReturn(page);
+        when(categoryService.searchCategories(null, 0, 20)).thenReturn(page);
 
         // ACT + ASSERT
         mockMvc.perform(get("/api/v1/inventory/categories/active"))

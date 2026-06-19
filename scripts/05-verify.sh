@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# SCRIPT VERIFY — VERIFICACIÓN POST-DESPLIEGUE (Smoke Tests)
+# SCRIPT 05 — VERIFICACIÓN POST-DESPLIEGUE (Smoke Tests)
 # Sistema  : Almacenes — codigoCodigoEnter
 # Dominio  : almacenes.codigo2enter.com
 # Versión  : 1.0 (2026-06-18)
@@ -11,12 +11,12 @@
 #   despliegue completo.
 #
 # Prerequisitos:
-#   - Scripts 01-05 ejecutados exitosamente
+#   - Scripts 01-04 ejecutados exitosamente
 #   - DNS del dominio apuntando al servidor
 #
 # Cómo ejecutar:
-#   bash verify.sh
-#   bash verify.sh almacenes.codigo2enter.com    (dominio custom)
+#   bash 05-verify.sh
+#   bash 05-verify.sh almacenes.codigo2enter.com    (dominio custom)
 #
 # Pruebas (smoke tests):
 #   1. Contenedores Docker activos (db, backend, frontend)

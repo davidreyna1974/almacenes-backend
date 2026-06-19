@@ -1,19 +1,15 @@
 #!/bin/bash
 # ============================================================
-# SCRIPT 04 — UTILIDAD DE MANTENIMIENTO DE BASE DE DATOS
+# MAINT-DB — UTILIDAD DE MANTENIMIENTO DE BASE DE DATOS
 # Sistema  : Almacenes — codigoCodigoEnter
 # Dominio  : almacenes.codigo2enter.com
 # Versión  : 2.0 (2026-06-18)
 #
-# ⚠ UTILIDAD OPCIONAL — NO ES REQUERIDA EN EL FLUJO NORMAL
+# ⚠ UTILIDAD OPCIONAL — NO ES PARTE DE LA SECUENCIA DE DESPLIEGUE
 #
-# Desde la versión 2.0, el script 03-deploy.sh realiza toda la
-# inicialización de la base de datos automáticamente:
-#   - Instala unaccent, crea f_unaccent
-#   - Carga schema.sql en primer despliegue + inserta roles
-#   - Crea los 10 índices de rendimiento
-#
-# Este script existe para operaciones de mantenimiento puntual:
+# 03-deploy.sh inicializa la BD automáticamente (primer despliegue
+# y re-despliegues). Este script existe para operaciones de
+# mantenimiento puntual fuera del flujo normal:
 #   - Re-crear índices tras un pg_restore
 #   - Re-instalar f_unaccent si fue eliminada accidentalmente
 #   - Cargar un dump SQL en un entorno de staging
@@ -24,8 +20,8 @@
 #   - Contenedor 'db' disponible y PostgreSQL iniciado
 #
 # Cómo ejecutar:
-#   bash 04-init-db.sh                                    (solo índices y extensión)
-#   bash 04-init-db.sh --schema /ruta/al/schema.sql       (con carga de SQL)
+#   bash maint-db.sh                                    (solo índices y extensión)
+#   bash maint-db.sh --schema /ruta/al/schema.sql       (con carga de SQL)
 #
 # Qué hace paso a paso:
 #   1. Verifica que el contenedor db está corriendo
@@ -169,7 +165,7 @@ ON CONFLICT (name) DO NOTHING;"
 else
     warn "No se especificó --schema."
     warn "Si es el PRIMER despliegue, DEBES cargar schema.sql antes de arrancar el backend:"
-    warn "  bash 04-init-db.sh --schema /ruta/al/schema.sql"
+    warn "  bash maint-db.sh --schema /ruta/al/schema.sql"
     warn "El perfil de producción usa ddl-auto: validate — Hibernate NO crea tablas."
 fi
 
@@ -289,5 +285,5 @@ echo "  Función      : f_unaccent(text)"
 echo "  Índices      : 10 creados"
 echo ""
 echo -e "${YELLOW}  SIGUIENTE PASO:${NC}"
-echo "  sudo bash 05-firewall.sh"
+echo "  sudo bash 04-firewall.sh"
 echo ""

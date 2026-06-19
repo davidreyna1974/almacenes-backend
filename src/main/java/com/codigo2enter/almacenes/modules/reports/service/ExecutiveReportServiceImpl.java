@@ -1,5 +1,6 @@
 package com.codigo2enter.almacenes.modules.reports.service;
 
+import com.codigo2enter.almacenes.core.exception.BusinessRuleException;
 import com.codigo2enter.almacenes.modules.inventory.repository.ProductRepository;
 import com.codigo2enter.almacenes.modules.purchases.repository.PurchaseOrderRepository;
 import com.codigo2enter.almacenes.modules.reports.dto.executive.ExecutiveDashboardDTO;
@@ -144,11 +145,11 @@ public class ExecutiveReportServiceImpl implements ExecutiveReportService {
     @Override
     public SalesProfitabilityDTO getSalesProfitability(LocalDate from, LocalDate to) {
         if (from == null || to == null) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                     "Los parámetros 'from' y 'to' son obligatorios para el reporte de rentabilidad.");
         }
         if (from.isAfter(to)) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                     "El parámetro 'from' no puede ser posterior a 'to'.");
         }
 

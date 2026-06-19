@@ -1,5 +1,6 @@
 package com.codigo2enter.almacenes.modules.reports.service;
 
+import com.codigo2enter.almacenes.core.exception.ResourceNotFoundException;
 import com.codigo2enter.almacenes.modules.inventory.model.MovementType;
 import com.codigo2enter.almacenes.modules.inventory.model.Product;
 import com.codigo2enter.almacenes.modules.inventory.model.StockMovement;
@@ -109,7 +110,7 @@ public class OperationalReportServiceImpl implements OperationalReportService {
     @Override
     public KardexReportDTO getKardex(Long productId, LocalDate from, LocalDate to) {
         Product product = productRepository.findById(productId)
-                .orElseThrow(() -> new RuntimeException(
+                .orElseThrow(() -> new ResourceNotFoundException(
                         "Producto no encontrado con ID: " + productId));
 
         LocalDateTime fromDt = from != null ? from.atStartOfDay() : LocalDateTime.of(2000, 1, 1, 0, 0);

@@ -2,6 +2,7 @@ package com.codigo2enter.almacenes.modules.purchases.service;
 
 import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
 import com.codigo2enter.almacenes.core.exception.BusinessRuleException;
+import com.codigo2enter.almacenes.core.exception.ResourceNotFoundException;
 import com.codigo2enter.almacenes.modules.auth.model.User;
 import com.codigo2enter.almacenes.modules.auth.repository.UserRepository;
 import com.codigo2enter.almacenes.modules.inventory.dto.StockMovementRequestDTO;
@@ -84,7 +85,7 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
         // Procesar cada detalle del request
         for (PurchaseOrderDetailRequestDTO detailDto : dto.getDetails()) {
             var product = productRepository.findById(detailDto.getProductId())
-                    .orElseThrow(() -> new RuntimeException(
+                    .orElseThrow(() -> new ResourceNotFoundException(
                             "Producto con id " + detailDto.getProductId() + " no encontrado."));
 
             BigDecimal subtotal = detailDto.getUnitPrice()
@@ -204,7 +205,7 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
     @Transactional(readOnly = true)
     public List<PurchaseOrderResponseDTO> findOrdersByProduct(Long productId) {
         productRepository.findById(productId)
-                .orElseThrow(() -> new RuntimeException(
+                .orElseThrow(() -> new ResourceNotFoundException(
                         "Producto con id " + productId + " no encontrado."));
         return toResponseDTOListFiltered(
                 purchaseOrderRepository.findByProductId(productId));
@@ -338,7 +339,7 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
         validatePending(order, "agregar detalles a");
 
         var product = productRepository.findById(dto.getProductId())
-                .orElseThrow(() -> new RuntimeException(
+                .orElseThrow(() -> new ResourceNotFoundException(
                         "Producto con id " + dto.getProductId() + " no encontrado."));
 
         if (purchaseOrderDetailRepository.existsByPurchaseOrderIdAndProductId(
@@ -377,7 +378,7 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
 
         PurchaseOrderDetail detail = purchaseOrderDetailRepository
                 .findByIdAndPurchaseOrderId(detailId, orderId)
-                .orElseThrow(() -> new RuntimeException(
+                .orElseThrow(() -> new ResourceNotFoundException(
                         "Detalle con id " + detailId + " no encontrado o no pertenece a esta orden."));
 
         detail.setQuantity(dto.getQuantity());
@@ -404,7 +405,7 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
 
         PurchaseOrderDetail detail = purchaseOrderDetailRepository
                 .findByIdAndPurchaseOrderId(detailId, orderId)
-                .orElseThrow(() -> new RuntimeException(
+                .orElseThrow(() -> new ResourceNotFoundException(
                         "Detalle con id " + detailId + " no encontrado o no pertenece a esta orden."));
 
         // orphanRemoval=true hace que Hibernate elimine físicamente el detalle
@@ -424,7 +425,7 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
      */
     private PurchaseOrder findOrderOrThrow(Long id) {
         return purchaseOrderRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException(
+                .orElseThrow(() -> new ResourceNotFoundException(
                         "Orden de compra con id " + id + " no encontrada."));
     }
 
@@ -433,7 +434,7 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
      */
     private Supplier findSupplierOrThrow(Long id) {
         return supplierRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException(
+                .orElseThrow(() -> new ResourceNotFoundException(
                         "Proveedor con id " + id + " no encontrado."));
     }
 
@@ -444,7 +445,7 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
     private User resolveAuthenticatedUser() {
         String username = SecurityContextHolder.getContext().getAuthentication().getName();
         return userRepository.findByUsername(username)
-                .orElseThrow(() -> new RuntimeException(
+                .orElseThrow(() -> new ResourceNotFoundException(
                         "Usuario autenticado no encontrado en el sistema."));
     }
 

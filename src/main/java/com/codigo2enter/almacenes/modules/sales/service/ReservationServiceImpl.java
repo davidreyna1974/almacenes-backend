@@ -1,5 +1,6 @@
 package com.codigo2enter.almacenes.modules.sales.service;
 
+import com.codigo2enter.almacenes.core.exception.ResourceNotFoundException;
 import com.codigo2enter.almacenes.modules.inventory.model.Product;
 import com.codigo2enter.almacenes.modules.inventory.repository.ProductRepository;
 import com.codigo2enter.almacenes.modules.sales.dto.*;
@@ -68,7 +69,7 @@ public class ReservationServiceImpl implements ReservationService {
     @Override
     public ReservedProductDTO getProductReservationDetail(Long productId) {
         Product product = productRepository.findById(productId)
-                .orElseThrow(() -> new RuntimeException(
+                .orElseThrow(() -> new ResourceNotFoundException(
                     "Producto con id " + productId + " no encontrado."));
 
         List<SaleOrder> approvedOrders = saleOrderRepository
@@ -96,7 +97,7 @@ public class ReservationServiceImpl implements ReservationService {
     @Override
     public ReservedClientDTO getClientReservationDetail(Long clientId) {
         if (!clientRepository.existsById(clientId)) {
-            throw new RuntimeException("Cliente con id " + clientId + " no encontrado.");
+            throw new ResourceNotFoundException("Cliente con id " + clientId + " no encontrado.");
         }
 
         List<SaleOrder> approvedOrders = saleOrderRepository

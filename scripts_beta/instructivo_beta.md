@@ -23,8 +23,8 @@ brew install lima
 
 **Paso 3 — Crear la VM Ubuntu 24.04** *(~2–5 min la primera vez — descarga imagen)*
 ```bash
-BETA="/Users/davidreynapineda/Documents/Proyecto desarrollo/codigo/backend/almacenes/scripts_beta"
-limactl start --name=almacenes-beta "$BETA/almacenes-beta.yaml"
+limactl start --name=almacenes-beta \
+  "/Users/davidreynapineda/Documents/Proyecto desarrollo/codigo/backend/almacenes/scripts_beta/almacenes-beta.yaml"
 ```
 > Si falla con `vmType: vz`, editar `almacenes-beta.yaml` y cambiar a `vmType: qemu`.
 
@@ -37,14 +37,14 @@ limactl shell almacenes-beta
 
 ## Dentro de la VM (todos los pasos siguientes)
 
-**Paso 5 — Definir rutas** *(ejecutar en cada sesión nueva)*
+**Paso 5 — Definir ruta a scripts_beta** *(ejecutar en cada sesión nueva)*
 ```bash
-REPO="/Users/davidreynapineda/Documents/Proyecto desarrollo/codigo/backend/almacenes"
+BETA="/Users/davidreynapineda/Documents/Proyecto desarrollo/codigo/backend/almacenes/scripts_beta"
 ```
 
 **Paso 6 — Preparar el servidor** *(instala Docker, git, dependencias — ~5 min)*
 ```bash
-sudo bash "$REPO/scripts/01-prepare-server.sh"
+sudo bash "$BETA/01-prepare-server.sh"
 ```
 
 **Paso 7 — Reabrir sesión** *(obligatorio para activar el grupo `docker`)*
@@ -53,7 +53,7 @@ exit
 ```
 ```bash
 limactl shell almacenes-beta
-REPO="/Users/davidreynapineda/Documents/Proyecto desarrollo/codigo/backend/almacenes"
+BETA="/Users/davidreynapineda/Documents/Proyecto desarrollo/codigo/backend/almacenes/scripts_beta"
 ```
 
 **Paso 8 — Clonar repositorios**
@@ -76,24 +76,24 @@ echo "127.0.0.1  almacenes.codigo2enter.com" | sudo tee -a /etc/hosts
 
 **Paso 10 — Generar certificado autofirmado**
 ```bash
-sudo bash "$REPO/scripts_beta/02-ssl-local.sh"
+sudo bash "$BETA/02-ssl-local.sh"
 ```
 
 **Paso 11 — Desplegar** *(builds Docker, inicializa BD, levanta servicios)*
 ```bash
-bash "$REPO/scripts/03-deploy.sh"
+bash "$BETA/03-deploy.sh"
 ```
 > El script pedirá confirmación antes de sobrescribir `.env` y `docker-compose.yml`.
 > En primera ejecución: presionar `s` para aceptar valores generados.
 
 **Paso 12 — Firewall** *(opcional en beta)*
 ```bash
-sudo bash "$REPO/scripts/04-firewall.sh"
+sudo bash "$BETA/04-firewall.sh"
 ```
 
 **Paso 13 — Verificar** *(8/8 tests deben pasar)*
 ```bash
-bash "$REPO/scripts_beta/05-verify-local.sh"
+bash "$BETA/05-verify-local.sh"
 ```
 
 ---

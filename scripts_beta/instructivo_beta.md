@@ -37,6 +37,9 @@ limactl shell almacenes-beta
 
 ## Dentro de la VM (todos los pasos siguientes)
 
+> `scripts_beta/` contiene todos los scripts necesarios — no se necesita ningún otro directorio.
+> Basta con definir `$BETA` una vez al inicio de cada sesión y usar esa variable en todos los pasos.
+
 **Paso 5 — Definir ruta a scripts_beta** *(ejecutar en cada sesión nueva)*
 ```bash
 BETA="/Users/davidreynapineda/Documents/Proyecto desarrollo/codigo/backend/almacenes/scripts_beta"

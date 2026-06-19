@@ -7,6 +7,9 @@ import com.codigo2enter.almacenes.modules.purchases.dto.PurchaseOrderRequestDTO;
 import com.codigo2enter.almacenes.modules.purchases.dto.PurchaseOrderResponseDTO;
 import com.codigo2enter.almacenes.modules.purchases.dto.PurchaseOrderUpdateRequestDTO;
 import com.codigo2enter.almacenes.modules.purchases.service.PurchaseOrderService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -60,6 +63,9 @@ public class PurchaseOrderController {
      * @param dto datos de la orden y sus detalles iniciales
      * @return 201 Created con la PurchaseOrderResponseDTO completa
      */
+    @Operation(summary = "Crear orden de compra", description = "Crea una OC en estado PENDING — orderNumber (OC-YYYY-NNNN) y totalAmount los genera el servicio")
+    @ApiResponses({ @ApiResponse(responseCode = "201", description = "Orden creada"),
+                    @ApiResponse(responseCode = "400", description = "Datos inválidos o lista de detalles vacía") })
     @PostMapping
     public ResponseEntity<PurchaseOrderResponseDTO> createOrder(
             @Valid @RequestBody PurchaseOrderRequestDTO dto) {
@@ -77,6 +83,9 @@ public class PurchaseOrderController {
      * @param id identificador de la orden
      * @return 200 OK con la PurchaseOrderResponseDTO incluyendo detalles
      */
+    @Operation(summary = "Obtener orden de compra por ID", description = "Devuelve la orden completa con todos sus detalles y timestamps de transición de estado")
+    @ApiResponses({ @ApiResponse(responseCode = "200", description = "Orden encontrada"),
+                    @ApiResponse(responseCode = "404", description = "Orden no encontrada") })
     @GetMapping("/{id}")
     public ResponseEntity<PurchaseOrderResponseDTO> findById(@PathVariable Long id) {
         return ResponseEntity.ok(purchaseOrderService.findById(id));
@@ -94,6 +103,9 @@ public class PurchaseOrderController {
      * @param status nombre del estado como String
      * @return 200 OK con la lista de órdenes (puede ser vacía)
      */
+    @Operation(summary = "Órdenes de compra por estado", description = "Retorna órdenes paginadas por estado — valores válidos: PENDING, APPROVED, RECEIVED, CANCELLED")
+    @ApiResponses({ @ApiResponse(responseCode = "200", description = "Página de órdenes"),
+                    @ApiResponse(responseCode = "400", description = "Estado inválido") })
     @GetMapping("/status/{status}")
     public ResponseEntity<PageResponseDTO<PurchaseOrderResponseDTO>> findByStatus(
             @PathVariable String status,
@@ -112,6 +124,9 @@ public class PurchaseOrderController {
      * @param supplierId identificador del proveedor
      * @return 200 OK con la lista de órdenes del proveedor
      */
+    @Operation(summary = "Órdenes de compra por proveedor", description = "Historial completo de órdenes de un proveedor en cualquier estado")
+    @ApiResponses({ @ApiResponse(responseCode = "200", description = "Lista de órdenes del proveedor"),
+                    @ApiResponse(responseCode = "404", description = "Proveedor no encontrado") })
     @GetMapping("/supplier/{supplierId}")
     public ResponseEntity<List<PurchaseOrderResponseDTO>> findBySupplierId(
             @PathVariable Long supplierId) {
@@ -134,6 +149,9 @@ public class PurchaseOrderController {
      * @param status     nombre del estado (case-sensitive)
      * @return 200 OK con la lista filtrada (puede ser vacía)
      */
+    @Operation(summary = "Órdenes por proveedor y estado", description = "Filtro combinado proveedor + estado — más eficiente que filtrar en el frontend")
+    @ApiResponses({ @ApiResponse(responseCode = "200", description = "Lista filtrada de órdenes"),
+                    @ApiResponse(responseCode = "404", description = "Proveedor no encontrado") })
     @GetMapping("/supplier/{supplierId}/status/{status}")
     public ResponseEntity<List<PurchaseOrderResponseDTO>> findBySupplierIdAndStatus(
             @PathVariable Long supplierId,
@@ -152,6 +170,9 @@ public class PurchaseOrderController {
      * @param productId identificador del producto
      * @return 200 OK con la lista de órdenes que contienen ese producto
      */
+    @Operation(summary = "Órdenes de compra por producto", description = "Historial de compras de un producto — precios históricos y proveedores utilizados")
+    @ApiResponses({ @ApiResponse(responseCode = "200", description = "Lista de órdenes con ese producto"),
+                    @ApiResponse(responseCode = "404", description = "Producto no encontrado") })
     @GetMapping("/product/{productId}")
     public ResponseEntity<List<PurchaseOrderResponseDTO>> findOrdersByProduct(
             @PathVariable Long productId) {
@@ -171,6 +192,11 @@ public class PurchaseOrderController {
      * @param dto nuevos valores de supplierId y notes
      * @return 200 OK con la PurchaseOrderResponseDTO actualizada
      */
+    @Operation(summary = "Actualizar orden de compra", description = "Edita supplierId y notes — solo permitido en estado PENDING; los detalles tienen endpoints propios")
+    @ApiResponses({ @ApiResponse(responseCode = "200", description = "Orden actualizada"),
+                    @ApiResponse(responseCode = "400", description = "Datos inválidos"),
+                    @ApiResponse(responseCode = "404", description = "Orden no encontrada"),
+                    @ApiResponse(responseCode = "422", description = "La orden no está en estado PENDING") })
     @PutMapping("/{id}")
     public ResponseEntity<PurchaseOrderResponseDTO> updateOrder(
             @PathVariable Long id,
@@ -190,6 +216,10 @@ public class PurchaseOrderController {
      * @param id identificador de la orden a aprobar
      * @return 200 OK con la orden en estado APPROVED y approvedAt asignado
      */
+    @Operation(summary = "Aprobar orden de compra", description = "Transición PENDING → APPROVED — bloquea edición de detalles; requiere al menos un detalle")
+    @ApiResponses({ @ApiResponse(responseCode = "200", description = "Orden aprobada"),
+                    @ApiResponse(responseCode = "404", description = "Orden no encontrada"),
+                    @ApiResponse(responseCode = "422", description = "La orden no está en PENDING o no tiene detalles") })
     @PatchMapping("/{id}/approve")
     public ResponseEntity<PurchaseOrderResponseDTO> approveOrder(@PathVariable Long id) {
         return ResponseEntity.ok(purchaseOrderService.approveOrder(id));
@@ -208,6 +238,10 @@ public class PurchaseOrderController {
      * @param id identificador de la orden a recibir
      * @return 200 OK con la orden en estado RECEIVED y receivedAt asignado
      */
+    @Operation(summary = "Recibir orden de compra", description = "Transición APPROVED → RECEIVED — incrementa stock (IN) por cada detalle en la misma transacción; estado terminal")
+    @ApiResponses({ @ApiResponse(responseCode = "200", description = "Orden recibida — stock actualizado"),
+                    @ApiResponse(responseCode = "404", description = "Orden no encontrada"),
+                    @ApiResponse(responseCode = "422", description = "La orden no está en APPROVED") })
     @PatchMapping("/{id}/receive")
     public ResponseEntity<PurchaseOrderResponseDTO> receiveOrder(@PathVariable Long id) {
         return ResponseEntity.ok(purchaseOrderService.receiveOrder(id));
@@ -224,6 +258,10 @@ public class PurchaseOrderController {
      * @param id identificador de la orden a cancelar
      * @return 200 OK con la orden en estado CANCELLED y cancelledAt asignado
      */
+    @Operation(summary = "Cancelar orden de compra", description = "Transición PENDING/APPROVED → CANCELLED — no impacta inventario; estado terminal")
+    @ApiResponses({ @ApiResponse(responseCode = "200", description = "Orden cancelada"),
+                    @ApiResponse(responseCode = "404", description = "Orden no encontrada"),
+                    @ApiResponse(responseCode = "422", description = "La orden ya está en estado terminal (RECEIVED o CANCELLED)") })
     @PatchMapping("/{id}/cancel")
     public ResponseEntity<PurchaseOrderResponseDTO> cancelOrder(@PathVariable Long id) {
         return ResponseEntity.ok(purchaseOrderService.cancelOrder(id));
@@ -242,6 +280,12 @@ public class PurchaseOrderController {
      * @param dto datos del detalle (productId, quantity, unitPrice)
      * @return 201 Created con la orden completa incluyendo el nuevo detalle
      */
+    @Operation(summary = "Agregar detalle a OC", description = "Añade una línea de producto a una OC en PENDING — recalcula totalAmount; un producto no puede repetirse")
+    @ApiResponses({ @ApiResponse(responseCode = "201", description = "Detalle agregado — retorna orden completa"),
+                    @ApiResponse(responseCode = "400", description = "Datos inválidos"),
+                    @ApiResponse(responseCode = "404", description = "Orden o producto no encontrado"),
+                    @ApiResponse(responseCode = "409", description = "El producto ya está en la orden"),
+                    @ApiResponse(responseCode = "422", description = "La orden no está en PENDING") })
     @PostMapping("/{id}/details")
     public ResponseEntity<PurchaseOrderResponseDTO> addDetail(
             @PathVariable Long id,
@@ -265,6 +309,11 @@ public class PurchaseOrderController {
      * @param dto      nuevos valores de quantity y unitPrice
      * @return 200 OK con la orden completa y totalAmount recalculado
      */
+    @Operation(summary = "Actualizar detalle de OC", description = "Edita quantity/unitPrice de un detalle en PENDING — productId no es editable; recalcula subtotal y totalAmount")
+    @ApiResponses({ @ApiResponse(responseCode = "200", description = "Detalle actualizado — retorna orden completa"),
+                    @ApiResponse(responseCode = "400", description = "Datos inválidos"),
+                    @ApiResponse(responseCode = "404", description = "Orden o detalle no encontrado"),
+                    @ApiResponse(responseCode = "422", description = "La orden no está en PENDING") })
     @PutMapping("/{id}/details/{detailId}")
     public ResponseEntity<PurchaseOrderResponseDTO> updateDetail(
             @PathVariable Long id,
@@ -288,6 +337,10 @@ public class PurchaseOrderController {
      * @param detailId identificador del detalle a eliminar
      * @return 204 No Content — eliminación exitosa sin cuerpo de respuesta
      */
+    @Operation(summary = "Eliminar detalle de OC", description = "Eliminación física del detalle (orphanRemoval) en OC PENDING — recalcula totalAmount")
+    @ApiResponses({ @ApiResponse(responseCode = "204", description = "Detalle eliminado"),
+                    @ApiResponse(responseCode = "404", description = "Orden o detalle no encontrado"),
+                    @ApiResponse(responseCode = "422", description = "La orden no está en PENDING") })
     @DeleteMapping("/{id}/details/{detailId}")
     public ResponseEntity<Void> removeDetail(
             @PathVariable Long id,

@@ -3,6 +3,9 @@ package com.codigo2enter.almacenes.modules.inventory.controller;
 import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
 import com.codigo2enter.almacenes.modules.inventory.dto.CategoryDTO;
 import com.codigo2enter.almacenes.modules.inventory.service.CategoryService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -54,6 +57,10 @@ public class CategoryController {
      * @param dto datos de la nueva categoría enviados por el cliente
      * @return 201 Created con el CategoryDTO que incluye el id asignado
      */
+    @Operation(summary = "Crear categoría", description = "Crea una nueva categoría de productos")
+    @ApiResponses({ @ApiResponse(responseCode = "201", description = "Categoría creada"),
+                    @ApiResponse(responseCode = "400", description = "Datos inválidos"),
+                    @ApiResponse(responseCode = "409", description = "Nombre ya existe") })
     @PostMapping
     public ResponseEntity<CategoryDTO> createCategory(@Valid @RequestBody CategoryDTO dto) {
         return ResponseEntity.status(HttpStatus.CREATED)
@@ -70,6 +77,8 @@ public class CategoryController {
      * @param search texto a buscar en nombre (opcional)
      * @return 200 OK con la página de categorías activas
      */
+    @Operation(summary = "Listar categorías activas", description = "Retorna categorías activas paginadas con búsqueda accent-insensitive")
+    @ApiResponse(responseCode = "200", description = "Lista de categorías")
     @GetMapping("/active")
     public ResponseEntity<PageResponseDTO<CategoryDTO>> getAllActiveCategories(
             @RequestParam(required = false) String search,
@@ -89,6 +98,10 @@ public class CategoryController {
      * @param dto datos nuevos enviados por el cliente
      * @return 200 OK con el CategoryDTO actualizado
      */
+    @Operation(summary = "Actualizar categoría", description = "Actualiza nombre y descripción de una categoría existente")
+    @ApiResponses({ @ApiResponse(responseCode = "200", description = "Categoría actualizada"),
+                    @ApiResponse(responseCode = "404", description = "Categoría no encontrada"),
+                    @ApiResponse(responseCode = "409", description = "Nombre ya existe en otra categoría") })
     @PutMapping("/{id}")
     public ResponseEntity<CategoryDTO> updateCategory(
             @PathVariable Long id,
@@ -110,6 +123,10 @@ public class CategoryController {
      * @param id identificador de la categoría a desactivar
      * @return 204 No Content
      */
+    @Operation(summary = "Desactivar categoría", description = "Desactivación lógica (soft delete) — solo si no tiene productos activos")
+    @ApiResponses({ @ApiResponse(responseCode = "204", description = "Desactivada correctamente"),
+                    @ApiResponse(responseCode = "404", description = "Categoría no encontrada"),
+                    @ApiResponse(responseCode = "422", description = "Tiene productos activos asociados") })
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deactivateCategory(@PathVariable Long id) {
         categoryService.deactivateCategory(id);

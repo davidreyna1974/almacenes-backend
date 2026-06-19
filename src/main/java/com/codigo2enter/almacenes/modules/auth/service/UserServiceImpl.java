@@ -1,6 +1,9 @@
 package com.codigo2enter.almacenes.modules.auth.service;
 
 import com.codigo2enter.almacenes.core.dto.PageResponseDTO;
+import com.codigo2enter.almacenes.core.exception.BusinessRuleException;
+import com.codigo2enter.almacenes.core.exception.DuplicateResourceException;
+import com.codigo2enter.almacenes.core.exception.ResourceNotFoundException;
 import com.codigo2enter.almacenes.core.exception.TooManyAttemptsException;
 import com.codigo2enter.almacenes.core.security.JwtUtils;
 import com.codigo2enter.almacenes.modules.auth.dto.*;
@@ -109,11 +112,11 @@ public class UserServiceImpl implements UserService {
     @Override
     public UserResponseDTO createUser(UserCreateDTO dto) {
         if (userRepository.existsByUsername(dto.getUsername())) {
-            throw new RuntimeException(
+            throw new DuplicateResourceException(
                 "El nombre de usuario '" + dto.getUsername() + "' ya está registrado.");
         }
         if (userRepository.existsByEmail(dto.getEmail())) {
-            throw new RuntimeException(
+            throw new DuplicateResourceException(
                 "El email '" + dto.getEmail() + "' ya está registrado.");
         }
 
@@ -134,11 +137,11 @@ public class UserServiceImpl implements UserService {
         User user = findUserOrThrow(id);
 
         userRepository.findByUsernameAndIdNot(dto.getUsername(), id).ifPresent(u -> {
-            throw new RuntimeException(
+            throw new DuplicateResourceException(
                 "El username '" + dto.getUsername() + "' ya está en uso por otro usuario.");
         });
         userRepository.findByEmailAndIdNot(dto.getEmail(), id).ifPresent(u -> {
-            throw new RuntimeException(
+            throw new DuplicateResourceException(
                 "El email '" + dto.getEmail() + "' ya está en uso por otro usuario.");
         });
 
@@ -155,7 +158,7 @@ public class UserServiceImpl implements UserService {
         String currentUsername = SecurityContextHolder.getContext()
                 .getAuthentication().getName();
         if (user.getUsername().equals(currentUsername)) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                 "No puedes desactivar tu propia cuenta. " +
                 "Pide a otro administrador que lo haga.");
         }
@@ -189,13 +192,13 @@ public class UserServiceImpl implements UserService {
     @Override
     public void changePassword(ChangePasswordDTO dto) {
         if (!dto.getNewPassword().equals(dto.getConfirmPassword())) {
-            throw new RuntimeException("Las contraseñas nuevas no coinciden.");
+            throw new BusinessRuleException("Las contraseñas nuevas no coinciden.");
         }
 
         User user = resolveAuthenticatedUser();
 
         if (!passwordEncoder.matches(dto.getCurrentPassword(), user.getPassword())) {
-            throw new RuntimeException("La contraseña actual es incorrecta.");
+            throw new BusinessRuleException("La contraseña actual es incorrecta.");
         }
 
         user.setPassword(passwordEncoder.encode(dto.getNewPassword()));
@@ -208,26 +211,26 @@ public class UserServiceImpl implements UserService {
     private User findUserOrThrow(Long id) {
         return userRepository.findById(id)
                 .filter(User::isActive)
-                .orElseThrow(() -> new RuntimeException(
+                .orElseThrow(() -> new ResourceNotFoundException(
                     "Usuario con id " + id + " no encontrado o inactivo."));
     }
 
     private User resolveAuthenticatedUser() {
         String username = SecurityContextHolder.getContext().getAuthentication().getName();
         return userRepository.findByUsername(username)
-                .orElseThrow(() -> new RuntimeException(
+                .orElseThrow(() -> new ResourceNotFoundException(
                     "Usuario autenticado no encontrado en el sistema."));
     }
 
     /**
      * Convierte un Set<String> de nombres de rol a entidades Role.
-     * Lanza RuntimeException si algún nombre no corresponde a un rol existente.
+     * Lanza BusinessRuleException si algún nombre no corresponde a un rol existente.
      */
     private Set<Role> resolveRoles(Set<String> roleNames) {
         Set<Role> roles = new HashSet<>();
         for (String name : roleNames) {
             Role role = roleRepository.findByName(name)
-                    .orElseThrow(() -> new RuntimeException(
+                    .orElseThrow(() -> new BusinessRuleException(
                         "Rol '" + name + "' no existe. " +
                         "Roles válidos: ROLE_ADMIN, ROLE_MANAGER, ROLE_WAREHOUSEMAN, ROLE_SALES."));
             roles.add(role);

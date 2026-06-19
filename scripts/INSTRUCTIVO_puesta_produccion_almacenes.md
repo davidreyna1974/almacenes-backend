@@ -62,7 +62,7 @@ PREREQUISITOS
         │                   DB inicializada (unaccent, schema.sql, roles, 10 índices),
         │                   backend y frontend activos, /actuator/health OK
         ▼
-[05-firewall.sh]         → ufw activo: 80/443 ALLOW · 8080/5432 DENY
+[04-firewall.sh]         → ufw activo: 80/443 ALLOW · 8080/5432 DENY
         │
         ▼
 [PASO MANUAL — OPS-B3]   → Carga de datos iniciales en la BD
@@ -74,15 +74,15 @@ PREREQUISITOS
 [PASO MANUAL — OPS-B1/B2] → Configuración de backup automático diario
         │
         ▼
-[verify.sh]              → 8/8 smoke tests PASS → PRODUCCIÓN ACTIVA
+[05-verify.sh]           → 8/8 smoke tests PASS → PRODUCCIÓN ACTIVA
         │
         ▼
 https://almacenes.codigo2enter.com
 ```
 
-> `04-init-db.sh` ya NO es parte del flujo principal. `03-deploy.sh` inicializa la BD
-> automáticamente. El script `04-init-db.sh` queda como utilidad de mantenimiento
-> opcional (re-crear índices tras un `pg_restore`, diagnóstico, carga de dumps en staging).
+> `maint-db.sh` NO es parte de la secuencia. `03-deploy.sh` inicializa la BD
+> automáticamente. `maint-db.sh` es una utilidad de mantenimiento opcional
+> (re-crear índices tras un `pg_restore`, diagnóstico, carga de dumps en staging).
 
 ---
 
@@ -379,11 +379,11 @@ docker compose -f /opt/almacenes/docker-compose.yml exec db \
 
 ---
 
-## Script 04 — Utilidad de mantenimiento de BD (opcional)
+## maint-db.sh — Utilidad de mantenimiento de BD (opcional)
 
 > **⚠ No es necesario ejecutar este script en el despliegue normal.**
 > `03-deploy.sh` inicializa la base de datos automáticamente. Este script
-> existe para operaciones de mantenimiento puntual.
+> existe para operaciones de mantenimiento puntual fuera de la secuencia.
 
 **Cuándo usarlo:**
 - Después de un `pg_restore` para recrear la función `f_unaccent` y los índices
@@ -391,8 +391,8 @@ docker compose -f /opt/almacenes/docker-compose.yml exec db \
 - Para verificar el estado de la BD sin reiniciar el stack
 
 ```bash
-bash 04-init-db.sh                                    # solo extensión + función + índices
-bash 04-init-db.sh --schema /ruta/al/dump.sql         # también carga un SQL
+bash maint-db.sh                                    # solo extensión + función + índices
+bash maint-db.sh --schema /ruta/al/dump.sql         # también carga un SQL
 ```
 
 **Verificación:**
@@ -406,9 +406,9 @@ docker compose -f /opt/almacenes/docker-compose.yml exec db \
 
 ---
 
-## Script 05 — Configuración del firewall
+## Script 04 — Configuración del firewall
 
-**Ejecutar como:** `sudo bash 05-firewall.sh`
+**Ejecutar como:** `sudo bash 04-firewall.sh`
 
 **Qué hace:**
 - Permite puertos 22 (SSH), 80 (HTTP) y 443 (HTTPS)
@@ -438,7 +438,7 @@ sudo ufw status numbered
 ## PASO MANUAL — [OPS-B3] Carga de datos iniciales
 
 Una vez que el sistema está levantado y el firewall activo, la BD tiene el esquema creado
-(tablas vacías, creadas en el paso de `04-init-db.sh --schema schema.sql` durante el Script 03).
+(tablas creadas automáticamente por `03-deploy.sh` durante el primer despliegue).
 El backend usa `ddl-auto: validate` en producción — NO crea ni modifica tablas, solo las
 valida al arrancar. En este punto la BD existe pero está vacía (solo el usuario `admin`
 creado por `DataInitializer`). Hay dos opciones para poblarla:
@@ -461,10 +461,10 @@ Si tienes datos exportados de un sistema anterior en formato SQL:
 scp /ruta/local/datos_produccion.sql usuario@IP-DEL-SERVIDOR:~/
 
 # Ejecutar la carga
-bash ~/scripts-almacenes/04-init-db.sh --schema ~/datos_produccion.sql
+bash ~/scripts-almacenes/maint-db.sh --schema ~/datos_produccion.sql
 ```
 
-El script `04-init-db.sh --schema` carga el archivo SQL dentro del contenedor
+El script `maint-db.sh --schema` carga el archivo SQL dentro del contenedor
 de PostgreSQL. El SQL debe ser compatible con la estructura del esquema de
 Almacenes (tablas: `categories`, `suppliers`, `products`, `clients`, etc.).
 
@@ -736,10 +736,10 @@ aws s3 cp "$BACKUP_FILE" s3://nombre-del-bucket/almacenes/
 
 ---
 
-## Script verify.sh — Verificación post-despliegue (smoke tests)
+## Script 05 — Verificación post-despliegue (smoke tests)
 
-**Ejecutar como:** `bash verify.sh`
-**Con dominio custom:** `bash verify.sh almacenes.codigo2enter.com`
+**Ejecutar como:** `bash 05-verify.sh`
+**Con dominio custom:** `bash 05-verify.sh almacenes.codigo2enter.com`
 
 **8 pruebas automatizadas:**
 
@@ -791,7 +791,7 @@ docker compose -f /opt/almacenes/docker-compose.yml build backend   # o frontend
 docker compose -f /opt/almacenes/docker-compose.yml up -d --no-deps backend   # o frontend
 
 # 5. Verificar
-bash ~/scripts-almacenes/verify.sh
+bash ~/scripts-almacenes/05-verify.sh
 ```
 
 ---
@@ -844,12 +844,12 @@ df -h /opt/almacenes/
 |---|---|---|
 | `permission denied` al usar docker | Usuario no está en grupo docker | Cerrar y reabrir sesión SSH |
 | certbot falla con `Connection refused` | DNS no apunta al servidor, o nginx está corriendo en 80 | Verificar DNS con `nslookup` y que el puerto 80 esté libre |
-| Backend no arranca / `SchemaManagementException` | BD vacía, tablas no creadas | Verificar que `03-deploy.sh` completó el paso 7 sin errores. Si falló: `docker compose logs db` y repetir desde el paso de inicialización. En último caso: `bash 04-init-db.sh --schema /opt/almacenes/backend/src/main/resources/schema.sql` con los contenedores corriendo. |
+| Backend no arranca / `SchemaManagementException` | BD vacía, tablas no creadas | Verificar que `03-deploy.sh` completó el paso 7 sin errores. Si falló: `docker compose logs db` y repetir desde el paso de inicialización. En último caso: `bash maint-db.sh --schema /opt/almacenes/backend/src/main/resources/schema.sql` con los contenedores corriendo. |
 | Backend no arranca / `CORS` rechaza peticiones | `CORS_ALLOWED_ORIGINS` no está en `.env` | Agregar `CORS_ALLOWED_ORIGINS=https://dominio` al `.env` y reiniciar backend |
 | `/login` devuelve 404 | nginx sin `try_files` para SPA | Verificar `nginx.conf` en el Dockerfile del frontend |
 | HTTPS no responde o devuelve error de certificado | Certificados no montados correctamente | Verificar que `/etc/letsencrypt/live/dominio/` tiene `fullchain.pem` y que el volumen está montado en el contenedor frontend |
 | Certificado SSL vencido | Cron de renovación no funciona | `sudo certbot renew --force-renewal` |
-| Puerto 8080 accesible desde internet | Docker bypass de iptables | Ejecutar `sudo bash 05-firewall.sh` de nuevo |
+| Puerto 8080 accesible desde internet | Docker bypass de iptables | Ejecutar `sudo bash 04-firewall.sh` de nuevo |
 | `pg_dump` falla en el backup | Contenedor `db` detenido | `docker compose -f /opt/almacenes/docker-compose.yml start db` |
 | Login con `admin`/`Admin123!` falla | Contraseña ya fue cambiada o BD vacía | Usar la nueva contraseña o verificar que el backend arrancó correctamente |
 
@@ -882,7 +882,7 @@ Backup
 [ ] Restauración probada en BD de prueba temporal
 
 Verificación final
-[ ] bash verify.sh → 8/8 PASS
+[ ] bash 05-verify.sh → 8/8 PASS
 [ ] Acceso https://almacenes.codigo2enter.com desde navegador externo
 [ ] Login con usuario real (no admin)
 ```

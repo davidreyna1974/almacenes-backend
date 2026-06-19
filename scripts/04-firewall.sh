@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# SCRIPT 05 — CONFIGURACIÓN DEL FIREWALL (ufw)
+# SCRIPT 04 — CONFIGURACIÓN DEL FIREWALL (ufw)
 # Sistema  : Almacenes — codigoCodigoEnter
 # Dominio  : almacenes.codigo2enter.com
 # Versión  : 1.0 (2026-06-18)
@@ -20,11 +20,11 @@
 #   tráfico. El firewall es una segunda capa de defensa.
 #
 # Prerequisitos:
-#   - Scripts 01-04 ejecutados exitosamente
+#   - Scripts 01-03 ejecutados exitosamente
 #   - ufw disponible (preinstalado en Ubuntu)
 #
 # Cómo ejecutar:
-#   sudo bash 05-firewall.sh
+#   sudo bash 04-firewall.sh
 #
 # ⚠ ADVERTENCIA DE SSH:
 #   Si estás conectado por SSH, el paso que activa el firewall
@@ -183,11 +183,11 @@ DENY_5432=$(ufw status | grep -c "5432.*DENY" || true)
 # ============================================================
 echo ""
 echo -e "${GREEN}============================================================${NC}"
-echo -e "${GREEN}  SCRIPT 05 COMPLETADO EXITOSAMENTE                         ${NC}"
+echo -e "${GREEN}  SCRIPT 04 COMPLETADO EXITOSAMENTE                         ${NC}"
 echo -e "${GREEN}============================================================${NC}"
 echo ""
 echo "  Firewall ufw: ACTIVO"
 echo ""
 echo -e "${YELLOW}  SIGUIENTE PASO (verificación):${NC}"
-echo "  bash verify.sh"
+echo "  bash 05-verify.sh"
 echo ""

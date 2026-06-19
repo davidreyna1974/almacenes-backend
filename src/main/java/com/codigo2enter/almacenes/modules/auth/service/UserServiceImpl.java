@@ -57,7 +57,7 @@ public class UserServiceImpl implements UserService {
         }
 
         try {
-            User user = userRepository.findByUsername(username)
+            User user = userRepository.findByUsernameWithRoles(username)
                     .orElseThrow(() -> new BadCredentialsException("Credenciales incorrectas."));
 
             if (!user.isActive()) {

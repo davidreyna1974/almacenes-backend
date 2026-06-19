@@ -413,7 +413,7 @@ public class ProductServiceImpl implements ProductService {
     private User resolveAuthenticatedUser() {
         String username = SecurityContextHolder.getContext().getAuthentication().getName();
         return userRepository.findByUsername(username)
-                .orElseThrow(() -> new RuntimeException(
+                .orElseThrow(() -> new ResourceNotFoundException(
                         "Usuario autenticado no encontrado en el sistema."));
     }
 

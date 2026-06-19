@@ -1,5 +1,6 @@
 package com.codigo2enter.almacenes.modules.reports.service;
 
+import com.codigo2enter.almacenes.core.exception.BusinessRuleException;
 import com.codigo2enter.almacenes.modules.inventory.model.Product;
 import com.codigo2enter.almacenes.modules.inventory.repository.ProductRepository;
 import com.codigo2enter.almacenes.modules.purchases.repository.PurchaseOrderRepository;
@@ -350,7 +351,7 @@ public class ManagementReportServiceImpl implements ManagementReportService {
             case "DAY"   -> "YYYY-MM-DD";
             case "WEEK"  -> "IYYY-IW";
             case "MONTH" -> "YYYY-MM";
-            default -> throw new RuntimeException(
+            default -> throw new BusinessRuleException(
                     "Valor de groupBy no reconocido: '" + groupBy + "'. Use DAY, WEEK o MONTH.");
         };
     }

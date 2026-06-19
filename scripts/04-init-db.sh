@@ -206,15 +206,14 @@ ON products(active);
 " && ok "idx_product_active"
 
 psql_exec "
--- Índice 4: Búsqueda de proveedores por nombre (accent-insensitive)
--- Usado por: GET /purchases/suppliers?search=...
-CREATE INDEX IF NOT EXISTS idx_supplier_name_unaccent
-ON suppliers(f_unaccent(lower(name)));
-" && ok "idx_supplier_name_unaccent"
+-- Índice 4: Búsqueda de proveedores por company_name (accent-insensitive)
+-- Columna correcta: company_name (no 'name')
+CREATE INDEX IF NOT EXISTS idx_supplier_company_unaccent
+ON suppliers(f_unaccent(lower(company_name)));
+" && ok "idx_supplier_company_unaccent"
 
 psql_exec "
 -- Índice 5: Búsqueda de clientes por nombre (accent-insensitive)
--- Usado por: GET /sales/clients?search=...
 CREATE INDEX IF NOT EXISTS idx_client_name_unaccent
 ON clients(f_unaccent(lower(name)));
 " && ok "idx_client_name_unaccent"
@@ -234,15 +233,14 @@ ON sale_orders(status);
 " && ok "idx_sale_order_status"
 
 psql_exec "
--- Índice 8: Foreign key de movimientos de inventario → producto
--- Usado por: GET /inventory/products/{id}/movements (Kardex)
-CREATE INDEX IF NOT EXISTS idx_movement_product
-ON inventory_movements(product_id);
-" && ok "idx_movement_product"
+-- Índice 8: Foreign key de movimientos de stock → producto
+-- Tabla correcta: stock_movements (no 'inventory_movements')
+CREATE INDEX IF NOT EXISTS idx_stock_movement_product
+ON stock_movements(product_id);
+" && ok "idx_stock_movement_product"
 
 psql_exec "
--- Índice 9: Listado de órdenes por fecha (descendente)
--- Usado por: todos los listados de órdenes ordenados por createdAt DESC
+-- Índice 9: Listado de órdenes de compra por fecha (descendente)
 CREATE INDEX IF NOT EXISTS idx_purchase_order_created_at
 ON purchase_orders(created_at DESC);
 " && ok "idx_purchase_order_created_at"
@@ -266,9 +264,9 @@ EXT=$(psql_exec "SELECT extname FROM pg_extension WHERE extname='unaccent';" | g
 FUNC=$(psql_exec "\df f_unaccent" | grep -c "f_unaccent" || true)
 [[ "$FUNC" -ge 1 ]] && ok "Función f_unaccent: creada" || warn "⚠ Función f_unaccent: NO encontrada"
 
-# Contar índices creados
+# Contar índices creados (schema.sql crea ~13 + este script ~10 = ~23 total)
 IDX_COUNT=$(psql_exec "SELECT count(*) FROM pg_indexes WHERE indexname LIKE 'idx_%';" | grep -oP '\d+' | head -1 || echo "0")
-ok "Índices encontrados: $IDX_COUNT"
+[[ "${IDX_COUNT:-0}" -ge 10 ]] && ok "Índices encontrados: $IDX_COUNT (≥10 esperado)" || warn "⚠ Solo $IDX_COUNT índices — verificar creación"
 
 # Prueba rápida de accent-insensitive
 ACCENTTEST=$(psql_exec "SELECT f_unaccent('Galón');" | grep -c "Galon" || true)

@@ -112,9 +112,10 @@ else
     install -m 0755 -d /etc/apt/keyrings
 
     # b) Descargar y almacenar la clave GPG de Docker
-    #    -fsSL: fail silently, follow redirects, silent output
-    #    gpg --dearmor: convierte de formato ASCII a binario
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+    #    Detecta Ubuntu o Debian para usar la URL correcta del repositorio.
+    OS_ID=$(. /etc/os-release && echo "${ID}")   # ubuntu o debian
+    [[ "$OS_ID" != "ubuntu" && "$OS_ID" != "debian" ]] && OS_ID="ubuntu"
+    curl -fsSL "https://download.docker.com/linux/${OS_ID}/gpg" \
         | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
     chmod a+r /etc/apt/keyrings/docker.gpg
 
@@ -123,7 +124,7 @@ else
     #    $(lsb_release -cs): detecta el nombre del SO (jammy, noble, bookworm, etc.)
     echo \
         "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-        https://download.docker.com/linux/ubuntu \
+        https://download.docker.com/linux/${OS_ID} \
         $(lsb_release -cs) stable" \
         | tee /etc/apt/sources.list.d/docker.list > /dev/null
 

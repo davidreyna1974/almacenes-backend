@@ -148,6 +148,7 @@ SPRING_DATASOURCE_USERNAME=almacenes_user
 SPRING_DATASOURCE_PASSWORD=${DB_PASSWORD}
 JWT_SECRET=${JWT_SECRET}
 SPRING_PROFILES_ACTIVE=prod
+CORS_ALLOWED_ORIGINS=https://${DOMAIN}
 
 # Dominio
 DOMAIN=${DOMAIN}
@@ -159,6 +160,89 @@ EOF
 
     chmod 600 "$ENV_FILE"
     ok ".env creado con permisos 600 (solo el propietario puede leer)"
+fi
+
+# ============================================================
+# PASO 4b — Generar docker-compose.yml
+# ============================================================
+# Genera el archivo de orquestación Docker en /opt/almacenes/.
+# Solo se crea si no existe (idempotente).
+# Estructura de 3 servicios:
+#   db       : PostgreSQL 16 — datos en volumen persistente
+#   backend  : Spring Boot (Dockerfile del repo backend) — red interna
+#   frontend : nginx con Angular + SSL (Dockerfile del repo frontend)
+#              monta /etc/letsencrypt como volumen read-only para TLS
+# ============================================================
+COMPOSE_FILE="$DEPLOY_DIR/docker-compose.yml"
+if [[ ! -f "$COMPOSE_FILE" ]]; then
+    step "4b Generando docker-compose.yml..."
+    # Leer el dominio del .env que se acaba de crear
+    source "$ENV_FILE"
+    cat > "$COMPOSE_FILE" <<'COMPOSE_EOF'
+services:
+
+  db:
+    image: postgres:16-alpine
+    container_name: almacenes-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB}
+      POSTGRES_USER:     ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: almacenes-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE:    ${SPRING_PROFILES_ACTIVE}
+      SPRING_DATASOURCE_URL:     ${SPRING_DATASOURCE_URL}
+      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME}
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}
+      JWT_SECRET:                ${JWT_SECRET}
+      CORS_ALLOWED_ORIGINS:      ${CORS_ALLOWED_ORIGINS}
+    expose:
+      - "8080"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: almacenes-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Certificados Let's Encrypt montados como read-only
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+
+volumes:
+  postgres_data:
+
+networks:
+  default:
+    name: almacenes-network
+COMPOSE_EOF
+    ok "docker-compose.yml generado en $COMPOSE_FILE"
+else
+    warn "docker-compose.yml ya existe — se conserva el existente."
 fi
 
 # ============================================================

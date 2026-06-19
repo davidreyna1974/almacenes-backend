@@ -31,11 +31,11 @@ Internet → nginx (443/HTTPS) → Angular SPA  (frontend)
 
 Tres contenedores Docker orquestados con `docker compose`:
 
-| Servicio    | Puerto interno | Puerto público | Imagen base          |
-|-------------|---------------|----------------|----------------------|
-| `db`        | 5432          | ninguno        | postgres:16-alpine   |
-| `backend`   | 8080          | ninguno        | eclipse-temurin:21   |
-| `frontend`  | 80 / 443      | 80, 443        | nginx:alpine         |
+| Servicio    | Puerto interno | Puerto público | Imagen base                       |
+|-------------|---------------|----------------|-----------------------------------|
+| `db`        | 5432          | ninguno        | postgres:16-alpine                |
+| `backend`   | 8080          | ninguno        | eclipse-temurin:17-jre-alpine     |
+| `frontend`  | 80 / 443      | 80, 443        | nginx:alpine (TLS termina aquí)   |
 
 ---
 
@@ -284,7 +284,8 @@ ls /opt/almacenes/frontend/src/   # debe mostrar app/, environments/
 - Si ya existe un `.env`, pregunta si sobreescribir (responde `N` si es re-despliegue)
 - Solicita interactivamente la contraseña de PostgreSQL
 - Genera un `JWT_SECRET` criptográficamente seguro (512 bits, `openssl rand`)
-- Crea `/opt/almacenes/.env` con permisos `600` (solo el propietario puede leer)
+- Crea `/opt/almacenes/.env` con permisos `600` incluyendo `CORS_ALLOWED_ORIGINS=https://dominio`
+- **Genera `/opt/almacenes/docker-compose.yml`** (solo si no existe) con los 3 servicios: `db`, `backend`, `frontend`; el frontend monta `/etc/letsencrypt` como volumen para los certificados SSL
 - Construye las imágenes Docker (`docker compose build --no-cache`) — compila Java + Angular
 - **Primer despliegue**: levanta solo el contenedor `db`, detecta que la BD está vacía y pausa para que ejecutes `04-init-db.sh --schema schema.sql` antes de levantar el backend
 - **Re-despliegues**: levanta los 3 contenedores directamente (las tablas ya existen)
@@ -295,6 +296,9 @@ ls /opt/almacenes/frontend/src/   # debe mostrar app/, environments/
 > Spring Boot lanza `SchemaManagementException` y el contenedor falla. El `schema.sql`
 > en el classpath del backend tampoco se ejecuta automáticamente con PostgreSQL (solo con
 > bases embebidas como H2). Por eso hay que cargar el esquema explícitamente la primera vez.
+>
+> **Por qué CORS_ALLOWED_ORIGINS:** Spring Boot por defecto usa `http://localhost:4200`.
+> Sin esta variable, el backend bloquea todas las peticiones del frontend en producción.
 
 **Tiempo estimado:** 5–10 minutos (compilación Java + build Angular son lo más lento)
 
@@ -321,12 +325,20 @@ SPRING_DATASOURCE_USERNAME=almacenes_user
 SPRING_DATASOURCE_PASSWORD=<la que ingresaste>
 JWT_SECRET=<generado automáticamente — 512 bits>
 SPRING_PROFILES_ACTIVE=prod
+CORS_ALLOWED_ORIGINS=https://almacenes.codigo2enter.com
 DOMAIN=almacenes.codigo2enter.com
 ```
 
 > ⚠ **El archivo `.env` NUNCA debe subirse al repositorio.** Está en `.gitignore`.
 > Guarda la contraseña de la BD y el `JWT_SECRET` fuera del servidor
 > (gestor de contraseñas de la empresa, LastPass, 1Password, etc.).
+
+**`docker-compose.yml` generado automáticamente** en `/opt/almacenes/docker-compose.yml`:
+- `db`: PostgreSQL 16 con volumen persistente, `expose` (no `ports`) — no accesible desde exterior
+- `backend`: Spring Boot con variables del `.env`, `expose` (no `ports`) — no accesible desde exterior
+- `frontend`: nginx con Angular, `ports: 80:80, 443:443`; monta `/etc/letsencrypt` como volumen `:ro`
+
+La terminación TLS ocurre dentro del contenedor `frontend` — nginx escucha en 80 (redirect 301) y en 443 (HTTPS con los certificados Let's Encrypt montados).
 
 **Verificación manual después de ejecutar:**
 
@@ -842,8 +854,10 @@ df -h /opt/almacenes/
 |---|---|---|
 | `permission denied` al usar docker | Usuario no está en grupo docker | Cerrar y reabrir sesión SSH |
 | certbot falla con `Connection refused` | DNS no apunta al servidor, o nginx está corriendo en 80 | Verificar DNS con `nslookup` y que el puerto 80 esté libre |
-| Backend no arranca (FAIL en health) | Error de BD o JWT_SECRET vacío en `.env` | `docker compose logs backend` — buscar `ERROR` |
+| Backend no arranca / `SchemaManagementException` | BD vacía, tablas no creadas | Ejecutar `04-init-db.sh --schema .../schema.sql` (solo primer despliegue) |
+| Backend no arranca / `CORS` rechaza peticiones | `CORS_ALLOWED_ORIGINS` no está en `.env` | Agregar `CORS_ALLOWED_ORIGINS=https://dominio` al `.env` y reiniciar backend |
 | `/login` devuelve 404 | nginx sin `try_files` para SPA | Verificar `nginx.conf` en el Dockerfile del frontend |
+| HTTPS no responde o devuelve error de certificado | Certificados no montados correctamente | Verificar que `/etc/letsencrypt/live/dominio/` tiene `fullchain.pem` y que el volumen está montado en el contenedor frontend |
 | Certificado SSL vencido | Cron de renovación no funciona | `sudo certbot renew --force-renewal` |
 | Puerto 8080 accesible desde internet | Docker bypass de iptables | Ejecutar `sudo bash 05-firewall.sh` de nuevo |
 | `pg_dump` falla en el backup | Contenedor `db` detenido | `docker compose -f /opt/almacenes/docker-compose.yml start db` |

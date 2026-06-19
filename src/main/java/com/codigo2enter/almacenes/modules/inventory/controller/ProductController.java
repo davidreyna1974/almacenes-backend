@@ -6,6 +6,9 @@ import com.codigo2enter.almacenes.modules.inventory.dto.ProductResponseDTO;
 import com.codigo2enter.almacenes.modules.inventory.dto.StockMovementRequestDTO;
 import com.codigo2enter.almacenes.modules.inventory.dto.StockMovementResponseDTO;
 import com.codigo2enter.almacenes.modules.inventory.service.ProductService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -54,6 +57,8 @@ public class ProductController {
      *
      * @return 200 OK con PageResponseDTO de productos que cumplen los criterios
      */
+    @Operation(summary = "Buscar productos", description = "Búsqueda paginada con filtros opcionales combinables (search, categoryId, status, supplierId)")
+    @ApiResponse(responseCode = "200", description = "Página de productos")
     @GetMapping
     public ResponseEntity<PageResponseDTO<ProductResponseDTO>> searchProducts(
             @RequestParam(required = false) String search,
@@ -76,6 +81,10 @@ public class ProductController {
      * @param dto datos del nuevo producto con SKU, precio, stock y categoría
      * @return 201 Created con el ProductResponseDTO que incluye id y categoryName
      */
+    @Operation(summary = "Crear producto", description = "Registra un nuevo producto en el inventario")
+    @ApiResponses({ @ApiResponse(responseCode = "201", description = "Producto creado"),
+                    @ApiResponse(responseCode = "400", description = "Datos inválidos"),
+                    @ApiResponse(responseCode = "409", description = "SKU ya existe") })
     @PostMapping
     public ResponseEntity<ProductResponseDTO> createProduct(
             @Valid @RequestBody ProductRequestDTO dto) {
@@ -94,6 +103,10 @@ public class ProductController {
      * @param dto datos nuevos del producto
      * @return 200 OK con el ProductResponseDTO actualizado
      */
+    @Operation(summary = "Actualizar producto", description = "Actualiza datos del producto (no modifica stock directamente)")
+    @ApiResponses({ @ApiResponse(responseCode = "200", description = "Producto actualizado"),
+                    @ApiResponse(responseCode = "404", description = "Producto no encontrado"),
+                    @ApiResponse(responseCode = "409", description = "SKU ya existe en otro producto") })
     @PutMapping("/{id}")
     public ResponseEntity<ProductResponseDTO> updateProduct(
             @PathVariable Long id,
@@ -111,6 +124,9 @@ public class ProductController {
      * @param id identificador del producto a desactivar
      * @return 204 No Content
      */
+    @Operation(summary = "Desactivar producto", description = "Soft delete — preserva historial de movimientos")
+    @ApiResponses({ @ApiResponse(responseCode = "204", description = "Desactivado"),
+                    @ApiResponse(responseCode = "404", description = "Producto no encontrado") })
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deactivateProduct(@PathVariable Long id) {
         productService.deactivateProduct(id);
@@ -127,6 +143,9 @@ public class ProductController {
      * @param id identificador del producto
      * @return 200 OK con el ProductResponseDTO
      */
+    @Operation(summary = "Obtener producto por ID", description = "Devuelve el estado actual de stock (currentStock, reservedStock, availableStock)")
+    @ApiResponses({ @ApiResponse(responseCode = "200", description = "Producto encontrado"),
+                    @ApiResponse(responseCode = "404", description = "Producto no encontrado") })
     @GetMapping("/{id}")
     public ResponseEntity<ProductResponseDTO> getById(@PathVariable Long id) {
         return ResponseEntity.ok(productService.getById(id));
@@ -142,6 +161,9 @@ public class ProductController {
      * @param sku código único del producto
      * @return 200 OK con el ProductResponseDTO correspondiente
      */
+    @Operation(summary = "Buscar producto por SKU", description = "Búsqueda por código único de producto (útil para lectores de código de barras)")
+    @ApiResponses({ @ApiResponse(responseCode = "200", description = "Producto encontrado"),
+                    @ApiResponse(responseCode = "404", description = "SKU no existe") })
     @GetMapping("/sku/{sku}")
     public ResponseEntity<ProductResponseDTO> getBySku(@PathVariable String sku) {
         return ResponseEntity.ok(productService.getBySku(sku));
@@ -157,6 +179,9 @@ public class ProductController {
      * @param categoryId identificador de la categoría por la que filtrar
      * @return 200 OK con la lista de productos activos de esa categoría
      */
+    @Operation(summary = "Productos por categoría", description = "Lista paginada de productos activos de una categoría específica")
+    @ApiResponses({ @ApiResponse(responseCode = "200", description = "Lista de productos"),
+                    @ApiResponse(responseCode = "404", description = "Categoría no encontrada") })
     @GetMapping("/category/{categoryId}")
     public ResponseEntity<PageResponseDTO<ProductResponseDTO>> getByCategoryId(
             @PathVariable Long categoryId,
@@ -174,6 +199,8 @@ public class ProductController {
      *
      * @return 200 OK con la lista de productos en nivel crítico de stock
      */
+    @Operation(summary = "Productos con stock bajo", description = "Productos con currentStock ≤ minimumStock — panel de alertas de reposición")
+    @ApiResponse(responseCode = "200", description = "Lista de productos en nivel crítico")
     @GetMapping("/low-stock")
     public ResponseEntity<PageResponseDTO<ProductResponseDTO>> getLowStockProducts(
             @RequestParam(defaultValue = "0") int page,
@@ -198,6 +225,10 @@ public class ProductController {
      * @param request DTO con productId, quantity, type y reason
      * @return 204 No Content
      */
+    @Operation(summary = "Registrar movimiento de stock", description = "Entrada (IN) o salida (OUT) de unidades — actualiza currentStock y genera registro en Kardex")
+    @ApiResponses({ @ApiResponse(responseCode = "204", description = "Movimiento registrado"),
+                    @ApiResponse(responseCode = "400", description = "Datos inválidos o stock insuficiente para OUT"),
+                    @ApiResponse(responseCode = "404", description = "Producto no encontrado") })
     @PostMapping("/movement")
     public ResponseEntity<Void> registerStockMovement(
             @Valid @RequestBody StockMovementRequestDTO request) {
@@ -215,6 +246,9 @@ public class ProductController {
      * @param id identificador del producto
      * @return 200 OK con la lista de movimientos ordenados por fecha descendente
      */
+    @Operation(summary = "Kardex del producto", description = "Historial completo de movimientos de stock ordenado del más reciente al más antiguo")
+    @ApiResponses({ @ApiResponse(responseCode = "200", description = "Historial de movimientos"),
+                    @ApiResponse(responseCode = "404", description = "Producto no encontrado") })
     @GetMapping("/{id}/movements")
     public ResponseEntity<PageResponseDTO<StockMovementResponseDTO>> getStockMovementsByProduct(
             @PathVariable Long id,

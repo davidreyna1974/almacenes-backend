@@ -55,7 +55,7 @@ err()  { echo -e "  ${RED}✘ ERROR: $1${NC}"; exit 1; }
 
 echo ""
 echo -e "${BLUE}============================================================${NC}"
-echo -e "${BLUE}  SCRIPT 05 — CONFIGURACIÓN DEL FIREWALL (ufw)${NC}"
+echo -e "${BLUE}  SCRIPT 04 — CONFIGURACIÓN DEL FIREWALL (ufw)${NC}"
 echo -e "${BLUE}  Sistema: Almacenes — codigoCodigoEnter${NC}"
 echo -e "${BLUE}============================================================${NC}"
 

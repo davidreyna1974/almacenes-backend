@@ -31,8 +31,9 @@
 #   4. Crea /opt/almacenes/.env con las variables
 #   5. Clona o actualiza los repositorios en /opt/almacenes/
 #   6. Construye las imágenes Docker (docker compose build)
-#   7. Levanta los contenedores (docker compose up -d)
-#   8. Espera a que el backend responda en /actuator/health
+#   7. Levanta DB, inicializa esquema (1er despliegue) y crea índices
+#   8. Levanta backend y frontend
+#   9. Espera a que el backend responda en /actuator/health
 # ============================================================
 
 set -euo pipefail
@@ -59,7 +60,7 @@ echo -e "${BLUE}============================================================${NC
 # Verificar que Docker está corriendo, que el usuario tiene
 # acceso al socket Docker (grupo docker), y que el certificado
 # SSL existe (generado en el script 02).
-step "1/8 Verificando prerequisitos..."
+step "1/9 Verificando prerequisitos..."
 
 # ¿Docker está corriendo?
 docker info &>/dev/null \
@@ -85,7 +86,7 @@ ok "Certificado SSL presente en $CERT_PATH"
 # NUNCA se commitea al repositorio (está en .gitignore).
 # Se solicitan interactivamente para que el operador no tenga
 # que editar archivos de configuración manualmente.
-step "2/8 Configurando variables de entorno de producción..."
+step "2/9 Configurando variables de entorno de producción..."
 echo ""
 
 if [[ -f "$ENV_FILE" ]]; then
@@ -120,7 +121,7 @@ if [[ ! -f "$ENV_FILE" ]] || [[ "${OVERWRITE,,}" == "s" ]]; then
     # -base64 64 produce 64 bytes (512 bits) codificados en base64.
     # tr -d '\n=' elimina saltos de línea y signos = del padding.
     # 512 bits cumple ampliamente con NIST SP 800-132 para HMAC-SHA256/512.
-    step "3/8 Generando JWT_SECRET aleatorio..."
+    step "3/9 Generando JWT_SECRET aleatorio..."
     JWT_SECRET=$(openssl rand -base64 64 | tr -d '\n=')
     ok "JWT_SECRET generado (${#JWT_SECRET} caracteres)"
 
@@ -129,7 +130,7 @@ if [[ ! -f "$ENV_FILE" ]] || [[ "${OVERWRITE,,}" == "s" ]]; then
     # ============================================================
     # El .env es leído por docker-compose.yml como variables de
     # entorno para los contenedores. Formato: CLAVE=valor
-    step "4/8 Creando $ENV_FILE..."
+    step "4/9 Creando $ENV_FILE..."
     cat > "$ENV_FILE" <<EOF
 # ============================================================
 # VARIABLES DE PRODUCCIÓN — Almacenes — codigoCodigoEnter
@@ -175,7 +176,7 @@ fi
 # ============================================================
 COMPOSE_FILE="$DEPLOY_DIR/docker-compose.yml"
 if [[ ! -f "$COMPOSE_FILE" ]]; then
-    step "4b Generando docker-compose.yml..."
+    step "5/9 Generando docker-compose.yml..."
     # Leer el dominio del .env que se acaba de crear
     source "$ENV_FILE"
     cat > "$COMPOSE_FILE" <<'COMPOSE_EOF'
@@ -251,7 +252,7 @@ fi
 # Los repositorios se clonan en /opt/almacenes/backend y
 # /opt/almacenes/frontend. Si ya existen, se actualiza al
 # branch configurado en .env.
-step "5/8 Actualizando repositorios en $DEPLOY_DIR..."
+step "6/9 Actualizando repositorios en $DEPLOY_DIR..."
 
 # Cargar variables del .env para obtener las ramas
 source "$ENV_FILE"
@@ -307,13 +308,13 @@ fi
 # --no-cache: garantiza que el build usa el código actual
 #             (sin capas cacheadas obsoletas).
 # Este paso puede tomar 3-8 minutos dependiendo del servidor.
-step "6/8 Construyendo imágenes Docker..."
+step "7/9 Construyendo imágenes Docker..."
 echo "  (puede tardar 3-8 minutos — compilando Java y Angular)"
 docker compose -f "$DEPLOY_DIR/docker-compose.yml" --env-file "$ENV_FILE" build --no-cache
 ok "Imágenes construidas"
 
 # ============================================================
-# PASO 7 — Levantar la base de datos e inicializarla
+# PASO 8 — Levantar la base de datos e inicializarla
 # ============================================================
 # El backend usa ddl-auto: validate — Hibernate NO crea tablas.
 # Hay que garantizar que el esquema existe ANTES de levantar
@@ -321,10 +322,15 @@ ok "Imágenes construidas"
 #   a) Levanta el contenedor db
 #   b) Espera a que PostgreSQL acepte conexiones
 #   c) Instala la extensión unaccent (búsquedas accent-insensitive)
-#   d) Crea la función f_unaccent (para índices funcionales)
-#   e) PRIMER DESPLIEGUE: carga schema.sql + inserta roles
+#   d) PRIMER DESPLIEGUE: carga schema.sql (que ya incluye f_unaccent) + inserta roles
+#   e) Garantiza f_unaccent con CREATE OR REPLACE (idempotente post-carga)
 #   f) Crea los índices de rendimiento (IF NOT EXISTS — idempotente)
-step "7/9 Levantando base de datos e inicializando esquema..."
+#
+# ORDEN IMPORTANTE: f_unaccent se crea con OR REPLACE *después* de cargar
+# schema.sql, no antes. schema.sql usa CREATE FUNCTION (sin OR REPLACE), así
+# que si f_unaccent ya existiera al cargar el esquema daría ERROR. El orden
+# correcto es: schema.sql → OR REPLACE (garantía idempotente para re-despliegues).
+step "8/9 Levantando base de datos e inicializando esquema..."
 
 # Helper: ejecutar SQL en el contenedor db sin interacción
 db_exec() {
@@ -351,15 +357,9 @@ echo ""
 ok "PostgreSQL listo"
 
 # Extensión unaccent — idempotente (IF NOT EXISTS)
+# Se instala aquí porque schema.sql también la necesita al cargarse.
 db_exec "CREATE EXTENSION IF NOT EXISTS unaccent;" >/dev/null
 ok "Extensión unaccent instalada"
-
-# Función f_unaccent — idempotente (CREATE OR REPLACE)
-db_exec "
-CREATE OR REPLACE FUNCTION f_unaccent(text)
-RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT AS
-\$\$ SELECT unaccent('unaccent', \$1) \$\$;" >/dev/null
-ok "Función f_unaccent(text) creada"
 
 # Detectar si es primer despliegue (tablas aún no existen)
 TABLE_COUNT=$(db_exec "SELECT count(*) FROM information_schema.tables
@@ -368,12 +368,17 @@ TABLE_COUNT=$(db_exec "SELECT count(*) FROM information_schema.tables
 
 if [[ "${TABLE_COUNT:-0}" -lt 5 ]]; then
     # ── PRIMER DESPLIEGUE: cargar esquema completo ────────────
+    # schema.sql incluye CREATE FUNCTION f_unaccent (sin OR REPLACE).
+    # Por eso f_unaccent NO debe existir antes de cargarlo.
+    # Después de la carga usamos CREATE OR REPLACE para garantizar
+    # idempotencia en re-despliegues futuros.
     warn "Primer despliegue — BD vacía, cargando schema.sql..."
     SCHEMA_SQL="$DEPLOY_DIR/backend/src/main/resources/schema.sql"
     [[ ! -f "$SCHEMA_SQL" ]] && \
         err "No se encontró $SCHEMA_SQL\n     Asegúrate de que el repositorio backend está clonado en $DEPLOY_DIR/backend/"
     docker compose -f "$DEPLOY_DIR/docker-compose.yml" exec -T db \
-        psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < "$SCHEMA_SQL"
+        psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+        -v ON_ERROR_STOP=1 < "$SCHEMA_SQL"
     ok "Esquema cargado (12 tablas, secuencias, constraints, índices)"
 
     # Insertar los 4 roles del sistema (requeridos por DataInitializer)
@@ -385,6 +390,17 @@ ON CONFLICT (name) DO NOTHING;" >/dev/null
 else
     ok "Re-despliegue — esquema existente (${TABLE_COUNT} tablas encontradas)"
 fi
+
+# Garantizar f_unaccent con CREATE OR REPLACE — idempotente en todos los casos:
+#   - Primer despliegue: schema.sql ya la creó; OR REPLACE la reemplaza sin error
+#   - Re-despliegue: ya existe de despliegues anteriores; OR REPLACE la actualiza
+# La definición usa public.unaccent('public.unaccent', $1) igual que schema.sql
+# para consistencia con search_path vacío en el contexto de pg_dump.
+db_exec "
+CREATE OR REPLACE FUNCTION public.f_unaccent(text)
+RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT AS
+\$\$ SELECT public.unaccent('public.unaccent', \$1) \$\$;" >/dev/null
+ok "Función f_unaccent(text) garantizada (CREATE OR REPLACE)"
 
 # Índices de rendimiento — todos IF NOT EXISTS (idempotentes)
 echo "  Creando índices de rendimiento..."
@@ -409,7 +425,7 @@ FUNC_OK=$(db_exec "SELECT f_unaccent('Galón');" 2>/dev/null | grep -c "Galon" |
 # ============================================================
 # PASO 8 — Levantar backend y frontend
 # ============================================================
-step "8/9 Levantando backend y frontend..."
+step "9/9 Levantando backend y frontend..."
 docker compose -f "$DEPLOY_DIR/docker-compose.yml" --env-file "$ENV_FILE" up -d
 ok "Contenedores iniciados"
 docker compose -f "$DEPLOY_DIR/docker-compose.yml" ps
@@ -420,7 +436,7 @@ docker compose -f "$DEPLOY_DIR/docker-compose.yml" ps
 # Spring Boot tarda 30-90 s en inicializarse (carga del contexto
 # Spring, conexión a BD, validación Hibernate del esquema).
 # /actuator/health retorna {"status":"UP"} cuando está listo.
-step "9/9 Esperando a que el backend esté disponible..."
+echo "  Esperando a que el backend esté disponible..."
 MAX_WAIT=120
 ELAPSED=0
 INTERVAL=5

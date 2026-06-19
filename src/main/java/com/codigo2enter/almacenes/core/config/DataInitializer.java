@@ -50,8 +50,7 @@ public class DataInitializer {
 
         log.warn("=======================================================");
         log.warn("  PRIMER ARRANQUE: creando usuario administrador por defecto");
-        log.warn("  Usuario: admin | Password: Admin123!");
-        log.warn("  Cambia la contraseña en: PUT /api/v1/auth/me/password");
+        log.warn("  Cambia la contraseña inmediatamente: PUT /api/v1/auth/me/password");
         log.warn("=======================================================");
 
         Set<Role> roles = new HashSet<>();

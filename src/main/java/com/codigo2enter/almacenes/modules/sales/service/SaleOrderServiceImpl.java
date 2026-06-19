@@ -21,6 +21,7 @@ import com.codigo2enter.almacenes.modules.sales.repository.SaleOrderDetailReposi
 import com.codigo2enter.almacenes.modules.sales.repository.SaleOrderRepository;
 import com.codigo2enter.almacenes.modules.inventory.dto.StockMovementRequestDTO;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -34,6 +35,7 @@ import java.time.LocalDateTime;
 import java.time.Year;
 import java.util.List;
 
+@Slf4j
 @Service
 @Transactional
 @RequiredArgsConstructor
@@ -199,6 +201,7 @@ public class SaleOrderServiceImpl implements SaleOrderService {
         order.setApprovedBy(actor);
         order.setUpdatedAt(LocalDateTime.now());
         order.setUpdatedBy(actor);
+        log.info("OV APROBADA orden={} usuario={}", order.getOrderNumber(), actor.getUsername());
         return redactUnitCost(saleOrderMapper.toResponseDTO(saleOrderRepository.save(order)));
     }
 
@@ -247,6 +250,7 @@ public class SaleOrderServiceImpl implements SaleOrderService {
         order.setDeliveredBy(actor);
         order.setUpdatedAt(LocalDateTime.now());
         order.setUpdatedBy(actor);
+        log.info("OV ENTREGADA orden={} usuario={}", order.getOrderNumber(), actor.getUsername());
         return redactUnitCost(saleOrderMapper.toResponseDTO(saleOrderRepository.save(order)));
     }
 
@@ -275,6 +279,7 @@ public class SaleOrderServiceImpl implements SaleOrderService {
         order.setCancelledBy(actor);
         order.setUpdatedAt(LocalDateTime.now());
         order.setUpdatedBy(actor);
+        log.info("OV CANCELADA orden={} usuario={}", order.getOrderNumber(), actor.getUsername());
         return redactUnitCost(saleOrderMapper.toResponseDTO(saleOrderRepository.save(order)));
     }
 

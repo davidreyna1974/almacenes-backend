@@ -22,6 +22,7 @@ import com.codigo2enter.almacenes.modules.purchases.repository.PurchaseOrderDeta
 import com.codigo2enter.almacenes.modules.purchases.repository.PurchaseOrderRepository;
 import com.codigo2enter.almacenes.modules.purchases.repository.SupplierRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -42,6 +43,7 @@ import java.util.List;
  * crítico: ejecuta movimientos de stock IN dentro de la misma transacción que
  * el cambio de estado, garantizando consistencia entre órdenes e inventario.
  */
+@Slf4j
 @Service
 @Transactional
 @RequiredArgsConstructor
@@ -249,8 +251,10 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
 
         order.setStatus(PurchaseOrderStatus.APPROVED);
         order.setApprovedAt(LocalDateTime.now());
-        order.setApprovedBy(resolveAuthenticatedUser());
+        var approver = resolveAuthenticatedUser();
+        order.setApprovedBy(approver);
         order.setUpdatedAt(LocalDateTime.now());
+        log.info("OC APROBADA orden={} usuario={}", order.getOrderNumber(), approver.getUsername());
 
         return toResponseDTOFiltered(order);
     }
@@ -286,8 +290,10 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
 
         order.setStatus(PurchaseOrderStatus.RECEIVED);
         order.setReceivedAt(LocalDateTime.now());
-        order.setReceivedBy(resolveAuthenticatedUser());
+        var receiver = resolveAuthenticatedUser();
+        order.setReceivedBy(receiver);
         order.setUpdatedAt(LocalDateTime.now());
+        log.info("OC RECIBIDA orden={} usuario={}", order.getOrderNumber(), receiver.getUsername());
 
         return toResponseDTOFiltered(order);
     }
@@ -312,8 +318,10 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
 
         order.setStatus(PurchaseOrderStatus.CANCELLED);
         order.setCancelledAt(LocalDateTime.now());
-        order.setCancelledBy(resolveAuthenticatedUser());
+        var canceller = resolveAuthenticatedUser();
+        order.setCancelledBy(canceller);
         order.setUpdatedAt(LocalDateTime.now());
+        log.info("OC CANCELADA orden={} usuario={}", order.getOrderNumber(), canceller.getUsername());
 
         return toResponseDTOFiltered(order);
     }

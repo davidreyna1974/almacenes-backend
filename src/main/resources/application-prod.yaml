@@ -1,0 +1,42 @@
+# Perfil de producción — sobreescribe application.yaml cuando
+# SPRING_PROFILES_ACTIVE=prod (o --spring.profiles.active=prod).
+# TODAS las propiedades sensibles vienen de variables de entorno.
+# NUNCA hardcodear credenciales en este archivo.
+
+spring:
+  datasource:
+    url: ${SPRING_DATASOURCE_URL}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+
+# Deshabilitar Swagger/OpenAPI en producción (BACK-I2)
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+# Actuator: solo health e info expuestos (BACK-I8)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+
+# Niveles de log en producción (BACK-I10)
+logging:
+  level:
+    root: WARN
+    com.codigo2enter.almacenes: INFO
+
+jwt:
+  secret: ${JWT_SECRET}
+  expiration: 7200000

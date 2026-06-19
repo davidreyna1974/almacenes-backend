@@ -151,10 +151,23 @@ if [[ -n "$SCHEMA_FILE" ]]; then
     docker compose -f "$DEPLOY_DIR/docker-compose.yml" exec -T db \
         psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < "$SCHEMA_FILE"
     ok "Script SQL cargado: $SCHEMA_FILE"
+
+    # Insertar los 4 roles del sistema (requeridos por DataInitializer para el usuario admin)
+    # El schema.sql solo crea la estructura — los datos base van aquí.
+    # INSERT ... ON CONFLICT DO NOTHING: seguro de ejecutar en re-despliegues.
+    psql_exec "
+INSERT INTO roles (name) VALUES
+    ('ROLE_ADMIN'),
+    ('ROLE_MANAGER'),
+    ('ROLE_WAREHOUSEMAN'),
+    ('ROLE_SALES')
+ON CONFLICT (name) DO NOTHING;"
+    ok "Roles del sistema insertados (ROLE_ADMIN, ROLE_MANAGER, ROLE_WAREHOUSEMAN, ROLE_SALES)"
 else
-    warn "No se especificó --schema. Hibernate crea el esquema automáticamente."
-    warn "Si es el primer despliegue, asegúrate de que spring.jpa.hibernate.ddl-auto"
-    warn "sea 'create' o 'update' en el perfil de producción."
+    warn "No se especificó --schema."
+    warn "Si es el PRIMER despliegue, DEBES cargar schema.sql antes de arrancar el backend:"
+    warn "  bash 04-init-db.sh --schema /ruta/al/schema.sql"
+    warn "El perfil de producción usa ddl-auto: validate — Hibernate NO crea tablas."
 fi
 
 # ============================================================

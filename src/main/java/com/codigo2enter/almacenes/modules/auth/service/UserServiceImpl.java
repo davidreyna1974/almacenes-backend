@@ -13,6 +13,7 @@ import com.codigo2enter.almacenes.modules.auth.model.User;
 import com.codigo2enter.almacenes.modules.auth.repository.RoleRepository;
 import com.codigo2enter.almacenes.modules.auth.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -28,6 +29,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @Transactional
 @RequiredArgsConstructor
@@ -67,6 +69,8 @@ public class UserServiceImpl implements UserService {
             }
 
             loginAttemptService.loginSucceeded(username);
+            log.info("LOGIN OK usuario={} roles={}", username,
+                    user.getRoles().stream().map(Role::getName).toList());
 
             Set<String> roles = user.getRoles().stream()
                     .map(Role::getName)
@@ -76,6 +80,7 @@ public class UserServiceImpl implements UserService {
             return AuthResponseDTO.builder().token(token).build();
         } catch (BadCredentialsException ex) {
             loginAttemptService.loginFailed(username);
+            log.warn("LOGIN FALLIDO usuario={}", username);
             throw ex;
         }
     }

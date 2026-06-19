@@ -22,6 +22,7 @@ import com.codigo2enter.almacenes.modules.inventory.repository.StockMovementRepo
 import com.codigo2enter.almacenes.modules.purchases.model.Supplier;
 import com.codigo2enter.almacenes.modules.purchases.repository.SupplierRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -41,6 +42,7 @@ import java.util.List;
  * en el mismo servicio garantiza consistencia transaccional sin coordinación
  * entre servicios distintos.
  */
+@Slf4j
 @Service
 @Transactional
 @RequiredArgsConstructor
@@ -251,6 +253,9 @@ public class ProductServiceImpl implements ProductService {
                 .build();
 
         stockMovementRepository.save(movement);
+        log.info("STOCK {} sku={} cantidad={} nuevoStock={} usuario={} motivo={}",
+                type, product.getSku(), request.getQuantity(), newStock,
+                creator.getUsername(), request.getReason());
     }
 
     @Override

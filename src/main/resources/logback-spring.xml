@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+
+    <!-- Importa los conversores de Spring Boot (%clr, %wEx, etc.) -->
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+    <!-- ================================================================
+         APPENDER: CONSOLA — solo en perfil dev
+         Patrón colorizado para lectura en terminal durante desarrollo.
+         ================================================================ -->
+    <springProfile name="!prod">
+        <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder>
+                <pattern>%clr(%d{HH:mm:ss.SSS}){faint} %clr(%5p) %clr(${PID:- }){magenta} %clr(---){faint} %clr([%15.15t]){faint} %clr(%-40.40logger{39}){cyan} %clr(:){faint} %m%n%wEx</pattern>
+                <charset>UTF-8</charset>
+            </encoder>
+        </appender>
+    </springProfile>
+
+    <!-- ================================================================
+         APPENDER: ARCHIVO CON ROTACIÓN — solo en perfil prod
+         Logs en /var/log/almacenes/app.log, rotación diaria,
+         máximo 30 días de historial, máximo 500 MB total.
+         ================================================================ -->
+    <springProfile name="prod">
+        <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+            <file>/var/log/almacenes/app.log</file>
+            <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+                <fileNamePattern>/var/log/almacenes/app.%d{yyyy-MM-dd}.log.gz</fileNamePattern>
+                <maxHistory>30</maxHistory>
+                <totalSizeCap>500MB</totalSizeCap>
+            </rollingPolicy>
+            <encoder>
+                <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %5p ${PID:- } --- [%t] %-40.40logger{39} : %m%n%wEx</pattern>
+                <charset>UTF-8</charset>
+            </encoder>
+        </appender>
+    </springProfile>
+
+    <!-- ================================================================
+         LOGGERS: nivel de log por paquete
+         - Root (todo lo demás): WARN en prod, INFO en dev
+         - Aplicación propia: INFO en prod, DEBUG en dev
+         - Hibernate SQL: OFF en prod (se deshabilita también via
+           spring.jpa.show-sql: false en application-prod.yaml)
+         ================================================================ -->
+    <springProfile name="prod">
+        <root level="WARN">
+            <appender-ref ref="FILE"/>
+        </root>
+        <logger name="com.codigo2enter.almacenes" level="INFO" additivity="false">
+            <appender-ref ref="FILE"/>
+        </logger>
+        <logger name="org.hibernate.SQL" level="OFF"/>
+        <logger name="org.hibernate.type.descriptor.sql" level="OFF"/>
+    </springProfile>
+
+    <springProfile name="!prod">
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+        </root>
+        <logger name="com.codigo2enter.almacenes" level="DEBUG" additivity="false">
+            <appender-ref ref="CONSOLE"/>
+        </logger>
+    </springProfile>
+
+</configuration>

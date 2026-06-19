@@ -15,7 +15,7 @@ Backend REST API para gestión de almacenes. Proyecto Spring Boot 3.5.14 con Jav
 
 ## Documentación obligatoria por módulo
 
-Todo módulo nuevo — tanto en este backend como en el futuro frontend — requiere dos archivos en la raíz del repositorio antes de iniciar la implementación:
+Todo módulo nuevo — tanto en este backend como en el futuro frontend — requiere dos archivos en `docs/` antes de iniciar la implementación:
 
 ### `propuesta_modulo_<nombre>.txt`
 
@@ -83,11 +83,11 @@ Esta sección documenta evidencia verificable de que el módulo funciona. Debe i
 ### Convención de nombres y ubicación
 
 ```
-# Raíz del repositorio (junto a CLAUDE.md)
-propuesta_modulo_reports.txt
-propuesta_modulo_reportes_frontend.txt   # cuando aplique al frontend
-memoria_tecnica_modulo_reports.md
-memoria_tecnica_modulo_reportes_frontend.md
+# Dentro de docs/ (no en la raíz del repositorio)
+docs/modulos/reports/propuesta_modulo_reports.txt
+docs/modulos/reports/propuesta_modulo_reportes_frontend.txt   # cuando aplique al frontend
+docs/modulos/reports/memoria_tecnica_modulo_reports.md
+docs/modulos/reports/memoria_tecnica_modulo_reportes_frontend.md
 ```
 
 La propuesta va en `.txt` (documento de planificación sin formato especial).
@@ -102,7 +102,7 @@ Para entender el sistema completo (decisiones arquitectónicas, contratos de
 integración frontend↔backend, RBAC transversal, guía de configuración y roadmap)
 consultar primero:
 
-**`memoria_tecnica_global_proyecto.md`** — en la raíz de este repositorio
+**`docs/global/memoria_tecnica_global_proyecto.md`** — en este repositorio
 
 Se actualiza al finalizar cada módulo si hay nuevas decisiones transversales.
 
@@ -435,7 +435,7 @@ El sistema implementa 4 roles con acceso diferenciado por URL en `SecurityConfig
 ## ⚠️ Lecciones mandatorias L29-L33 (revisión de bugs 2026-06-11/12, frontend Inventory — aplican a TODOS los módulos backend)
 
 > Origen: revisión completa de bugs del módulo Inventory (BUG-INV-07/09/10/11/12/13/14/17/18),
-> documentada en `memoria_tecnica_global_proyecto.md` §9. Son **mandatorias desde el diseño
+> documentada en `docs/global/memoria_tecnica_global_proyecto.md` §9. Son **mandatorias desde el diseño
 > inicial** de cualquier módulo backend nuevo (Sales en adelante), no correcciones
 > retroactivas opcionales.
 

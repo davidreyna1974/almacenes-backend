@@ -1,5 +1,6 @@
 package com.codigo2enter.almacenes.core.exception;
 
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
@@ -77,6 +78,16 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(TooManyAttemptsException.class)
     public ResponseEntity<Map<String, Object>> handleTooManyAttempts(TooManyAttemptsException ex) {
         return buildResponse(HttpStatus.TOO_MANY_REQUESTS, ex.getMessage());
+    }
+
+    /**
+     * FK violation o constraint de BD no cubierto por DuplicateResourceException → HTTP 409.
+     * El mensaje interno de PostgreSQL no se expone para no revelar nombres de tablas/constraints.
+     */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<Map<String, Object>> handleDataIntegrity(DataIntegrityViolationException ex) {
+        return buildResponse(HttpStatus.CONFLICT,
+            "Operación rechazada: el registro tiene relaciones activas o datos duplicados.");
     }
 
     /**

@@ -5,6 +5,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -14,6 +15,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -252,6 +254,26 @@ public class SecurityConfig {
             .exceptionHandling(ex -> ex
                 .authenticationEntryPoint(jwtAuthenticationEntryPoint)
                 .accessDeniedHandler(jwtAccessDeniedHandler)
+            )
+
+            // 3.2 HEADERS DE SEGURIDAD HTTP (defensa en profundidad)
+            //     Nginx ya emite estos headers en producción; se configuran también
+            //     en el backend para proteger accesos directos internos.
+            //     - X-Frame-Options: DENY — previene clickjacking via iframe.
+            //     - X-XSS-Protection: deshabilitado — los navegadores modernos usan
+            //       CSP; el header legado puede introducir vulnerabilidades por sí solo.
+            //     - X-Content-Type-Options: nosniff — impide MIME-sniffing.
+            //     - Referrer-Policy — solo envía el origen al hacer cross-origin.
+            //     - HSTS — solo se emite sobre HTTPS; en dev (HTTP) Spring lo omite.
+            .headers(headers -> headers
+                .frameOptions(fo -> fo.deny())
+                .xssProtection(xss -> xss.disable())
+                .contentTypeOptions(Customizer.withDefaults())
+                .referrerPolicy(rp -> rp.policy(
+                    ReferrerPolicyHeaderWriter.ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN))
+                .httpStrictTransportSecurity(hsts -> hsts
+                    .maxAgeInSeconds(31_536_000)
+                    .includeSubDomains(true))
             )
 
             // 4. REGISTRAR EL FILTRO JWT EN LA CADENA DE SEGURIDAD

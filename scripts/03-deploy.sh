@@ -231,11 +231,55 @@ ok "Imágenes construidas"
 # ============================================================
 # PASO 7 — Levantar los contenedores
 # ============================================================
-# docker compose up -d levanta todos los servicios en modo
-# detached (background). Docker iniciará primero el servicio
-# 'db' (por la directiva depends_on del backend), luego
-# 'backend', y finalmente 'frontend'.
+# IMPORTANTE: El backend usa ddl-auto: validate en producción.
+# Esto significa que Hibernate NO crea las tablas — solo las
+# valida. Si las tablas no existen, el backend falla al arrancar.
+#
+# En el PRIMER despliegue (BD vacía) hay que:
+#   1. Levantar solo el contenedor db
+#   2. Cargar schema.sql con 04-init-db.sh --schema
+#   3. Levantar backend y frontend
+#
+# En RE-despliegues las tablas ya existen — levantar todo junto.
 step "7/8 Levantando contenedores..."
+
+# Verificar si las tablas ya existen (re-despliegue vs primer despliegue)
+DB_TABLES_EXIST=false
+if docker compose -f "$DEPLOY_DIR/docker-compose.yml" --env-file "$ENV_FILE" up -d db 2>/dev/null; then
+    # Esperar a que PostgreSQL esté listo
+    for i in $(seq 1 20); do
+        if docker compose -f "$DEPLOY_DIR/docker-compose.yml" exec -T db \
+            pg_isready -U almacenes_user -d almacenes_db &>/dev/null; then
+            break
+        fi
+        sleep 2
+    done
+    TABLE_COUNT=$(docker compose -f "$DEPLOY_DIR/docker-compose.yml" exec -T db \
+        psql -U almacenes_user -d almacenes_db -tAc \
+        "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE';" 2>/dev/null | tr -d '[:space:]' || echo "0")
+    [[ "$TABLE_COUNT" =~ ^[0-9]+$ ]] && [[ "$TABLE_COUNT" -ge 5 ]] && DB_TABLES_EXIST=true
+fi
+
+if [[ "$DB_TABLES_EXIST" == "false" ]]; then
+    echo ""
+    warn "════════════════════════════════════════════════════════"
+    warn "  PRIMER DESPLIEGUE DETECTADO — BD vacía (0 tablas)"
+    warn ""
+    warn "  El backend usa ddl-auto: validate y NO crea tablas."
+    warn "  Debes cargar el esquema ANTES de levantar el backend."
+    warn ""
+    warn "  Abre otra terminal en el servidor y ejecuta:"
+    warn "  bash ~/scripts-almacenes/04-init-db.sh --schema \\"
+    warn "    /opt/almacenes/backend/src/main/resources/schema.sql"
+    warn ""
+    warn "  El comando anterior crea las 12 tablas, índices y"
+    warn "  la extensión unaccent en la BD."
+    warn "════════════════════════════════════════════════════════"
+    echo ""
+    read -rp "  Presiona Enter cuando 04-init-db.sh haya completado..." _
+fi
+
+# Levantar backend y frontend (la DB ya está corriendo)
 docker compose -f "$DEPLOY_DIR/docker-compose.yml" --env-file "$ENV_FILE" up -d
 ok "Contenedores iniciados"
 
@@ -261,8 +305,10 @@ until docker compose -f "$DEPLOY_DIR/docker-compose.yml" exec -T backend \
     echo -n "  ."
     sleep $INTERVAL
     ELAPSED=$((ELAPSED + INTERVAL))
-    [[ $ELAPSED -ge $MAX_WAIT ]] && \
-        err "El backend no respondió en ${MAX_WAIT}s.\n     Revisar logs: docker compose -f $DEPLOY_DIR/docker-compose.yml logs backend"
+    if [[ $ELAPSED -ge $MAX_WAIT ]]; then
+        echo ""
+        err "El backend no respondió en ${MAX_WAIT}s.\n     Si es el primer despliegue: verifica que 04-init-db.sh --schema se ejecutó correctamente.\n     Logs: docker compose -f $DEPLOY_DIR/docker-compose.yml logs backend"
+    fi
 done
 
 echo ""

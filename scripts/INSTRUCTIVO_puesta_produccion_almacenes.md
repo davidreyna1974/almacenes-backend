@@ -286,8 +286,15 @@ ls /opt/almacenes/frontend/src/   # debe mostrar app/, environments/
 - Genera un `JWT_SECRET` criptográficamente seguro (512 bits, `openssl rand`)
 - Crea `/opt/almacenes/.env` con permisos `600` (solo el propietario puede leer)
 - Construye las imágenes Docker (`docker compose build --no-cache`) — compila Java + Angular
-- Levanta los 3 contenedores en background (`docker compose up -d`)
+- **Primer despliegue**: levanta solo el contenedor `db`, detecta que la BD está vacía y pausa para que ejecutes `04-init-db.sh --schema schema.sql` antes de levantar el backend
+- **Re-despliegues**: levanta los 3 contenedores directamente (las tablas ya existen)
 - Espera hasta 120 segundos a que el backend responda en `/actuator/health`
+
+> **Por qué esta secuencia:** El backend usa `ddl-auto: validate` en producción. Hibernate
+> NO crea tablas — solo verifica que existan. Si el backend arranca con una BD vacía,
+> Spring Boot lanza `SchemaManagementException` y el contenedor falla. El `schema.sql`
+> en el classpath del backend tampoco se ejecuta automáticamente con PostgreSQL (solo con
+> bases embebidas como H2). Por eso hay que cargar el esquema explícitamente la primera vez.
 
 **Tiempo estimado:** 5–10 minutos (compilación Java + build Angular son lo más lento)
 
@@ -339,23 +346,42 @@ docker compose -f /opt/almacenes/docker-compose.yml exec backend \
 # Resultado esperado: {"status":"UP","components":{"db":{"status":"UP"},...}}
 ```
 
+> **Nota primer despliegue:** Durante el paso 7, el script pausará y pedirá que ejecutes
+> `04-init-db.sh --schema schema.sql` en otra terminal antes de continuar.
+> Esto es esperado y necesario — ver la sección "Script 04" más abajo.
+
 ---
 
 ## Script 04 — Inicialización de la base de datos
 
-**Ejecutar como:** `bash 04-init-db.sh`
+**PRIMER DESPLIEGUE — ejecutar con `--schema`:**
+```bash
+bash 04-init-db.sh --schema /opt/almacenes/backend/src/main/resources/schema.sql
+```
+
+**RE-despliegues — ejecutar sin `--schema`:**
+```bash
+bash 04-init-db.sh
+```
 
 **Qué hace:**
 - Espera a que PostgreSQL esté listo para conexiones (`pg_isready`)
 - Instala la extensión `unaccent` (búsquedas accent-insensitive: "galon" encuentra "Galón")
 - Crea la función inmutable `f_unaccent(text)` necesaria para índices funcionales
-- Crea los 10 índices de rendimiento del sistema (búsqueda, filtrado, FK, auditoría)
+- **Con `--schema`**: carga el `schema.sql` que crea las 12 tablas, secuencias, constraints e índices
+- **Con `--schema`**: inserta los 4 roles del sistema (`ROLE_ADMIN`, `ROLE_MANAGER`, `ROLE_WAREHOUSEMAN`, `ROLE_SALES`) — sin ellos, el usuario `admin` arrancaría sin permisos
+- Crea los 10 índices de rendimiento adicionales del sistema (búsqueda, filtrado, FK, auditoría)
 - Verifica la instalación con pruebas internas
 
 **Tiempo estimado:** 1–2 minutos
 
-> Este script es seguro de ejecutar múltiples veces (usa `IF NOT EXISTS`).
-> En re-despliegues posteriores no hace daño ejecutarlo de nuevo.
+> El script es seguro de ejecutar múltiples veces (usa `IF NOT EXISTS`).
+> En re-despliegues no hace daño ejecutarlo de nuevo sin `--schema`.
+>
+> **Por qué `--schema` en el primer despliegue:** El `schema.sql` contiene el DDL completo
+> del sistema (12 tablas). Spring Boot NO lo ejecuta automáticamente con PostgreSQL — solo
+> lo haría con bases de datos embebidas como H2. El backend con `ddl-auto: validate`
+> requiere que las tablas existan ANTES de arrancar.
 
 **Verificación manual después de ejecutar:**
 
@@ -409,9 +435,11 @@ sudo ufw status numbered
 
 ## PASO MANUAL — [OPS-B3] Carga de datos iniciales
 
-Una vez que el sistema está levantado y el firewall activo, el backend ha creado el
-esquema de la BD automáticamente (via Hibernate `ddl-auto: update`). La BD existe pero
-está vacía (solo el usuario `admin`). Hay dos opciones para poblarla:
+Una vez que el sistema está levantado y el firewall activo, la BD tiene el esquema creado
+(tablas vacías, creadas en el paso de `04-init-db.sh --schema schema.sql` durante el Script 03).
+El backend usa `ddl-auto: validate` en producción — NO crea ni modifica tablas, solo las
+valida al arrancar. En este punto la BD existe pero está vacía (solo el usuario `admin`
+creado por `DataInitializer`). Hay dos opciones para poblarla:
 
 ### Opción A — Entrada manual por la UI (recomendada si los datos son pocos)
 

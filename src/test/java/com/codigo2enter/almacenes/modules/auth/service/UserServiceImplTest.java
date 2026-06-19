@@ -82,7 +82,7 @@ class UserServiceImplTest {
 
     @Test
     void login_credencialesCorrectas_debeRetornarToken() {
-        when(userRepository.findByUsername("tester")).thenReturn(Optional.of(user));
+        when(userRepository.findByUsernameWithRoles("tester")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("Pass123!", user.getPassword())).thenReturn(true);
         when(jwtUtils.generateToken(eq("tester"), anySet())).thenReturn("jwt.token");
 
@@ -93,7 +93,7 @@ class UserServiceImplTest {
     @Test
     void login_usuarioInactivo_debeLanzarExcepcion() {
         user.setActive(false);
-        when(userRepository.findByUsername("tester")).thenReturn(Optional.of(user));
+        when(userRepository.findByUsernameWithRoles("tester")).thenReturn(Optional.of(user));
 
         RuntimeException ex = assertThrows(RuntimeException.class,
                 () -> userService.login(new AuthRequestDTO("tester", "Pass123!")));
@@ -102,7 +102,7 @@ class UserServiceImplTest {
 
     @Test
     void login_passwordIncorrecto_debeLanzarExcepcionGenerica() {
-        when(userRepository.findByUsername("tester")).thenReturn(Optional.of(user));
+        when(userRepository.findByUsernameWithRoles("tester")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("wrong", user.getPassword())).thenReturn(false);
 
         RuntimeException ex = assertThrows(RuntimeException.class,
@@ -113,8 +113,6 @@ class UserServiceImplTest {
 
     @Test
     void login_usuarioNoExiste_debeLanzarExcepcionGenerica() {
-        when(userRepository.findByUsername("nadie")).thenReturn(Optional.empty());
-
         RuntimeException ex = assertThrows(RuntimeException.class,
                 () -> userService.login(new AuthRequestDTO("nadie", "pass")));
         assertEquals("Credenciales incorrectas.", ex.getMessage());
@@ -122,7 +120,7 @@ class UserServiceImplTest {
 
     @Test
     void login_rolesIncluidos_enToken() {
-        when(userRepository.findByUsername("tester")).thenReturn(Optional.of(user));
+        when(userRepository.findByUsernameWithRoles("tester")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("Pass123!", user.getPassword())).thenReturn(true);
         when(jwtUtils.generateToken(anyString(), anySet())).thenReturn("tok");
 
@@ -138,12 +136,12 @@ class UserServiceImplTest {
         TooManyAttemptsException ex = assertThrows(TooManyAttemptsException.class,
                 () -> userService.login(new AuthRequestDTO("tester", "Pass123!")));
         assertTrue(ex.getMessage().contains("15"));
-        verify(userRepository, never()).findByUsername("tester");
+        verify(userRepository, never()).findByUsernameWithRoles("tester");
     }
 
     @Test
     void login_passwordIncorrecto_debeRegistrarIntentoFallido() {
-        when(userRepository.findByUsername("tester")).thenReturn(Optional.of(user));
+        when(userRepository.findByUsernameWithRoles("tester")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("wrong", user.getPassword())).thenReturn(false);
 
         assertThrows(BadCredentialsException.class,
@@ -154,7 +152,7 @@ class UserServiceImplTest {
 
     @Test
     void login_credencialesCorrectas_debeReiniciarIntentos() {
-        when(userRepository.findByUsername("tester")).thenReturn(Optional.of(user));
+        when(userRepository.findByUsernameWithRoles("tester")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("Pass123!", user.getPassword())).thenReturn(true);
         when(jwtUtils.generateToken(anyString(), anySet())).thenReturn("tok");
 

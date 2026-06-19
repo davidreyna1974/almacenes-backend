@@ -265,7 +265,7 @@ git checkout main
 
 # Frontend
 cd /opt/almacenes/frontend
-git clone <URL-DEL-REPO-FRONTEND> .
+git clone https://github.com/davidreyna1974/almacenes-frontend.git .
 git checkout main
 
 # Verificar

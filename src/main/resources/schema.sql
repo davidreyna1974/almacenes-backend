@@ -1021,5 +1021,3 @@ ALTER TABLE ONLY public.suppliers
 -- PostgreSQL database dump complete
 --
 
-\unrestrict JRd2PsPybWs9PrLfLYfKz4fats6i7MrEZ7DdAhUMRqacNYfVsNBhPUKq0sYNfZD
-

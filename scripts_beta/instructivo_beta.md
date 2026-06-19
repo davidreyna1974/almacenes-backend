@@ -67,10 +67,9 @@ sudo chown -R "$(whoami):$(whoami)" /opt/almacenes
 git clone https://github.com/davidreyna1974/almacenes-backend.git /opt/almacenes/backend
 git -C /opt/almacenes/backend checkout main
 
-git clone <URL-REPO-FRONTEND> /opt/almacenes/frontend
+git clone https://github.com/davidreyna1974/almacenes-frontend.git /opt/almacenes/frontend
 git -C /opt/almacenes/frontend checkout main
 ```
-> Sustituir `<URL-REPO-FRONTEND>` con la URL real del repositorio frontend.
 
 **Paso 9 — Agregar dominio en `/etc/hosts` de la VM**
 ```bash

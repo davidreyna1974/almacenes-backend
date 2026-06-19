@@ -58,11 +58,9 @@ PREREQUISITOS
         │  ← Clonar repos en /opt/almacenes/ (si no existen)
         │
         ▼
-[03-deploy.sh]           → .env creado, imágenes construidas, contenedores activos
-        │
-        ▼
-[04-init-db.sh]          → unaccent, f_unaccent, 10 índices creados
-        │
+[03-deploy.sh]           → .env + docker-compose.yml creados, imágenes construidas,
+        │                   DB inicializada (unaccent, schema.sql, roles, 10 índices),
+        │                   backend y frontend activos, /actuator/health OK
         ▼
 [05-firewall.sh]         → ufw activo: 80/443 ALLOW · 8080/5432 DENY
         │
@@ -81,6 +79,10 @@ PREREQUISITOS
         ▼
 https://almacenes.codigo2enter.com
 ```
+
+> `04-init-db.sh` ya NO es parte del flujo principal. `03-deploy.sh` inicializa la BD
+> automáticamente. El script `04-init-db.sh` queda como utilidad de mantenimiento
+> opcional (re-crear índices tras un `pg_restore`, diagnóstico, carga de dumps en staging).
 
 ---
 
@@ -287,20 +289,27 @@ ls /opt/almacenes/frontend/src/   # debe mostrar app/, environments/
 - Crea `/opt/almacenes/.env` con permisos `600` incluyendo `CORS_ALLOWED_ORIGINS=https://dominio`
 - **Genera `/opt/almacenes/docker-compose.yml`** (solo si no existe) con los 3 servicios: `db`, `backend`, `frontend`; el frontend monta `/etc/letsencrypt` como volumen para los certificados SSL
 - Construye las imágenes Docker (`docker compose build --no-cache`) — compila Java + Angular
-- **Primer despliegue**: levanta solo el contenedor `db`, detecta que la BD está vacía y pausa para que ejecutes `04-init-db.sh --schema schema.sql` antes de levantar el backend
-- **Re-despliegues**: levanta los 3 contenedores directamente (las tablas ya existen)
+- **Levanta el contenedor `db`** y espera a que PostgreSQL acepte conexiones
+- **Inicializa la BD automáticamente:**
+  - Instala la extensión `unaccent` (búsquedas accent-insensitive)
+  - Crea la función inmutable `f_unaccent(text)` necesaria para índices funcionales
+  - **Primer despliegue**: detecta BD vacía → carga `schema.sql` (12 tablas) → inserta los 4 roles del sistema
+  - **Re-despliegues**: detecta tablas existentes y omite la carga del esquema
+  - Crea los 10 índices de rendimiento (`IF NOT EXISTS` — idempotente en re-despliegues)
+- **Levanta backend y frontend** una vez la BD está lista
 - Espera hasta 120 segundos a que el backend responda en `/actuator/health`
 
 > **Por qué esta secuencia:** El backend usa `ddl-auto: validate` en producción. Hibernate
 > NO crea tablas — solo verifica que existan. Si el backend arranca con una BD vacía,
 > Spring Boot lanza `SchemaManagementException` y el contenedor falla. El `schema.sql`
 > en el classpath del backend tampoco se ejecuta automáticamente con PostgreSQL (solo con
-> bases embebidas como H2). Por eso hay que cargar el esquema explícitamente la primera vez.
+> bases embebidas como H2). El script carga el esquema y los roles **antes** de levantar
+> el backend, evitando cualquier intervención manual o apertura de terminales adicionales.
 >
 > **Por qué CORS_ALLOWED_ORIGINS:** Spring Boot por defecto usa `http://localhost:4200`.
 > Sin esta variable, el backend bloquea todas las peticiones del frontend en producción.
 
-**Tiempo estimado:** 5–10 minutos (compilación Java + build Angular son lo más lento)
+**Tiempo estimado:** 5–12 minutos (compilación Java + build Angular + inicialización BD)
 
 **Durante la ejecución, el script solicita:**
 
@@ -356,62 +365,43 @@ docker compose -f /opt/almacenes/docker-compose.yml ps
 docker compose -f /opt/almacenes/docker-compose.yml exec backend \
   curl -sf http://localhost:8080/actuator/health
 # Resultado esperado: {"status":"UP","components":{"db":{"status":"UP"},...}}
-```
 
-> **Nota primer despliegue:** Durante el paso 7, el script pausará y pedirá que ejecutes
-> `04-init-db.sh --schema schema.sql` en otra terminal antes de continuar.
-> Esto es esperado y necesario — ver la sección "Script 04" más abajo.
+# Verificar que la BD está inicializada
+docker compose -f /opt/almacenes/docker-compose.yml exec db \
+  psql -U almacenes_user -d almacenes_db \
+  -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE';"
+# Resultado esperado: 12
+
+docker compose -f /opt/almacenes/docker-compose.yml exec db \
+  psql -U almacenes_user -d almacenes_db -c "SELECT name FROM roles ORDER BY name;"
+# Resultado esperado: ROLE_ADMIN, ROLE_MANAGER, ROLE_SALES, ROLE_WAREHOUSEMAN
+```
 
 ---
 
-## Script 04 — Inicialización de la base de datos
+## Script 04 — Utilidad de mantenimiento de BD (opcional)
 
-**PRIMER DESPLIEGUE — ejecutar con `--schema`:**
+> **⚠ No es necesario ejecutar este script en el despliegue normal.**
+> `03-deploy.sh` inicializa la base de datos automáticamente. Este script
+> existe para operaciones de mantenimiento puntual.
+
+**Cuándo usarlo:**
+- Después de un `pg_restore` para recrear la función `f_unaccent` y los índices
+- Para cargar un dump SQL en un entorno de staging
+- Para verificar el estado de la BD sin reiniciar el stack
+
 ```bash
-bash 04-init-db.sh --schema /opt/almacenes/backend/src/main/resources/schema.sql
+bash 04-init-db.sh                                    # solo extensión + función + índices
+bash 04-init-db.sh --schema /ruta/al/dump.sql         # también carga un SQL
 ```
 
-**RE-despliegues — ejecutar sin `--schema`:**
-```bash
-bash 04-init-db.sh
-```
-
-**Qué hace:**
-- Espera a que PostgreSQL esté listo para conexiones (`pg_isready`)
-- Instala la extensión `unaccent` (búsquedas accent-insensitive: "galon" encuentra "Galón")
-- Crea la función inmutable `f_unaccent(text)` necesaria para índices funcionales
-- **Con `--schema`**: carga el `schema.sql` que crea las 12 tablas, secuencias, constraints e índices
-- **Con `--schema`**: inserta los 4 roles del sistema (`ROLE_ADMIN`, `ROLE_MANAGER`, `ROLE_WAREHOUSEMAN`, `ROLE_SALES`) — sin ellos, el usuario `admin` arrancaría sin permisos
-- Crea los 10 índices de rendimiento adicionales del sistema (búsqueda, filtrado, FK, auditoría)
-- Verifica la instalación con pruebas internas
-
-**Tiempo estimado:** 1–2 minutos
-
-> El script es seguro de ejecutar múltiples veces (usa `IF NOT EXISTS`).
-> En re-despliegues no hace daño ejecutarlo de nuevo sin `--schema`.
->
-> **Por qué `--schema` en el primer despliegue:** El `schema.sql` contiene el DDL completo
-> del sistema (12 tablas). Spring Boot NO lo ejecuta automáticamente con PostgreSQL — solo
-> lo haría con bases de datos embebidas como H2. El backend con `ddl-auto: validate`
-> requiere que las tablas existan ANTES de arrancar.
-
-**Verificación manual después de ejecutar:**
+**Verificación:**
 
 ```bash
-docker compose -f /opt/almacenes/docker-compose.yml exec db \
-  psql -U almacenes_user -d almacenes_db \
-  -c "SELECT extname FROM pg_extension WHERE extname='unaccent';"
-# Resultado esperado: unaccent
-
 docker compose -f /opt/almacenes/docker-compose.yml exec db \
   psql -U almacenes_user -d almacenes_db \
   -c "SELECT f_unaccent('Galón');"
 # Resultado esperado: Galon
-
-docker compose -f /opt/almacenes/docker-compose.yml exec db \
-  psql -U almacenes_user -d almacenes_db \
-  -c "SELECT count(*) FROM pg_indexes WHERE indexname LIKE 'idx_%';"
-# Resultado esperado: 10
 ```
 
 ---
@@ -854,7 +844,7 @@ df -h /opt/almacenes/
 |---|---|---|
 | `permission denied` al usar docker | Usuario no está en grupo docker | Cerrar y reabrir sesión SSH |
 | certbot falla con `Connection refused` | DNS no apunta al servidor, o nginx está corriendo en 80 | Verificar DNS con `nslookup` y que el puerto 80 esté libre |
-| Backend no arranca / `SchemaManagementException` | BD vacía, tablas no creadas | Ejecutar `04-init-db.sh --schema .../schema.sql` (solo primer despliegue) |
+| Backend no arranca / `SchemaManagementException` | BD vacía, tablas no creadas | Verificar que `03-deploy.sh` completó el paso 7 sin errores. Si falló: `docker compose logs db` y repetir desde el paso de inicialización. En último caso: `bash 04-init-db.sh --schema /opt/almacenes/backend/src/main/resources/schema.sql` con los contenedores corriendo. |
 | Backend no arranca / `CORS` rechaza peticiones | `CORS_ALLOWED_ORIGINS` no está en `.env` | Agregar `CORS_ALLOWED_ORIGINS=https://dominio` al `.env` y reiniciar backend |
 | `/login` devuelve 404 | nginx sin `try_files` para SPA | Verificar `nginx.conf` en el Dockerfile del frontend |
 | HTTPS no responde o devuelve error de certificado | Certificados no montados correctamente | Verificar que `/etc/letsencrypt/live/dominio/` tiene `fullchain.pem` y que el volumen está montado en el contenedor frontend |
@@ -876,8 +866,7 @@ Infraestructura
 [ ] Repositorios: develop mergeado a main en backend y frontend
 [ ] Script 01: Docker instalado, sesión SSH reabierta
 [ ] Script 02: Certificado SSL obtenido y cron de renovación configurado
-[ ] Script 03: Tres contenedores corriendo (db, backend, frontend)
-[ ] Script 04: unaccent, f_unaccent y 10 índices creados
+[ ] Script 03: Tres contenedores corriendo; BD inicializada (unaccent, 12 tablas, 4 roles, 10 índices); /actuator/health UP
 [ ] Script 05: Firewall activo — 8080 y 5432 bloqueados desde exterior
 
 Datos y acceso

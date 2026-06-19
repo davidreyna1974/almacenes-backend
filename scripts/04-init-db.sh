@@ -1,28 +1,31 @@
 #!/bin/bash
 # ============================================================
-# SCRIPT 04 — INICIALIZACIÓN DE LA BASE DE DATOS
+# SCRIPT 04 — UTILIDAD DE MANTENIMIENTO DE BASE DE DATOS
 # Sistema  : Almacenes — codigoCodigoEnter
 # Dominio  : almacenes.codigo2enter.com
-# Versión  : 1.0 (2026-06-18)
+# Versión  : 2.0 (2026-06-18)
 #
-# Descripción:
-#   Inicializa la base de datos PostgreSQL en el contenedor:
-#   - Instala la extensión unaccent (búsquedas accent-insensitive)
-#   - Crea la función inmutable f_unaccent(text)
-#   - (Opcional) Carga un script SQL inicial de esquema/datos
-#   - Crea los 10 índices de rendimiento del sistema
+# ⚠ UTILIDAD OPCIONAL — NO ES REQUERIDA EN EL FLUJO NORMAL
 #
-# Cuándo ejecutar:
-#   SOLO en el PRIMER despliegue. En despliegues posteriores
-#   (actualizaciones), Hibernate maneja la evolución del esquema.
+# Desde la versión 2.0, el script 03-deploy.sh realiza toda la
+# inicialización de la base de datos automáticamente:
+#   - Instala unaccent, crea f_unaccent
+#   - Carga schema.sql en primer despliegue + inserta roles
+#   - Crea los 10 índices de rendimiento
+#
+# Este script existe para operaciones de mantenimiento puntual:
+#   - Re-crear índices tras un pg_restore
+#   - Re-instalar f_unaccent si fue eliminada accidentalmente
+#   - Cargar un dump SQL en un entorno de staging
+#   - Verificar el estado de la BD sin reiniciar el stack
 #
 # Prerequisitos:
 #   - Script 03 ejecutado (contenedores corriendo)
 #   - Contenedor 'db' disponible y PostgreSQL iniciado
 #
 # Cómo ejecutar:
-#   bash 04-init-db.sh
-#   bash 04-init-db.sh --schema /ruta/al/schema.sql  (con carga de SQL)
+#   bash 04-init-db.sh                                    (solo índices y extensión)
+#   bash 04-init-db.sh --schema /ruta/al/schema.sql       (con carga de SQL)
 #
 # Qué hace paso a paso:
 #   1. Verifica que el contenedor db está corriendo

@@ -313,72 +313,114 @@ docker compose -f "$DEPLOY_DIR/docker-compose.yml" --env-file "$ENV_FILE" build 
 ok "Imágenes construidas"
 
 # ============================================================
-# PASO 7 — Levantar los contenedores
+# PASO 7 — Levantar la base de datos e inicializarla
 # ============================================================
-# IMPORTANTE: El backend usa ddl-auto: validate en producción.
-# Esto significa que Hibernate NO crea las tablas — solo las
-# valida. Si las tablas no existen, el backend falla al arrancar.
-#
-# En el PRIMER despliegue (BD vacía) hay que:
-#   1. Levantar solo el contenedor db
-#   2. Cargar schema.sql con 04-init-db.sh --schema
-#   3. Levantar backend y frontend
-#
-# En RE-despliegues las tablas ya existen — levantar todo junto.
-step "7/8 Levantando contenedores..."
+# El backend usa ddl-auto: validate — Hibernate NO crea tablas.
+# Hay que garantizar que el esquema existe ANTES de levantar
+# el backend. Este paso lo hace todo automáticamente:
+#   a) Levanta el contenedor db
+#   b) Espera a que PostgreSQL acepte conexiones
+#   c) Instala la extensión unaccent (búsquedas accent-insensitive)
+#   d) Crea la función f_unaccent (para índices funcionales)
+#   e) PRIMER DESPLIEGUE: carga schema.sql + inserta roles
+#   f) Crea los índices de rendimiento (IF NOT EXISTS — idempotente)
+step "7/9 Levantando base de datos e inicializando esquema..."
 
-# Verificar si las tablas ya existen (re-despliegue vs primer despliegue)
-DB_TABLES_EXIST=false
-if docker compose -f "$DEPLOY_DIR/docker-compose.yml" --env-file "$ENV_FILE" up -d db 2>/dev/null; then
-    # Esperar a que PostgreSQL esté listo
-    for i in $(seq 1 20); do
-        if docker compose -f "$DEPLOY_DIR/docker-compose.yml" exec -T db \
-            pg_isready -U almacenes_user -d almacenes_db &>/dev/null; then
-            break
-        fi
-        sleep 2
-    done
-    TABLE_COUNT=$(docker compose -f "$DEPLOY_DIR/docker-compose.yml" exec -T db \
-        psql -U almacenes_user -d almacenes_db -tAc \
-        "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE';" 2>/dev/null | tr -d '[:space:]' || echo "0")
-    [[ "$TABLE_COUNT" =~ ^[0-9]+$ ]] && [[ "$TABLE_COUNT" -ge 5 ]] && DB_TABLES_EXIST=true
+# Helper: ejecutar SQL en el contenedor db sin interacción
+db_exec() {
+    docker compose -f "$DEPLOY_DIR/docker-compose.yml" exec -T db \
+        psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "$1"
+}
+
+# Levantar el contenedor db
+docker compose -f "$DEPLOY_DIR/docker-compose.yml" --env-file "$ENV_FILE" up -d db
+ok "Contenedor db iniciado"
+
+# Esperar a que PostgreSQL esté listo para aceptar conexiones
+echo "  Esperando a que PostgreSQL esté listo..."
+MAX_PG_WAIT=60
+PG_ELAPSED=0
+until docker compose -f "$DEPLOY_DIR/docker-compose.yml" exec -T db \
+    pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" &>/dev/null; do
+    echo -n "  ."
+    sleep 3
+    PG_ELAPSED=$((PG_ELAPSED + 3))
+    [[ $PG_ELAPSED -ge $MAX_PG_WAIT ]] && err "PostgreSQL no respondió en ${MAX_PG_WAIT}s"
+done
+echo ""
+ok "PostgreSQL listo"
+
+# Extensión unaccent — idempotente (IF NOT EXISTS)
+db_exec "CREATE EXTENSION IF NOT EXISTS unaccent;" >/dev/null
+ok "Extensión unaccent instalada"
+
+# Función f_unaccent — idempotente (CREATE OR REPLACE)
+db_exec "
+CREATE OR REPLACE FUNCTION f_unaccent(text)
+RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT AS
+\$\$ SELECT unaccent('unaccent', \$1) \$\$;" >/dev/null
+ok "Función f_unaccent(text) creada"
+
+# Detectar si es primer despliegue (tablas aún no existen)
+TABLE_COUNT=$(db_exec "SELECT count(*) FROM information_schema.tables
+    WHERE table_schema='public' AND table_type='BASE TABLE';" \
+    2>/dev/null | grep -oP '\d+' | head -1 || echo "0")
+
+if [[ "${TABLE_COUNT:-0}" -lt 5 ]]; then
+    # ── PRIMER DESPLIEGUE: cargar esquema completo ────────────
+    warn "Primer despliegue — BD vacía, cargando schema.sql..."
+    SCHEMA_SQL="$DEPLOY_DIR/backend/src/main/resources/schema.sql"
+    [[ ! -f "$SCHEMA_SQL" ]] && \
+        err "No se encontró $SCHEMA_SQL\n     Asegúrate de que el repositorio backend está clonado en $DEPLOY_DIR/backend/"
+    docker compose -f "$DEPLOY_DIR/docker-compose.yml" exec -T db \
+        psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < "$SCHEMA_SQL"
+    ok "Esquema cargado (12 tablas, secuencias, constraints, índices)"
+
+    # Insertar los 4 roles del sistema (requeridos por DataInitializer)
+    db_exec "
+INSERT INTO roles (name) VALUES
+    ('ROLE_ADMIN'), ('ROLE_MANAGER'), ('ROLE_WAREHOUSEMAN'), ('ROLE_SALES')
+ON CONFLICT (name) DO NOTHING;" >/dev/null
+    ok "Roles del sistema insertados"
+else
+    ok "Re-despliegue — esquema existente (${TABLE_COUNT} tablas encontradas)"
 fi
 
-if [[ "$DB_TABLES_EXIST" == "false" ]]; then
-    echo ""
-    warn "════════════════════════════════════════════════════════"
-    warn "  PRIMER DESPLIEGUE DETECTADO — BD vacía (0 tablas)"
-    warn ""
-    warn "  El backend usa ddl-auto: validate y NO crea tablas."
-    warn "  Debes cargar el esquema ANTES de levantar el backend."
-    warn ""
-    warn "  Abre otra terminal en el servidor y ejecuta:"
-    warn "  bash ~/scripts-almacenes/04-init-db.sh --schema \\"
-    warn "    /opt/almacenes/backend/src/main/resources/schema.sql"
-    warn ""
-    warn "  El comando anterior crea las 12 tablas, índices y"
-    warn "  la extensión unaccent en la BD."
-    warn "════════════════════════════════════════════════════════"
-    echo ""
-    read -rp "  Presiona Enter cuando 04-init-db.sh haya completado..." _
-fi
+# Índices de rendimiento — todos IF NOT EXISTS (idempotentes)
+echo "  Creando índices de rendimiento..."
+db_exec "CREATE INDEX IF NOT EXISTS idx_product_name_unaccent     ON products(f_unaccent(lower(name)));" >/dev/null
+db_exec "CREATE INDEX IF NOT EXISTS idx_product_category           ON products(category_id);" >/dev/null
+db_exec "CREATE INDEX IF NOT EXISTS idx_product_active             ON products(active);" >/dev/null
+db_exec "CREATE INDEX IF NOT EXISTS idx_supplier_company_unaccent  ON suppliers(f_unaccent(lower(company_name)));" >/dev/null
+db_exec "CREATE INDEX IF NOT EXISTS idx_client_name_unaccent       ON clients(f_unaccent(lower(name)));" >/dev/null
+db_exec "CREATE INDEX IF NOT EXISTS idx_purchase_order_status      ON purchase_orders(status);" >/dev/null
+db_exec "CREATE INDEX IF NOT EXISTS idx_sale_order_status          ON sale_orders(status);" >/dev/null
+db_exec "CREATE INDEX IF NOT EXISTS idx_stock_movement_product     ON stock_movements(product_id);" >/dev/null
+db_exec "CREATE INDEX IF NOT EXISTS idx_purchase_order_created_at  ON purchase_orders(created_at DESC);" >/dev/null
+db_exec "CREATE INDEX IF NOT EXISTS idx_sale_order_created_at      ON sale_orders(created_at DESC);" >/dev/null
+ok "10 índices de rendimiento verificados"
 
-# Levantar backend y frontend (la DB ya está corriendo)
+# Verificación rápida de accent-insensitive
+FUNC_OK=$(db_exec "SELECT f_unaccent('Galón');" 2>/dev/null | grep -c "Galon" || true)
+[[ "${FUNC_OK:-0}" -ge 1 ]] \
+    && ok "Prueba f_unaccent('Galón') = 'Galon': PASS" \
+    || warn "⚠ f_unaccent no funciona — verificar extensión unaccent"
+
+# ============================================================
+# PASO 8 — Levantar backend y frontend
+# ============================================================
+step "8/9 Levantando backend y frontend..."
 docker compose -f "$DEPLOY_DIR/docker-compose.yml" --env-file "$ENV_FILE" up -d
 ok "Contenedores iniciados"
-
-# Mostrar estado de los contenedores
 docker compose -f "$DEPLOY_DIR/docker-compose.yml" ps
 
 # ============================================================
-# PASO 8 — Esperar a que el backend esté disponible
+# PASO 9 — Esperar a que el backend esté disponible
 # ============================================================
-# Spring Boot puede tardar 30-90 segundos en inicializarse
-# (conexión a BD, Hibernate, carga de contexto Spring).
-# El endpoint /actuator/health devuelve HTTP 200 cuando
-# el backend está listo para recibir peticiones.
-# Esperamos hasta 120 segundos antes de declarar fallo.
-step "8/8 Esperando a que el backend esté disponible..."
+# Spring Boot tarda 30-90 s en inicializarse (carga del contexto
+# Spring, conexión a BD, validación Hibernate del esquema).
+# /actuator/health retorna {"status":"UP"} cuando está listo.
+step "9/9 Esperando a que el backend esté disponible..."
 MAX_WAIT=120
 ELAPSED=0
 INTERVAL=5
@@ -391,7 +433,7 @@ until docker compose -f "$DEPLOY_DIR/docker-compose.yml" exec -T backend \
     ELAPSED=$((ELAPSED + INTERVAL))
     if [[ $ELAPSED -ge $MAX_WAIT ]]; then
         echo ""
-        err "El backend no respondió en ${MAX_WAIT}s.\n     Si es el primer despliegue: verifica que 04-init-db.sh --schema se ejecutó correctamente.\n     Logs: docker compose -f $DEPLOY_DIR/docker-compose.yml logs backend"
+        err "El backend no respondió en ${MAX_WAIT}s.\n     Logs: docker compose -f $DEPLOY_DIR/docker-compose.yml logs backend"
     fi
 done
 
@@ -412,5 +454,5 @@ echo ""
 echo "  .env: $ENV_FILE (permisos 600)"
 echo ""
 echo -e "${YELLOW}  SIGUIENTE PASO:${NC}"
-echo "  bash 04-init-db.sh"
+echo "  sudo bash 05-firewall.sh"
 echo ""

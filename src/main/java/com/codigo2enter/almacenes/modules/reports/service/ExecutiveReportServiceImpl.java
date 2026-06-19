@@ -44,7 +44,7 @@ public class ExecutiveReportServiceImpl implements ExecutiveReportService {
      * Dashboard ejecutivo con KPIs financieros del período.
      *
      * Flujo:
-     *   1. Resolver fechas (null → rango desde 2000-01-01 hasta mañana)
+     *   1. Resolver fechas (null from → inicio del año en curso; null to → mañana)
      *   2. Ejecutar 4 queries (revenue, cogs, pendingPO, pendingSO) + inventoryValue
      *   3. Calcular grossMargin y grossMarginPct con protección contra división por cero
      *
@@ -56,7 +56,7 @@ public class ExecutiveReportServiceImpl implements ExecutiveReportService {
      */
     @Override
     public ExecutiveDashboardDTO getExecutiveDashboard(LocalDate from, LocalDate to) {
-        LocalDateTime fromDt = from != null ? from.atStartOfDay() : LocalDateTime.of(2000, 1, 1, 0, 0);
+        LocalDateTime fromDt = from != null ? from.atStartOfDay() : LocalDate.now().withDayOfYear(1).atStartOfDay();
         LocalDateTime toDt   = to   != null ? to.plusDays(1).atStartOfDay() : LocalDateTime.now().plusDays(1);
 
         BigDecimal revenue  = saleOrderDetailRepository.sumRevenue(fromDt, toDt);

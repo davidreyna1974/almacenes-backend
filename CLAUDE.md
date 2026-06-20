@@ -1463,4 +1463,52 @@ Ante cualquier nuevo endpoint, verificar con **curl real** O con **@SpringBootTe
 4. Los campos de auditoría (`createdById`, `updatedById`, `approvedById`, etc.) tienen valor.
 5. Los campos calculados (`availableStock`, `totalAmount`) son coherentes con los datos de BD.
 
+---
+
+## Puesta en producción
+
+### Arquitectura de despliegue
+
+3 servicios Docker en un servidor Ubuntu 24.04 LTS:
+- `db` — postgres:16, solo red interna Docker (expose, sin ports)
+- `backend` — Spring Boot JAR, solo red interna Docker
+- `frontend` — nginx + Angular build, puertos 80/443 al exterior
+
+nginx termina TLS, sirve la SPA y proxea `/api/` al backend.
+
+**Dominio**: `almacenes.codigo2enter.com` | **Empresa**: codigoCodigoEnter
+
+### Scripts de despliegue (`scripts/`)
+
+Documentación completa en `scripts/INSTRUCTIVO_puesta_produccion_almacenes.md`.
+
+| Script | Cuándo |
+|---|---|
+| `01-prepare-server.sh` | Una sola vez al configurar el servidor |
+| `02-ssl.sh` | Una sola vez (Let's Encrypt + cron de renovación) |
+| `03-deploy.sh` | Primer despliegue y cada re-despliegue |
+| `04-firewall.sh` | Una sola vez tras el primer despliegue |
+| `05-verify.sh` | Tras cada despliegue (8 smoke tests) |
+| `maint-db.sh` | Solo mantenimiento puntual (opcional) |
+
+`03-deploy.sh` inicializa la BD automáticamente en el primer despliegue:
+extensión `unaccent` → `schema.sql` → 4 roles → función `f_unaccent` → 10 índices.
+
+### Beta local (`scripts_beta/`)
+
+Para validar el despliegue sin DNS real ni Let's Encrypt, usando Lima (VM Ubuntu en Mac).
+Documentación en `scripts_beta/instructivo_beta.md`. El directorio es autocontenido.
+
+Scripts exclusivos beta: `02-ssl-local.sh` (cert autofirmado) y `05-verify-local.sh` (curl -k).
+Scripts idénticos a producción: `01-prepare-server.sh`, `03-deploy.sh`, `04-firewall.sh`.
+
+### Checklist pre-producción (L28)
+
+```
+[ ] CSP, HSTS, X-Frame-Options, X-Content-Type-Options en nginx.conf
+[ ] Swagger UI deshabilitado en perfil prod
+[ ] CORS_ALLOWED_ORIGINS apunta al dominio real
+[ ] Re-ejecutar CYBER-13/CYBER-18 contra el dominio de producción
+```
+
 Los @SpringBootTest de `AuditAndConstraintIntegrationTest` automatizan exactamente estas verificaciones para los flujos críticos — no son necesarias manualmente si el test ya las cubre.

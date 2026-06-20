@@ -1384,6 +1384,52 @@ Rama activa de desarrollo: `feature/[nombre]`
 
 ---
 
+## U12. Puesta en producción
+
+### Arquitectura de despliegue
+
+3 servicios Docker en un servidor Ubuntu 24.04 LTS:
+- `db` — postgres:16, solo red interna Docker (expose, sin ports)
+- `backend` — Spring Boot JAR, solo red interna Docker
+- `frontend` — nginx + Angular build, puertos 80/443 al exterior
+
+nginx termina TLS, sirve la SPA y proxea `/api/` al backend.
+
+### Scripts de despliegue (`scripts/`)
+
+Documentación completa en `scripts/INSTRUCTIVO_puesta_produccion_almacenes.md`.
+
+| Script | Cuándo |
+|---|---|
+| `01-prepare-server.sh` | Una sola vez al configurar el servidor |
+| `02-ssl.sh` | Una sola vez (Let's Encrypt + cron de renovación) |
+| `03-deploy.sh` | Primer despliegue y cada re-despliegue |
+| `04-firewall.sh` | Una sola vez tras el primer despliegue |
+| `05-verify.sh` | Tras cada despliegue (8 smoke tests) |
+| `maint-db.sh` | Solo mantenimiento puntual (opcional) |
+
+`03-deploy.sh` inicializa la BD automáticamente: extensión `unaccent` → `schema.sql`
+→ 4 roles → función `f_unaccent` → 10 índices. No se necesita intervención manual.
+
+### Beta local (`scripts_beta/`)
+
+Para validar el despliegue sin DNS real usando Lima (VM Ubuntu en Mac).
+Documentación en `scripts_beta/instructivo_beta.md`. Directorio autocontenido.
+
+Scripts exclusivos beta: `02-ssl-local.sh` y `05-verify-local.sh`.
+Scripts idénticos a producción: `01-prepare-server.sh`, `03-deploy.sh`, `04-firewall.sh`.
+
+### Checklist pre-producción (L28)
+
+```
+[ ] CSP, HSTS, X-Frame-Options, X-Content-Type-Options en nginx.conf
+[ ] Swagger UI deshabilitado en perfil prod
+[ ] CORS_ALLOWED_ORIGINS apunta al dominio real
+[ ] Re-ejecutar pruebas de seguridad contra el dominio de producción
+```
+
+---
+
 # ═══════════════════════════════════════════════════════════════
 # LECCIONES APRENDIDAS — BUGS DETECTADOS EN PRUEBAS E2E
 # (Completar con los bugs específicos del proyecto)

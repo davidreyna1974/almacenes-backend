@@ -110,8 +110,12 @@ public class PurchaseOrderController {
     public ResponseEntity<PageResponseDTO<PurchaseOrderResponseDTO>> findByStatus(
             @PathVariable String status,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
-        return ResponseEntity.ok(purchaseOrderService.findByStatus(status, page, size));
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(required = false, defaultValue = "") String search) {
+        if (search.isBlank()) {
+            return ResponseEntity.ok(purchaseOrderService.findByStatus(status, page, size));
+        }
+        return ResponseEntity.ok(purchaseOrderService.searchByStatus(status, search, page, size));
     }
 
     /**

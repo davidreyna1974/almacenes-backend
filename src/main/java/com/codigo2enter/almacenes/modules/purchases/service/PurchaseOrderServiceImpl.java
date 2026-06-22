@@ -157,6 +157,28 @@ public class PurchaseOrderServiceImpl implements PurchaseOrderService {
 
     /**
      * {@inheritDoc}
+     *
+     * Delega al native query searchByStatus — ORDER BY createdAt DESC está en la query.
+     * Solo se invoca cuando search no está vacío (el controller enruta correctamente).
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public PageResponseDTO<PurchaseOrderResponseDTO> searchByStatus(String status, String search, int page, int size) {
+        try {
+            PurchaseOrderStatus.valueOf(status);
+        } catch (IllegalArgumentException e) {
+            throw new BusinessRuleException(
+                    "Estado inválido: '" + status + "'. Valores permitidos: " +
+                    "PENDING, APPROVED, RECEIVED, CANCELLED.");
+        }
+        PageRequest pageable = PageRequest.of(page, size);
+        Page<PurchaseOrder> result = purchaseOrderRepository.searchByStatus(
+                status.toUpperCase(), search.trim(), pageable);
+        return PageResponseDTO.from(result.map(this::toResponseDTOFiltered));
+    }
+
+    /**
+     * {@inheritDoc}
      */
     @Override
     @Transactional(readOnly = true)

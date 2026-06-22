@@ -57,6 +57,18 @@ public interface PurchaseOrderService {
     PageResponseDTO<PurchaseOrderResponseDTO> findByStatus(String status, int page, int size);
 
     /**
+     * Busca órdenes por estado + término libre (N° orden, proveedor, usuario).
+     * Solo debe invocarse cuando search no está vacío — para búsqueda vacía usar findByStatus.
+     *
+     * @param status nombre del estado
+     * @param search término de búsqueda libre (no vacío)
+     * @param page   número de página (base 0)
+     * @param size   cantidad de registros por página
+     * @return PageResponseDTO con las órdenes que coinciden con el filtro
+     */
+    PageResponseDTO<PurchaseOrderResponseDTO> searchByStatus(String status, String search, int page, int size);
+
+    /**
      * Retorna todas las órdenes de un proveedor específico.
      *
      * @param supplierId identificador del proveedor

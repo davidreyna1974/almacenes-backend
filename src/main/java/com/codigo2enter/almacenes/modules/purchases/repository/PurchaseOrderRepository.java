@@ -142,6 +142,39 @@ public interface PurchaseOrderRepository extends JpaRepository<PurchaseOrder, Lo
            "WHERE YEAR(p.createdAt) = :year")
     Long countByYear(@Param("year") int year);
 
+    /**
+     * Búsqueda de órdenes por estado + término libre (número de orden, proveedor, usuario).
+     * Usa f_unaccent para búsqueda insensible a mayúsculas y diacríticos (L8/BUG-INV-06).
+     * Solo se invoca cuando el término de búsqueda no está vacío.
+     *
+     * @param status estado de la orden (STRING — "PENDING", "APPROVED", etc.)
+     * @param search término de búsqueda libre (no vacío)
+     * @param pageable parámetros de paginación (sin sort — ORDER BY en la query)
+     * @return página de órdenes que coinciden con el filtro
+     */
+    @Query(value =
+        "SELECT o.* FROM purchase_orders o " +
+        "JOIN suppliers s ON o.supplier_id = s.id " +
+        "JOIN users u ON o.created_by = u.id " +
+        "WHERE o.status = :status " +
+        "AND (f_unaccent(o.order_number) ILIKE '%' || f_unaccent(:search) || '%' " +
+        "     OR f_unaccent(s.company_name) ILIKE '%' || f_unaccent(:search) || '%' " +
+        "     OR f_unaccent(u.username) ILIKE '%' || f_unaccent(:search) || '%') " +
+        "ORDER BY o.created_at DESC",
+        countQuery =
+        "SELECT COUNT(o.id) FROM purchase_orders o " +
+        "JOIN suppliers s ON o.supplier_id = s.id " +
+        "JOIN users u ON o.created_by = u.id " +
+        "WHERE o.status = :status " +
+        "AND (f_unaccent(o.order_number) ILIKE '%' || f_unaccent(:search) || '%' " +
+        "     OR f_unaccent(s.company_name) ILIKE '%' || f_unaccent(:search) || '%' " +
+        "     OR f_unaccent(u.username) ILIKE '%' || f_unaccent(:search) || '%')",
+        nativeQuery = true)
+    Page<PurchaseOrder> searchByStatus(
+            @Param("status") String status,
+            @Param("search") String search,
+            Pageable pageable);
+
     // ── QUERIES ANALÍTICAS PARA EL MÓDULO REPORTS ──────────────────────────
 
     /**

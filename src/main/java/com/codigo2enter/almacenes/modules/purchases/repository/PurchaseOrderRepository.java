@@ -157,18 +157,18 @@ public interface PurchaseOrderRepository extends JpaRepository<PurchaseOrder, Lo
         "JOIN suppliers s ON o.supplier_id = s.id " +
         "JOIN users u ON o.created_by = u.id " +
         "WHERE o.status = :status " +
-        "AND (f_unaccent(o.order_number) ILIKE '%' || f_unaccent(:search) || '%' " +
-        "     OR f_unaccent(s.company_name) ILIKE '%' || f_unaccent(:search) || '%' " +
-        "     OR f_unaccent(u.username) ILIKE '%' || f_unaccent(:search) || '%') " +
+        "AND (f_unaccent(lower(o.order_number)) LIKE '%' || f_unaccent(lower(CAST(:search AS text))) || '%' " +
+        "     OR f_unaccent(lower(s.company_name)) LIKE '%' || f_unaccent(lower(CAST(:search AS text))) || '%' " +
+        "     OR f_unaccent(lower(u.username)) LIKE '%' || f_unaccent(lower(CAST(:search AS text))) || '%') " +
         "ORDER BY o.created_at DESC",
         countQuery =
         "SELECT COUNT(o.id) FROM purchase_orders o " +
         "JOIN suppliers s ON o.supplier_id = s.id " +
         "JOIN users u ON o.created_by = u.id " +
         "WHERE o.status = :status " +
-        "AND (f_unaccent(o.order_number) ILIKE '%' || f_unaccent(:search) || '%' " +
-        "     OR f_unaccent(s.company_name) ILIKE '%' || f_unaccent(:search) || '%' " +
-        "     OR f_unaccent(u.username) ILIKE '%' || f_unaccent(:search) || '%')",
+        "AND (f_unaccent(lower(o.order_number)) LIKE '%' || f_unaccent(lower(CAST(:search AS text))) || '%' " +
+        "     OR f_unaccent(lower(s.company_name)) LIKE '%' || f_unaccent(lower(CAST(:search AS text))) || '%' " +
+        "     OR f_unaccent(lower(u.username)) LIKE '%' || f_unaccent(lower(CAST(:search AS text))) || '%')",
         nativeQuery = true)
     Page<PurchaseOrder> searchByStatus(
             @Param("status") String status,

@@ -8,6 +8,7 @@ import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
@@ -133,6 +134,22 @@ public class GlobalExceptionHandler {
                 .map(fe -> fe.getField() + ": " + fe.getDefaultMessage())
                 .collect(Collectors.joining("; "));
         return buildResponse(HttpStatus.BAD_REQUEST, "Validación fallida: " + errors);
+    }
+
+    /**
+     * Parámetro de query/path con tipo inválido → HTTP 400 Bad Request.
+     *
+     * Lanzada cuando Spring no puede convertir un parámetro de la petición al
+     * tipo esperado del controlador (p.ej. {@code ?from=abc} hacia un LocalDate).
+     * Antes este caso caía en el handler genérico de RuntimeException y devolvía
+     * 500 con un mensaje que filtraba el tipo interno de Java (CYBER-05). Ahora
+     * se mapea a 400 con un mensaje que nombra el parámetro pero NO revela el
+     * tipo interno ni el stacktrace.
+     */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<Map<String, Object>> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+        return buildResponse(HttpStatus.BAD_REQUEST,
+            "El parámetro '" + ex.getName() + "' tiene un valor inválido. Verifica el formato.");
     }
 
     private ResponseEntity<Map<String, Object>> buildResponse(HttpStatus status, String message) {

@@ -34,7 +34,11 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
@@ -109,6 +113,23 @@ class ReportControllerTest {
                         .param("from", "2026-01-01")
                         .param("to",   "2026-01-31"))
                 .andExpect(status().isOk());
+    }
+
+    /**
+     * CYBER-05 (regresión): un parámetro de fecha malformado debe producir
+     * HTTP 400 Bad Request (no 500) y el cuerpo NO debe filtrar el tipo interno
+     * de Java (LocalDate). Antes del fix, MethodArgumentTypeMismatchException
+     * caía en el handler genérico de RuntimeException → 500 con el tipo expuesto.
+     */
+    @Test
+    void parametroFechaInvalido_retorna400SinFiltrarTipoInterno() throws Exception {
+        mockMvc.perform(get(BASE + "/sales/profitability")
+                        .param("from", "abc")
+                        .param("to",   "xyz"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.message").value(containsString("from")))
+                .andExpect(content().string(not(containsString("LocalDate"))));
     }
 
     // ── Gestión ──────────────────────────────────────────────────────────────

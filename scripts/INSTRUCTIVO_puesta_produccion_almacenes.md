@@ -889,5 +889,5 @@ Verificación final
 
 ---
 
-*Documento generado junto con el plan de producción `docs/global/plan_salida_produccion_v1_almacenes.txt`.*
+*Documento generado junto con el plan de producción `docs/arquitectura/plan_salida_produccion_v1_almacenes.txt`.*
 *Última actualización: 2026-06-19*

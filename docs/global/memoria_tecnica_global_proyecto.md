@@ -485,25 +485,29 @@ JWT_SECRET=...       # mínimo 64 caracteres hex (openssl rand -hex 32)
 | `inventory` | ✓ Completo | 29 A + 16 B + 4 D | unitCost NOT NULL |
 | `purchases` | ✓ Completo | 43 A + 25 B | Máquina de estados PENDING→APPROVED→RECEIVED |
 | `sales` | ✓ Completo | 47 A + 25 B + 3 C + 5 D | Optimistic Locking, reservas |
-| `reports` | ✓ Completo | 40 A + 14 B + 7 D | 12 endpoints, 3 audiencias |
+| `reports` | ✓ Completo | 40 A + 15 B + 7 D | 12 endpoints, 3 audiencias. **B+1: CYBER-05** (`MethodArgumentTypeMismatchException`→400) |
 | Swagger/OpenAPI | ✓ Completo | — | 62 paths documentados |
 | Paginación | ✓ Completo | — | 9 endpoints paginados |
 
-**Suite total backend**: 365 tests — 0 fallos — BUILD SUCCESS  
-**Cobertura**: 84.6% líneas · 87.5% métodos · 61.6% ramas
+**Suite total backend**: **406 tests — 0 fallos — BUILD SUCCESS**  
+**Fix transversal (2026-06-28):** `GlobalExceptionHandler.handleTypeMismatch` — params de query con tipo inválido
+ahora devuelven **HTTP 400** (antes 500 filtrando `java.time.LocalDate`). Blast radius global; ver
+`docs/modulos/reports/memoria_tecnica_modulo_reports.md` §8 Bug 3.
 
-### Frontend (`almacenes-frontend`) — En desarrollo
+### Frontend (`almacenes-frontend`) — Completo · **QA certificado (campaña 4 fases cerrada 2026-06-28)**
 
-| Módulo | Estado | Tests | Notas |
-|---|---|---|---|
-| Módulo 0: Infra-base + Layout | ✓ Completo | 26 specs, 0 fallos | Angular 21, Material M2, sidebar+topbar+main-layout, tema #6B3C6B |
-| Módulo 1: Auth + RBAC | ✓ Completo | 43 specs, 0 fallos | AuthService, JWT interceptor, error interceptor, authGuard, LoginComponent, filtrado sidebar por rol |
-| Módulo 2: Inventory | ✓ Completo — ⬜ Specs unitarios pendientes | 15/15 browser + 4 roles RBAC + 17 seguridad backend | Mergeado a develop. RBAC 4 roles verificado en browser y backend. HTTP 404/409/422 corregidos. |
-| Módulo 3: Purchases | ⬜ Pendiente | | |
-| Módulo 4: Sales | ⬜ Pendiente | | |
-| Módulo 5: Reports | ⬜ Pendiente | | |
+| Módulo | Estado | Notas |
+|---|---|---|
+| Infra-base + Layout, Auth, Inventory, Purchases, Sales, Reports, Usuarios | ✓ Completo | Los 5 módulos de negocio + auth/usuarios certificados bajo Propuesta D |
 
-**Suite total frontend (Módulos 0-1)**: 43 specs — 0 fallos — cobertura 98.09% statements, 100% funciones
+**Suite total frontend**: **462 specs — 0 fallos — 88.94% statements** (incluye 6 specs de `DdMmYyyyDateAdapter`).
+
+#### Campaña de QA — cierre 2026-06-28
+Los 6 documentos de casos de prueba ejecutados bajo el Protocolo de 4 fases. **Todos los módulos CERTIFICADOS:**
+Compras (R5), Inventario (R6), Ventas (R7), **Reportes (R10 — Fase 3 estricta, lectura literal de 109 casos)**,
+Auth/Usuarios (R2). **Total: 704 casos · 0 FAIL · 0 bugs funcionales.** Dos fixes globales aplicados y verificados
+en los 4 módulos afectados: (1) formato de fecha de datepickers → `dd/MM/yyyy` (`DdMmYyyyDateAdapter`, frontend);
+(2) CYBER-05 → HTTP 400 (`GlobalExceptionHandler`, backend, este repo). Regresión cruzada final: 0 regresiones.
 
 ---
 

@@ -240,6 +240,26 @@ Se documenta como mejora pendiente para la siguiente iteración.
 
 **Detectado por**: validación E2E con curl (2026-06-04)
 
+### Bug 3 (CYBER-05): parámetros de query con tipo inválido devolvían HTTP 500
+
+**Síntoma** (detectado en campaña de QA, Ronda 8 — 2026-06-28): `GET /reports/inventory/movements?from=abc&to=xyz`
+(y cualquier endpoint con `LocalDate`/`Long` tipado) devolvía **HTTP 500** con un mensaje que **filtraba el
+tipo interno de Java** (`Failed to convert ... java.time.LocalDate`). Un error de input del cliente debe ser
+400, no 500, y no debe revelar tipos internos.
+
+**Causa**: `MethodArgumentTypeMismatchException` (que extiende `RuntimeException`) caía en el handler genérico
+`@ExceptionHandler(RuntimeException.class)` → 500.
+
+**Corrección**: nuevo `@ExceptionHandler(MethodArgumentTypeMismatchException.class)` en `GlobalExceptionHandler`
+(`handleTypeMismatch`) → **HTTP 400** con mensaje `"El parámetro 'X' tiene un valor inválido. Verifica el formato."`
+(nombra el parámetro, sin filtrar tipo ni stacktrace). **Blast radius: global backend** (todos los endpoints con
+params tipados). Verificado en vivo en reports/inventory/purchases/sales.
+
+**Test de regresión**: `ReportControllerTest.parametroFechaInvalido_retorna400SinFiltrarTipoInterno`
+(asserta 400 + ausencia de "LocalDate" en el body). Suite backend: **406/406, 0 fallos**.
+
+**Commit**: `fix(reports): mapear MethodArgumentTypeMismatchException a HTTP 400` (`023f2ed` → merge `43d18ef`).
+
 ## 9. Estándares aplicados
 
 - Todos los métodos de servicio son `@Transactional(readOnly = true)` — no hay escritura.

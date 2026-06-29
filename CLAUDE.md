@@ -102,7 +102,7 @@ Para entender el sistema completo (decisiones arquitectónicas, contratos de
 integración frontend↔backend, RBAC transversal, guía de configuración y roadmap)
 consultar primero:
 
-**`docs/global/memoria_tecnica_global_proyecto.md`** — en este repositorio
+**`docs/arquitectura/memoria_tecnica_global_proyecto.md`** — en este repositorio
 
 Se actualiza al finalizar cada módulo si hay nuevas decisiones transversales.
 
@@ -435,7 +435,7 @@ El sistema implementa 4 roles con acceso diferenciado por URL en `SecurityConfig
 ## ⚠️ Lecciones mandatorias L29-L33 (revisión de bugs 2026-06-11/12, frontend Inventory — aplican a TODOS los módulos backend)
 
 > Origen: revisión completa de bugs del módulo Inventory (BUG-INV-07/09/10/11/12/13/14/17/18),
-> documentada en `docs/global/memoria_tecnica_global_proyecto.md` §9. Son **mandatorias desde el diseño
+> documentada en `docs/arquitectura/memoria_tecnica_global_proyecto.md` §9. Son **mandatorias desde el diseño
 > inicial** de cualquier módulo backend nuevo (Sales en adelante), no correcciones
 > retroactivas opcionales.
 

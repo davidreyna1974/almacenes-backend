@@ -10,9 +10,9 @@
 	</parent>
 	<groupId>com.codigo2enter</groupId>
 	<artifactId>almacenes</artifactId>
-	<version>0.0.1-SNAPSHOT</version>
-	<name/>
-	<description/>
+	<version>1.0.0</version>
+	<name>almacenes-backend</name>
+	<description>API REST de gestión de almacenes (inventario, compras, ventas, reportes) con JWT + RBAC</description>
 	<url/>
 	<licenses>
 		<license/>

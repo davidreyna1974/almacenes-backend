@@ -1,0 +1,1268 @@
+================================================================================
+PRUEBAS POSTMAN — MÓDULOS: AUTH · INVENTORY · PURCHASES
+Aplicación: Sistema de Gestión de Almacenes
+Base URL: http://localhost:8080/api/v1
+================================================================================
+
+INSTRUCCIONES GENERALES
+-----------------------
+1. La aplicación debe estar corriendo en localhost:8080.
+2. Cada test indica el MÉTODO, la URL completa y el BODY (si aplica).
+3. Cuando un test retorne un ID en el response, anótalo en el espacio
+   "ANOTAR" — lo necesitarás en tests posteriores.
+4. Para endpoints protegidos, agrega el header:
+     Key:   Authorization
+     Value: Bearer [pega aquí el token del Test 2]
+5. El body siempre va en: Body → raw → JSON.
+6. Los tests de ERROR verifican que la lógica de negocio rechaza
+   operaciones inválidas — el criterio de éxito es que FALLE.
+
+VARIABLES A ANOTAR DURANTE LAS PRUEBAS
+---------------------------------------
+JWT           = ____________________________________________
+CAT_HERR_ID   = ______   (id de categoría Herramientas Manuales)
+CAT_ELEC_ID   = ______   (id de categoría Equipo Eléctrico)
+CAT_CONS_ID   = ______   (id de categoría Material de Consumo)
+PROV_FERRE_ID = ______   (id de Ferretería del Norte)
+PROV_IMPO_ID  = ______   (id de Importaciones Técnicas)
+PROD_TAL_ID   = ______   (id de Taladro)
+PROD_LLA_ID   = ______   (id de Llaves Allen)
+PROD_CAB_ID   = ______   (id de Cable Eléctrico)
+ORDER1_ID     = ______   (id de la primera orden de compra)
+ORDER2_ID     = ______   (id de la segunda orden para cancelar)
+DETAIL_EXTRA_ID = ____   (id del detalle extra que se agrega y luego elimina)
+
+
+================================================================================
+BLOQUE 1 — MÓDULO AUTH
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 1 — Registrar usuario
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  POST
+URL:     http://localhost:8080/api/v1/auth/register
+HEADERS: Content-Type: application/json
+         (sin Authorization — es ruta pública)
+
+BODY:
+{
+  "username": "tester01",
+  "password": "Admin123!",
+  "email":    "tester01@almacenes.com"
+}
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 201 Created
+  ✓ Response contiene: id, username="tester01", email="tester01@almacenes.com"
+  ✓ active = true
+  ✓ createdAt tiene fecha/hora actual
+  ✓ roles contiene "ROLE_WAREHOUSEMAN"
+  ✓ password NO aparece en el response
+
+ANOTAR: el campo "id" del response (id del usuario creado)
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 2 — Login y obtener JWT
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  POST
+URL:     http://localhost:8080/api/v1/auth/login
+HEADERS: Content-Type: application/json
+         (sin Authorization — es ruta pública)
+
+BODY:
+{
+  "username": "tester01",
+  "password": "Admin123!"
+}
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 200 OK
+  ✓ Response contiene campo "token" con el JWT (cadena larga eyJ...)
+  ✓ El token NO está vacío ni es null
+
+ANOTAR: copia el valor completo del campo "token" → pégalo en JWT arriba.
+        Lo usarás en TODOS los tests siguientes como:
+        Authorization: Bearer [token]
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 3 — ERROR: Registrar usuario con username duplicado
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  POST
+URL:     http://localhost:8080/api/v1/auth/register
+HEADERS: Content-Type: application/json
+
+BODY:
+{
+  "username": "tester01",
+  "password": "OtraClave99!",
+  "email":    "otro@almacenes.com"
+}
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 500 (el sistema rechaza el registro)
+  ✓ El usuario duplicado NO se crea en el sistema
+
+
+================================================================================
+BLOQUE 2 — MÓDULO INVENTORY: CATEGORÍAS
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 4 — Crear categoría: Herramientas Manuales
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  POST
+URL:     http://localhost:8080/api/v1/inventory/categories
+HEADERS: Authorization: Bearer [JWT]
+         Content-Type: application/json
+
+BODY:
+{
+  "name":        "Herramientas Manuales",
+  "description": "Herramientas de mano para trabajo en taller y obra"
+}
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 201 Created
+  ✓ active = true
+  ✓ createdAt tiene fecha/hora actual
+  ✓ createdById coincide con el id del usuario tester01
+  ✓ createdByUsername = "tester01"
+  ✓ updatedAt = null, updatedById = null
+
+ANOTAR: el campo "id" → CAT_HERR_ID
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 5 — Crear categoría: Equipo Eléctrico
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  POST
+URL:     http://localhost:8080/api/v1/inventory/categories
+HEADERS: Authorization: Bearer [JWT]
+         Content-Type: application/json
+
+BODY:
+{
+  "name":        "Equipo Eléctrico",
+  "description": "Herramientas y materiales eléctricos para instalación"
+}
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 201 Created
+  ✓ createdByUsername = "tester01"
+
+ANOTAR: el campo "id" → CAT_ELEC_ID
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 6 — Crear categoría: Material de Consumo
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  POST
+URL:     http://localhost:8080/api/v1/inventory/categories
+HEADERS: Authorization: Bearer [JWT]
+         Content-Type: application/json
+
+BODY:
+{
+  "name":        "Material de Consumo",
+  "description": "Insumos y consumibles de uso general"
+}
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 201 Created
+
+ANOTAR: el campo "id" → CAT_CONS_ID
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 7 — Listar categorías activas (ver las 3 creadas)
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  GET
+URL:     http://localhost:8080/api/v1/inventory/categories/active
+HEADERS: Authorization: Bearer [JWT]
+
+BODY: (ninguno)
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 200 OK
+  ✓ La lista incluye "Herramientas Manuales", "Equipo Eléctrico",
+    "Material de Consumo" (y posiblemente otras de sesiones previas)
+  ✓ Todos los elementos tienen active = true
+  ✓ createdByUsername visible en cada categoría recién creada
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 8 — Actualizar categoría: renombrar Equipo Eléctrico
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  PUT
+URL:     http://localhost:8080/api/v1/inventory/categories/[CAT_ELEC_ID]
+HEADERS: Authorization: Bearer [JWT]
+         Content-Type: application/json
+
+BODY:
+{
+  "name":        "Equipo Eléctrico Industrial",
+  "description": "Herramientas y materiales eléctricos para uso industrial"
+}
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 200 OK
+  ✓ name = "Equipo Eléctrico Industrial"
+  ✓ updatedAt tiene fecha/hora actual (antes era null)
+  ✓ updatedById = id de tester01
+  ✓ updatedByUsername = "tester01"
+  ✓ createdAt NO cambió (es inmutable)
+  ✓ createdByUsername sigue siendo "tester01"
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 9 — Listar categorías activas (verificar la actualización)
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  GET
+URL:     http://localhost:8080/api/v1/inventory/categories/active
+HEADERS: Authorization: Bearer [JWT]
+
+CRITERIO DE ÉXITO:
+  ✓ Aparece "Equipo Eléctrico Industrial" (nombre actualizado)
+  ✓ NO aparece "Equipo Eléctrico" (el nombre viejo fue reemplazado)
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 10 — Desactivar categoría sin productos: Material de Consumo
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  DELETE
+URL:     http://localhost:8080/api/v1/inventory/categories/[CAT_CONS_ID]
+HEADERS: Authorization: Bearer [JWT]
+
+BODY: (ninguno)
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 204 No Content (sin cuerpo de respuesta)
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 11 — Listar categorías activas (verificar baja lógica)
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  GET
+URL:     http://localhost:8080/api/v1/inventory/categories/active
+HEADERS: Authorization: Bearer [JWT]
+
+CRITERIO DE ÉXITO:
+  ✓ "Material de Consumo" NO aparece en la lista
+  ✓ "Herramientas Manuales" y "Equipo Eléctrico Industrial" sí aparecen
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 12 — ERROR: Nombre de categoría duplicado
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  POST
+URL:     http://localhost:8080/api/v1/inventory/categories
+HEADERS: Authorization: Bearer [JWT]
+         Content-Type: application/json
+
+BODY:
+{
+  "name":        "Herramientas Manuales",
+  "description": "Intento duplicado"
+}
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 500 (el sistema rechaza el nombre duplicado)
+  ✓ La categoría duplicada NO se crea
+
+
+================================================================================
+BLOQUE 3 — MÓDULO PURCHASES: PROVEEDORES
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 13 — Crear proveedor: Ferretería del Norte
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  POST
+URL:     http://localhost:8080/api/v1/purchases/suppliers
+HEADERS: Authorization: Bearer [JWT]
+         Content-Type: application/json
+
+BODY:
+{
+  "rfc":         "FERN987654321",
+  "companyName": "Ferretería del Norte SA de CV",
+  "contactName": "Carlos Mendoza",
+  "phone":       "8112345678",
+  "email":       "cmendoza@ferreterianorte.com",
+  "address":     "Blvd. Industrial 2300, Monterrey NL"
+}
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 201 Created
+  ✓ active = true
+  ✓ createdByUsername = "tester01"
+  ✓ createdAt tiene fecha/hora actual
+  ✓ updatedAt = null, updatedById = null
+
+ANOTAR: el campo "id" → PROV_FERRE_ID
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 14 — Crear proveedor: Importaciones Técnicas
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  POST
+URL:     http://localhost:8080/api/v1/purchases/suppliers
+HEADERS: Authorization: Bearer [JWT]
+         Content-Type: application/json
+
+BODY:
+{
+  "rfc":         "IMPO123456789",
+  "companyName": "Importaciones Técnicas SA de CV",
+  "contactName": "Ana Ríos",
+  "phone":       "5598765432",
+  "email":       "arios@impo-tecnicas.com",
+  "address":     "Av. Tecnológico 890, CDMX"
+}
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 201 Created
+  ✓ createdByUsername = "tester01"
+
+ANOTAR: el campo "id" → PROV_IMPO_ID
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 15 — Listar proveedores activos
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  GET
+URL:     http://localhost:8080/api/v1/purchases/suppliers/active
+HEADERS: Authorization: Bearer [JWT]
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 200 OK
+  ✓ Aparecen "Ferretería del Norte" e "Importaciones Técnicas"
+  ✓ Todos tienen active = true
+  ✓ createdByUsername = "tester01" en ambos
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 16 — Consultar proveedor por ID
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  GET
+URL:     http://localhost:8080/api/v1/purchases/suppliers/[PROV_FERRE_ID]
+HEADERS: Authorization: Bearer [JWT]
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 200 OK
+  ✓ companyName = "Ferretería del Norte SA de CV"
+  ✓ rfc = "FERN987654321"
+  ✓ Todos los campos del proveedor visibles
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 17 — Actualizar proveedor: nuevo contacto
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  PUT
+URL:     http://localhost:8080/api/v1/purchases/suppliers/[PROV_FERRE_ID]
+HEADERS: Authorization: Bearer [JWT]
+         Content-Type: application/json
+
+BODY:
+{
+  "rfc":         "FERN987654321",
+  "companyName": "Ferretería del Norte SA de CV",
+  "contactName": "Roberto Guzmán",
+  "phone":       "8119876543",
+  "email":       "rguzman@ferreterianorte.com",
+  "address":     "Blvd. Industrial 2300, Monterrey NL",
+  "active":      true
+}
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 200 OK
+  ✓ contactName = "Roberto Guzmán"
+  ✓ email = "rguzman@ferreterianorte.com"
+  ✓ updatedAt tiene fecha/hora actual (antes era null)
+  ✓ updatedByUsername = "tester01"
+  ✓ createdAt NO cambió
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 18 — ERROR: RFC duplicado en nuevo proveedor
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  POST
+URL:     http://localhost:8080/api/v1/purchases/suppliers
+HEADERS: Authorization: Bearer [JWT]
+         Content-Type: application/json
+
+BODY:
+{
+  "rfc":         "FERN987654321",
+  "companyName": "Copia Ferretería Norte",
+  "email":       "copia@test.com"
+}
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 500 (el sistema rechaza el RFC duplicado)
+  ✓ El proveedor duplicado NO se crea
+
+
+================================================================================
+BLOQUE 4 — MÓDULO INVENTORY: PRODUCTOS
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 19 — Crear producto 1: Taladro (stock bajo el mínimo → aparecerá en low-stock)
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  POST
+URL:     http://localhost:8080/api/v1/inventory/products
+HEADERS: Authorization: Bearer [JWT]
+         Content-Type: application/json
+
+BODY:
+{
+  "sku":          "TOOL-TAL-001",
+  "name":         "Taladro de Impacto 800W",
+  "description":  "Taladro percutor profesional 800W con maletín y brocas",
+  "price":        1850.00,
+  "currentStock": 4,
+  "minimumStock": 10,
+  "status":       "AVAILABLE",
+  "categoryId":   [CAT_HERR_ID],
+  "supplierId":   [PROV_FERRE_ID],
+  "unitCost":     1100.00
+}
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 201 Created
+  ✓ sku = "TOOL-TAL-001", price = 1850.0
+  ✓ currentStock = 4, minimumStock = 10
+  ✓ reservedStock = 0, availableStock = 4
+  ✓ unitCost = 1100.0
+  ✓ categoryName = "Herramientas Manuales"
+  ✓ supplierId presente en el response
+  ✓ createdByUsername = "tester01"
+  ✓ active = true
+
+ANOTAR: el campo "id" → PROD_TAL_ID
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 20 — Crear producto 2: Llaves Allen (stock por encima del mínimo)
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  POST
+URL:     http://localhost:8080/api/v1/inventory/products
+HEADERS: Authorization: Bearer [JWT]
+         Content-Type: application/json
+
+BODY:
+{
+  "sku":          "TOOL-LLA-001",
+  "name":         "Juego de Llaves Allen 12 pzas",
+  "description":  "Set de llaves Allen métricas y pulgadas con estuche",
+  "price":        380.00,
+  "currentStock": 25,
+  "minimumStock": 5,
+  "status":       "AVAILABLE",
+  "categoryId":   [CAT_HERR_ID],
+  "supplierId":   [PROV_FERRE_ID],
+  "unitCost":     220.00
+}
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 201 Created
+  ✓ currentStock = 25, minimumStock = 5
+  ✓ availableStock = 25
+  ✓ unitCost = 220.0
+
+ANOTAR: el campo "id" → PROD_LLA_ID
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 21 — Crear producto 3: Cable Eléctrico (stock bajo el mínimo → low-stock)
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  POST
+URL:     http://localhost:8080/api/v1/inventory/products
+HEADERS: Authorization: Bearer [JWT]
+         Content-Type: application/json
+
+BODY:
+{
+  "sku":          "ELEC-CAB-001",
+  "name":         "Cable Eléctrico Calibre 14 (10m)",
+  "description":  "Cable eléctrico THW calibre 14, rollo de 10 metros",
+  "price":        195.00,
+  "currentStock": 3,
+  "minimumStock": 8,
+  "status":       "AVAILABLE",
+  "categoryId":   [CAT_ELEC_ID],
+  "supplierId":   [PROV_IMPO_ID],
+  "unitCost":     115.00
+}
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 201 Created
+  ✓ currentStock = 3, availableStock = 3
+  ✓ unitCost = 115.0
+  ✓ categoryName = "Equipo Eléctrico Industrial"
+
+ANOTAR: el campo "id" → PROD_CAB_ID
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 22 — ERROR: SKU duplicado
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  POST
+URL:     http://localhost:8080/api/v1/inventory/products
+HEADERS: Authorization: Bearer [JWT]
+         Content-Type: application/json
+
+BODY:
+{
+  "sku":          "TOOL-TAL-001",
+  "name":         "Taladro Copia",
+  "price":        999.00,
+  "currentStock": 1,
+  "minimumStock": 1,
+  "status":       "AVAILABLE",
+  "categoryId":   [CAT_HERR_ID],
+  "supplierId":   [PROV_FERRE_ID]
+}
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 500 (SKU duplicado rechazado)
+  ✓ El producto duplicado NO se crea
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 23 — Buscar producto por SKU
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  GET
+URL:     http://localhost:8080/api/v1/inventory/products/sku/TOOL-TAL-001
+HEADERS: Authorization: Bearer [JWT]
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 200 OK
+  ✓ name = "Taladro de Impacto 800W"
+  ✓ reservedStock = 0, availableStock = 4 (igual a currentStock)
+  ✓ unitCost = 1100.0
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 24 — Buscar productos por categoría (Herramientas Manuales)
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  GET
+URL:     http://localhost:8080/api/v1/inventory/products/category/[CAT_HERR_ID]
+HEADERS: Authorization: Bearer [JWT]
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 200 OK
+  ✓ La lista incluye el Taladro y las Llaves Allen
+  ✓ NO incluye el Cable (es de otra categoría)
+  ✓ Todos tienen categoryName = "Herramientas Manuales"
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 25 — Consultar productos con stock bajo (low-stock)
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  GET
+URL:     http://localhost:8080/api/v1/inventory/products/low-stock
+HEADERS: Authorization: Bearer [JWT]
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 200 OK
+  ✓ Aparece el Taladro (availableStock=4 ≤ minimumStock=10)
+  ✓ Aparece el Cable (availableStock=3 ≤ minimumStock=8)
+  ✓ NO aparece Llaves Allen (availableStock=25 > minimumStock=5)
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 26 — Actualizar producto: nuevo precio del Taladro
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  PUT
+URL:     http://localhost:8080/api/v1/inventory/products/[PROD_TAL_ID]
+HEADERS: Authorization: Bearer [JWT]
+         Content-Type: application/json
+
+BODY:
+{
+  "sku":          "TOOL-TAL-001",
+  "name":         "Taladro de Impacto 800W Pro",
+  "description":  "Taladro percutor profesional 800W con maletín, brocas y nivel",
+  "price":        1950.00,
+  "currentStock": 4,
+  "minimumStock": 10,
+  "status":       "AVAILABLE",
+  "categoryId":   [CAT_HERR_ID],
+  "supplierId":   [PROV_FERRE_ID],
+  "unitCost":     1150.00
+}
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 200 OK
+  ✓ name = "Taladro de Impacto 800W Pro"
+  ✓ price = 1950.0
+  ✓ unitCost = 1150.0
+  ✓ updatedAt tiene fecha/hora actual
+  ✓ updatedByUsername = "tester01"
+  ✓ createdAt NO cambió
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 27 — Movimiento IN: recibir 30 Taladros
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  POST
+URL:     http://localhost:8080/api/v1/inventory/products/movement
+HEADERS: Authorization: Bearer [JWT]
+         Content-Type: application/json
+
+BODY:
+{
+  "productId": [PROD_TAL_ID],
+  "quantity":  30,
+  "type":      "IN",
+  "reason":    "Compra de reposición — Proveedor Ferretería del Norte"
+}
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 204 No Content (sin cuerpo)
+
+VERIFICACIÓN: ejecuta TEST 23 de nuevo (GET por SKU TOOL-TAL-001)
+  ✓ currentStock = 34 (4 + 30)
+  ✓ availableStock = 34
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 28 — Movimiento IN: recibir 20 Cables Eléctricos
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  POST
+URL:     http://localhost:8080/api/v1/inventory/products/movement
+HEADERS: Authorization: Bearer [JWT]
+         Content-Type: application/json
+
+BODY:
+{
+  "productId": [PROD_CAB_ID],
+  "quantity":  20,
+  "type":      "IN",
+  "reason":    "Compra de reposición — Proveedor Importaciones Técnicas"
+}
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 204 No Content
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 29 — Consultar low-stock después de los IN (deben desaparecer)
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  GET
+URL:     http://localhost:8080/api/v1/inventory/products/low-stock
+HEADERS: Authorization: Bearer [JWT]
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 200 OK
+  ✓ El Taladro ya NO aparece (availableStock=34 > minimumStock=10)
+  ✓ El Cable ya NO aparece (availableStock=23 > minimumStock=8)
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 30 — Movimiento OUT: salida de 8 Taladros
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  POST
+URL:     http://localhost:8080/api/v1/inventory/products/movement
+HEADERS: Authorization: Bearer [JWT]
+         Content-Type: application/json
+
+BODY:
+{
+  "productId": [PROD_TAL_ID],
+  "quantity":  8,
+  "type":      "OUT",
+  "reason":    "Préstamo a obra cliente — Proyecto Torre Norte"
+}
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 204 No Content
+
+VERIFICACIÓN: GET por SKU TOOL-TAL-001
+  ✓ currentStock = 26 (34 - 8)
+  ✓ availableStock = 26
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 31 — ERROR: OUT mayor al stock disponible
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  POST
+URL:     http://localhost:8080/api/v1/inventory/products/movement
+HEADERS: Authorization: Bearer [JWT]
+         Content-Type: application/json
+
+BODY:
+{
+  "productId": [PROD_TAL_ID],
+  "quantity":  500,
+  "type":      "OUT",
+  "reason":    "Salida masiva — intento de corrupción"
+}
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 500 (stock insuficiente)
+  ✓ currentStock del Taladro NO cambia (sigue en 26)
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 32 — Consultar historial de movimientos del Taladro (Kardex)
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  GET
+URL:     http://localhost:8080/api/v1/inventory/products/[PROD_TAL_ID]/movements
+HEADERS: Authorization: Bearer [JWT]
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 200 OK
+  ✓ La lista tiene exactamente 2 movimientos (1 IN + 1 OUT)
+  ✓ Primer elemento (más reciente): type="OUT", quantity=8, reason contiene "Torre Norte"
+  ✓ Segundo elemento: type="IN", quantity=30, reason contiene "reposición"
+  ✓ Cada movimiento tiene createdByUsername = "tester01"
+  ✓ productName = "Taladro de Impacto 800W Pro"
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 33 — Desactivar producto: Llaves Allen (soft delete)
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  DELETE
+URL:     http://localhost:8080/api/v1/inventory/products/[PROD_LLA_ID]
+HEADERS: Authorization: Bearer [JWT]
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 204 No Content
+
+VERIFICACIÓN: GET por categoría [CAT_HERR_ID]
+  ✓ Las Llaves Allen ya NO aparecen en la categoría
+  ✓ El Taladro sí aparece (sigue activo)
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 34 — ERROR: Desactivar categoría con productos activos
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  DELETE
+URL:     http://localhost:8080/api/v1/inventory/categories/[CAT_HERR_ID]
+HEADERS: Authorization: Bearer [JWT]
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 500 (la categoría tiene el Taladro activo asignado)
+  ✓ La categoría "Herramientas Manuales" sigue activa
+
+
+================================================================================
+BLOQUE 5 — MÓDULO PURCHASES: ÓRDENES DE COMPRA
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 35 — Crear orden de compra OC-1 (proveedor Ferretería del Norte)
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  POST
+URL:     http://localhost:8080/api/v1/purchases/orders
+HEADERS: Authorization: Bearer [JWT]
+         Content-Type: application/json
+
+BODY:
+{
+  "supplierId": [PROV_FERRE_ID],
+  "notes":      "Reposición trimestral Q3 — urgente para inventario",
+  "details": [
+    {
+      "productId": [PROD_TAL_ID],
+      "quantity":  10,
+      "unitPrice": 1100.00
+    }
+  ]
+}
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 201 Created
+  ✓ orderNumber tiene formato OC-YYYY-NNNN
+  ✓ status = "PENDING"
+  ✓ totalAmount = 11000.0 (10 × 1100)
+  ✓ supplierName = "Ferretería del Norte SA de CV"
+  ✓ createdByUsername = "tester01"
+  ✓ approvedAt = null, receivedAt = null, cancelledAt = null
+  ✓ approvedById = null, receivedById = null
+  ✓ details[0].productName = "Taladro de Impacto 800W Pro"
+  ✓ details[0].subtotal = 11000.0
+
+ANOTAR: el campo "id" → ORDER1_ID
+        el campo "orderNumber" → (p.ej. OC-2026-0001)
+        details[0].id → DETAIL_EXTRA_ID (lo usaremos después)
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 36 — Consultar orden por ID
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  GET
+URL:     http://localhost:8080/api/v1/purchases/orders/[ORDER1_ID]
+HEADERS: Authorization: Bearer [JWT]
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 200 OK
+  ✓ Todos los campos de la orden visibles con sus valores
+  ✓ updatedAt = null (aún no ha sido editada)
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 37 — Listar órdenes por status PENDING
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  GET
+URL:     http://localhost:8080/api/v1/purchases/orders/status/PENDING
+HEADERS: Authorization: Bearer [JWT]
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 200 OK
+  ✓ La orden OC-1 aparece en la lista
+  ✓ Todas las órdenes tienen status = "PENDING"
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 38 — Filtrar órdenes por proveedor
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  GET
+URL:     http://localhost:8080/api/v1/purchases/orders/supplier/[PROV_FERRE_ID]
+HEADERS: Authorization: Bearer [JWT]
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 200 OK
+  ✓ La orden OC-1 aparece
+  ✓ Todas las órdenes tienen supplierName = "Ferretería del Norte SA de CV"
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 39 — Filtrar órdenes por proveedor + status (combinado)
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  GET
+URL:     http://localhost:8080/api/v1/purchases/orders/supplier/[PROV_FERRE_ID]/status/PENDING
+HEADERS: Authorization: Bearer [JWT]
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 200 OK
+  ✓ La orden OC-1 aparece
+  ✓ Si hicieras el mismo filtro con status=APPROVED, retornaría lista vacía
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 40 — Filtrar órdenes que contienen un producto específico
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  GET
+URL:     http://localhost:8080/api/v1/purchases/orders/product/[PROD_TAL_ID]
+HEADERS: Authorization: Bearer [JWT]
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 200 OK
+  ✓ La orden OC-1 aparece (contiene el Taladro)
+  ✓ El detalle del Taladro es visible dentro de la orden
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 41 — Actualizar notas de la orden (solo en PENDING)
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  PUT
+URL:     http://localhost:8080/api/v1/purchases/orders/[ORDER1_ID]
+HEADERS: Authorization: Bearer [JWT]
+         Content-Type: application/json
+
+BODY:
+{
+  "supplierId": [PROV_FERRE_ID],
+  "notes":      "Reposición trimestral Q3 — ACTUALIZADO: incluir empaque extra"
+}
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 200 OK
+  ✓ notes actualizado con el texto nuevo
+  ✓ updatedAt tiene fecha/hora actual (antes era null)
+  ✓ status sigue siendo "PENDING"
+  ✓ totalAmount no cambió
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 42 — Agregar detalle a la orden: Cable Eléctrico
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  POST
+URL:     http://localhost:8080/api/v1/purchases/orders/[ORDER1_ID]/details
+HEADERS: Authorization: Bearer [JWT]
+         Content-Type: application/json
+
+BODY:
+{
+  "productId": [PROD_CAB_ID],
+  "quantity":  15,
+  "unitPrice": 112.00
+}
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 201 Created
+  ✓ La orden ahora tiene 2 detalles (Taladro + Cable)
+  ✓ totalAmount = 12680.0 (11000 + 15×112)
+  ✓ El nuevo detalle tiene productName = "Cable Eléctrico Calibre 14 (10m)"
+  ✓ subtotal del Cable = 1680.0 (15 × 112)
+
+ANOTAR: el "id" del detalle del Cable → DETAIL_EXTRA_ID
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 43 — Actualizar detalle del Cable (cambiar cantidad y precio)
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  PUT
+URL:     http://localhost:8080/api/v1/purchases/orders/[ORDER1_ID]/details/[DETAIL_EXTRA_ID]
+HEADERS: Authorization: Bearer [JWT]
+         Content-Type: application/json
+
+BODY:
+{
+  "quantity":  20,
+  "unitPrice": 110.00
+}
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 200 OK
+  ✓ El detalle del Cable tiene quantity=20, unitPrice=110, subtotal=2200.0
+  ✓ totalAmount de la orden = 13200.0 (11000 + 2200)
+  ✓ updatedAt de la orden se actualizó
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 44 — Eliminar el detalle del Cable
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  DELETE
+URL:     http://localhost:8080/api/v1/purchases/orders/[ORDER1_ID]/details/[DETAIL_EXTRA_ID]
+HEADERS: Authorization: Bearer [JWT]
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 204 No Content
+  ✓ GET de la orden → solo queda 1 detalle (el Taladro)
+  ✓ totalAmount = 11000.0 (volvió al original)
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 45 — Aprobar la orden OC-1
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  PATCH
+URL:     http://localhost:8080/api/v1/purchases/orders/[ORDER1_ID]/approve
+HEADERS: Authorization: Bearer [JWT]
+
+BODY: (ninguno — PATCH sin cuerpo)
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 200 OK
+  ✓ status = "APPROVED"
+  ✓ approvedAt tiene fecha/hora actual
+  ✓ approvedById = id de tester01
+  ✓ approvedByUsername = "tester01"
+  ✓ receivedAt = null, cancelledAt = null
+  ✓ totalAmount no cambió (11000.0)
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 46 — ERROR: Intentar agregar detalle a orden APPROVED
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  POST
+URL:     http://localhost:8080/api/v1/purchases/orders/[ORDER1_ID]/details
+HEADERS: Authorization: Bearer [JWT]
+         Content-Type: application/json
+
+BODY:
+{
+  "productId": [PROD_CAB_ID],
+  "quantity":  5,
+  "unitPrice": 110.00
+}
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 500 (la orden no está en PENDING)
+  ✓ La orden sigue con 1 solo detalle
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 47 — ERROR: Intentar aprobar una orden ya APPROVED
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  PATCH
+URL:     http://localhost:8080/api/v1/purchases/orders/[ORDER1_ID]/approve
+HEADERS: Authorization: Bearer [JWT]
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 500 (solo se pueden aprobar órdenes PENDING)
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 48 — Recibir la orden OC-1 (APPROVED → RECEIVED + movimiento de stock)
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  PATCH
+URL:     http://localhost:8080/api/v1/purchases/orders/[ORDER1_ID]/receive
+HEADERS: Authorization: Bearer [JWT]
+
+BODY: (ninguno)
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 200 OK
+  ✓ status = "RECEIVED"
+  ✓ receivedAt tiene fecha/hora actual
+  ✓ receivedById = id de tester01
+  ✓ receivedByUsername = "tester01"
+  ✓ approvedAt y approvedById siguen presentes (no se borran)
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 49 — Verificar que el stock del Taladro aumentó por la recepción
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  GET
+URL:     http://localhost:8080/api/v1/inventory/products/sku/TOOL-TAL-001
+HEADERS: Authorization: Bearer [JWT]
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 200 OK
+  ✓ currentStock = 36 (26 anteriores + 10 de la orden)
+  ✓ availableStock = 36
+  ✓ reservedStock = 0
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 50 — Verificar movimiento de stock generado por la recepción (Kardex)
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  GET
+URL:     http://localhost:8080/api/v1/inventory/products/[PROD_TAL_ID]/movements
+HEADERS: Authorization: Bearer [JWT]
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 200 OK
+  ✓ El movimiento más reciente (primero en la lista) tiene:
+      type = "IN"
+      quantity = 10
+      reason contiene el número de orden (p.ej. "OC-2026-0001")
+      createdByUsername = "tester01"
+  ✓ Total de movimientos del Taladro: 3 (IN 30 + OUT 8 + IN 10 recepción)
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 51 — ERROR: Intentar cancelar una orden RECEIVED
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  PATCH
+URL:     http://localhost:8080/api/v1/purchases/orders/[ORDER1_ID]/cancel
+HEADERS: Authorization: Bearer [JWT]
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 500 (no se puede cancelar una orden ya recibida)
+  ✓ La orden sigue con status = "RECEIVED"
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 52 — Crear segunda orden de compra (para probar cancelación)
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  POST
+URL:     http://localhost:8080/api/v1/purchases/orders
+HEADERS: Authorization: Bearer [JWT]
+         Content-Type: application/json
+
+BODY:
+{
+  "supplierId": [PROV_IMPO_ID],
+  "notes":      "Orden de prueba para verificar cancelación",
+  "details": [
+    {
+      "productId": [PROD_CAB_ID],
+      "quantity":  5,
+      "unitPrice": 110.00
+    }
+  ]
+}
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 201 Created
+  ✓ status = "PENDING"
+  ✓ totalAmount = 550.0 (5 × 110)
+
+ANOTAR: el campo "id" → ORDER2_ID
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 53 — Cancelar la segunda orden desde PENDING
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  PATCH
+URL:     http://localhost:8080/api/v1/purchases/orders/[ORDER2_ID]/cancel
+HEADERS: Authorization: Bearer [JWT]
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 200 OK
+  ✓ status = "CANCELLED"
+  ✓ cancelledAt tiene fecha/hora actual
+  ✓ cancelledById = id de tester01
+  ✓ cancelledByUsername = "tester01"
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 54 — Listar órdenes CANCELLED (verificar cancelación)
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  GET
+URL:     http://localhost:8080/api/v1/purchases/orders/status/CANCELLED
+HEADERS: Authorization: Bearer [JWT]
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 200 OK
+  ✓ La segunda orden aparece con status = "CANCELLED"
+  ✓ cancelledByUsername = "tester01"
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 55 — ERROR: Aprobar una orden sin detalles
+────────────────────────────────────────────────────────────────────────────────
+(Primero crear una orden vacía, lo cual no es posible directamente porque el
+request exige min=1 en details. En su lugar, crear una orden con un detalle
+y luego eliminar ese detalle, quedando la orden vacía.)
+
+PASO A — Crear orden con 1 detalle:
+MÉTODO:  POST
+URL:     http://localhost:8080/api/v1/purchases/orders
+BODY:
+{
+  "supplierId": [PROV_FERRE_ID],
+  "notes":      "Orden vacía para test",
+  "details": [
+    { "productId": [PROD_TAL_ID], "quantity": 1, "unitPrice": 100.00 }
+  ]
+}
+Anotar el id de la orden (ORDER_VACIA_ID) y el detailId del único detalle.
+
+PASO B — Eliminar el único detalle:
+MÉTODO:  DELETE
+URL:     http://localhost:8080/api/v1/purchases/orders/[ORDER_VACIA_ID]/details/[detailId]
+
+PASO C — Intentar aprobar la orden vacía:
+MÉTODO:  PATCH
+URL:     http://localhost:8080/api/v1/purchases/orders/[ORDER_VACIA_ID]/approve
+
+CRITERIO DE ÉXITO del PASO C:
+  ✓ HTTP 500 (no se puede aprobar una orden sin detalles)
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 56 — ERROR: Intentar recibir una orden PENDING (sin aprobar)
+────────────────────────────────────────────────────────────────────────────────
+(Usa la orden vacía del test 55, que sigue en PENDING)
+
+MÉTODO:  PATCH
+URL:     http://localhost:8080/api/v1/purchases/orders/[ORDER_VACIA_ID]/receive
+HEADERS: Authorization: Bearer [JWT]
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 500 (solo se pueden recibir órdenes APPROVED)
+  ✓ El stock del Taladro NO cambia
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 57 — Desactivar proveedor sin órdenes activas (Importaciones Técnicas)
+────────────────────────────────────────────────────────────────────────────────
+(La orden 2 de este proveedor está CANCELLED — no tiene órdenes PENDING ni APPROVED)
+
+MÉTODO:  DELETE
+URL:     http://localhost:8080/api/v1/purchases/suppliers/[PROV_IMPO_ID]
+HEADERS: Authorization: Bearer [JWT]
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 204 No Content
+
+VERIFICACIÓN: GET /purchases/suppliers/active
+  ✓ Importaciones Técnicas ya NO aparece en la lista
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 58 — ERROR: Intentar desactivar proveedor con órdenes activas
+────────────────────────────────────────────────────────────────────────────────
+(La orden vacía del test 55 con Ferretería del Norte está en PENDING)
+
+MÉTODO:  DELETE
+URL:     http://localhost:8080/api/v1/purchases/suppliers/[PROV_FERRE_ID]
+HEADERS: Authorization: Bearer [JWT]
+
+CRITERIO DE ÉXITO:
+  ✓ HTTP 500 (tiene la orden PENDING del test 55)
+  ✓ El proveedor sigue activo
+
+
+================================================================================
+BLOQUE 6 — VERIFICACIONES FINALES DE ESTADO DEL SISTEMA
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 59 — Estado final del inventario: productos y sus stocks
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  GET
+URL:     http://localhost:8080/api/v1/inventory/products/sku/TOOL-TAL-001
+HEADERS: Authorization: Bearer [JWT]
+
+CRITERIO DE ÉXITO:
+  ✓ currentStock = 36
+  ✓ reservedStock = 0
+  ✓ availableStock = 36
+  ✓ unitCost = 1150.0 (actualizado en TEST 26)
+  ✓ updatedByUsername = "tester01"
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 60 — Historial completo del Taladro (Kardex final)
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  GET
+URL:     http://localhost:8080/api/v1/inventory/products/[PROD_TAL_ID]/movements
+HEADERS: Authorization: Bearer [JWT]
+
+CRITERIO DE ÉXITO:
+  ✓ 3 movimientos en total, ordenados del más reciente al más antiguo:
+    1. IN  qty=10  reason="Recepción orden de compra OC-..."  (del TEST 48)
+    2. OUT qty=8   reason="Préstamo a obra..."                (del TEST 30)
+    3. IN  qty=30  reason="Compra de reposición..."           (del TEST 27)
+  ✓ Todos tienen createdByUsername = "tester01"
+  ✓ Cada movimiento tiene su propio createdAt distinto
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 61 — Listar órdenes por status RECEIVED
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  GET
+URL:     http://localhost:8080/api/v1/purchases/orders/status/RECEIVED
+HEADERS: Authorization: Bearer [JWT]
+
+CRITERIO DE ÉXITO:
+  ✓ La orden OC-1 aparece con status = "RECEIVED"
+  ✓ approvedById y approvedByUsername visibles
+  ✓ receivedById y receivedByUsername visibles
+  ✓ approvedAt y receivedAt tienen valores
+
+
+────────────────────────────────────────────────────────────────────────────────
+TEST 62 — Verificar low-stock con el estado final del inventario
+────────────────────────────────────────────────────────────────────────────────
+MÉTODO:  GET
+URL:     http://localhost:8080/api/v1/inventory/products/low-stock
+HEADERS: Authorization: Bearer [JWT]
+
+CRITERIO DE ÉXITO:
+  ✓ Ninguno de los productos creados en esta sesión aparece en bajo stock
+  ✓ Taladro: availableStock=36 > minimumStock=10
+  ✓ Cable:   availableStock=23 > minimumStock=8
+
+
+================================================================================
+RESUMEN DE TESTS
+================================================================================
+
+BLOQUE 1 — AUTH:            3 tests  (2 correctos + 1 error)
+BLOQUE 2 — CATEGORÍAS:      9 tests  (7 correctos + 2 error)
+BLOQUE 3 — PROVEEDORES:     6 tests  (5 correctos + 1 error)
+BLOQUE 4 — PRODUCTOS:      16 tests  (11 correctos + 5 error/verificación)
+BLOQUE 5 — ÓRDENES:        22 tests  (15 correctos + 7 error/verificación)
+BLOQUE 6 — VERIFICACIONES:  4 tests  (estado final)
+                            ──────────────────────────
+TOTAL:                      60 tests
+
+Tests de funcionalidad CORRECTA:  ~40 (operaciones que deben tener éxito)
+Tests de lógica de negocio ERROR: ~12 (operaciones que deben rechazarse)
+Tests de VERIFICACIÓN:            ~8  (GET para confirmar estado post-operación)
+
+================================================================================
+FIN DEL ARCHIVO DE PRUEBAS
+================================================================================

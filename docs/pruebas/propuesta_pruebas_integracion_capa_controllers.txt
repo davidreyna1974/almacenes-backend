@@ -1,0 +1,409 @@
+================================================================================
+  PROPUESTA: PRUEBAS DE INTEGRACIÓN — CAPA DE CONTROLADORES — MÓDULO INVENTORY
+  Backend REST API — Gestión de Almacenes
+  Fecha: 2026-05-22
+================================================================================
+
+CONTEXTO
+────────
+Pruebas de integración de la capa web para CategoryController y ProductController.
+Verifican que cada endpoint: enruta correctamente, activa las validaciones Jakarta,
+delega al servicio y retorna el código HTTP y el cuerpo JSON esperados.
+
+No prueban lógica de negocio — eso ya está cubierto por los tests unitarios de
+CategoryServiceImpl y ProductServiceImpl. El foco es exclusivamente la capa HTTP.
+
+
+================================================================================
+  CONFIGURACIÓN BASE
+================================================================================
+
+  Anotaciones de clase
+  ────────────────────
+  @WebMvcTest(XxxController.class)
+    Levanta un contexto de Spring reducido con solo los componentes web:
+    el controlador indicado, Jackson (serialización JSON), el motor de
+    validación Jakarta y los filtros de seguridad.
+    NO levanta repositorios, servicios reales ni conecta a PostgreSQL.
+
+  @AutoConfigureMockMvc(addFilters = false)
+    Desactiva todos los filtros de Spring Security incluido JwtAuthenticationFilter.
+    Sin esto cada petición sería rechazada con HTTP 401 al no llevar token JWT,
+    haciendo imposible testear los endpoints en esta fase.
+
+  Herramientas inyectadas
+  ───────────────────────
+  @Autowired MockMvc mockMvc
+    Simula un servidor HTTP sin levantar Tomcat real. Permite construir
+    peticiones y verificar respuestas de forma programática y fluida.
+
+  @MockBean XxxService
+    Reemplaza el servicio real con un mock de Mockito. Solo ejecuta el
+    comportamiento configurado con when(...).thenReturn(...).
+    Objetivo: aislar el controlador de la lógica de negocio.
+
+  @MockBean JwtUtils
+    @WebMvcTest carga SecurityConfig, que necesita JwtAuthenticationFilter,
+    que a su vez necesita JwtUtils. Como JwtUtils no es un bean web, este
+    @MockBean satisface la dependencia sin ejecutar lógica real de JWT.
+
+  Patrón de cada test: AAA
+  ────────────────────────
+  ARRANGE  → configurar comportamiento del mock del servicio (when...thenReturn)
+  ACT      → ejecutar la petición HTTP con mockMvc.perform()
+  ASSERT   → encadenar .andExpect() para verificar status y body JSON
+
+
+================================================================================
+  ARCHIVO 1 — CategoryControllerTest.java
+================================================================================
+
+  Ubicación:   src/test/java/.../modules/inventory/controller/
+  Controlador: CategoryController
+  MockBeans:   CategoryService, JwtUtils
+
+  Datos en @BeforeEach
+  ────────────────────
+  CategoryDTO  validDTO   → name="Herramientas", description="Desc", active=true
+  CategoryDTO  response   → id=1L, name="Herramientas", active=true
+
+  Body JSON válido (reutilizado en varios tests):
+  {
+      "name": "Herramientas",
+      "description": "Herramientas de trabajo",
+      "active": true
+  }
+
+  Body JSON inválido (name en blanco):
+  {
+      "name": "",
+      "description": "Herramientas de trabajo",
+      "active": true
+  }
+
+
+  ── POST / ───────────────────────────────────────────────────────────────────
+
+  TEST 1 — shouldCreateCategoryAndReturn201
+  ─────────────────────────────────────────
+  Escenario:   Body JSON válido; el servicio retorna el DTO con id asignado.
+  ARRANGE:
+    when(categoryService.createCategory(any(CategoryDTO.class))).thenReturn(response)
+  ACT:
+    mockMvc.perform(post("/api/v1/inventory/categories")
+        .contentType(APPLICATION_JSON)
+        .content(validBody))
+  ASSERT:
+    .andExpect(status().isCreated())
+    .andExpect(jsonPath("$.id").value(1))
+    .andExpect(jsonPath("$.name").value("Herramientas"))
+
+  TEST 2 — shouldReturn400WhenNameIsBlank
+  ────────────────────────────────────────
+  Escenario:   name="" falla @NotBlank — Spring rechaza la petición antes de
+               invocar al servicio. Verifica que @Valid está en el controlador.
+  ARRANGE:
+    (no se configura mock — el servicio no debe ser invocado)
+  ACT:
+    mockMvc.perform(post("/api/v1/inventory/categories")
+        .contentType(APPLICATION_JSON)
+        .content(invalidBody))
+  ASSERT:
+    .andExpect(status().isBadRequest())
+
+
+  ── GET /active ───────────────────────────────────────────────────────────────
+
+  TEST 3 — shouldReturnActiveCategories
+  ───────────────────────────────────────
+  Escenario:   El servicio retorna una lista con 2 categorías activas.
+  ARRANGE:
+    CategoryDTO response2 = CategoryDTO(id=2L, name="Electrónica", active=true)
+    when(categoryService.getAllActiveCategories())
+        .thenReturn(List.of(response, response2))
+  ACT:
+    mockMvc.perform(get("/api/v1/inventory/categories/active"))
+  ASSERT:
+    .andExpect(status().isOk())
+    .andExpect(jsonPath("$.length()").value(2))
+    .andExpect(jsonPath("$[0].name").value("Herramientas"))
+
+
+  ── PUT /{id} ────────────────────────────────────────────────────────────────
+
+  TEST 4 — shouldUpdateCategoryAndReturn200
+  ──────────────────────────────────────────
+  Escenario:   Body válido con id=1; el servicio retorna el DTO actualizado.
+  ARRANGE:
+    when(categoryService.updateCategory(eq(1L), any(CategoryDTO.class)))
+        .thenReturn(response)
+  ACT:
+    mockMvc.perform(put("/api/v1/inventory/categories/1")
+        .contentType(APPLICATION_JSON)
+        .content(validBody))
+  ASSERT:
+    .andExpect(status().isOk())
+    .andExpect(jsonPath("$.name").value("Herramientas"))
+
+  TEST 5 — shouldReturn400WhenUpdateBodyIsInvalid
+  ─────────────────────────────────────────────────
+  Escenario:   name="  " (solo espacios) falla @NotBlank.
+               Verifica que la validación aplica también en actualizaciones.
+  ACT:
+    mockMvc.perform(put("/api/v1/inventory/categories/1")
+        .contentType(APPLICATION_JSON)
+        .content(bodyWithBlankName))
+  ASSERT:
+    .andExpect(status().isBadRequest())
+
+
+  ── DELETE /{id} ─────────────────────────────────────────────────────────────
+
+  TEST 6 — shouldDeactivateCategoryAndReturn204
+  ──────────────────────────────────────────────
+  Escenario:   El servicio ejecuta sin lanzar excepción.
+               204 No Content confirma la operación sin devolver cuerpo.
+  ARRANGE:
+    (deactivateCategory es void — no requiere when...thenReturn)
+  ACT:
+    mockMvc.perform(delete("/api/v1/inventory/categories/1"))
+  ASSERT:
+    .andExpect(status().isNoContent())
+
+
+  Total tests CategoryControllerTest:  6
+  ──────────────────────────────────────
+  POST /           2  (201 Created + 400 Bad Request por @NotBlank)
+  GET  /active     1  (200 OK con lista)
+  PUT  /{id}       2  (200 OK + 400 Bad Request por @NotBlank)
+  DELETE /{id}     1  (204 No Content)
+
+
+================================================================================
+  ARCHIVO 2 — ProductControllerTest.java
+================================================================================
+
+  Ubicación:   src/test/java/.../modules/inventory/controller/
+  Controlador: ProductController
+  MockBeans:   ProductService, JwtUtils
+
+  Datos en @BeforeEach
+  ────────────────────
+  ProductResponseDTO      response    → id=1L, sku="TOOL-001", categoryName="Herramientas"
+  StockMovementResponseDTO movResponse → id=1L, quantity=10, type="IN"
+
+  Body JSON válido de producto:
+  {
+      "sku": "TOOL-001",
+      "name": "Taladro percutor",
+      "description": "Taladro de alto rendimiento",
+      "price": 99.99,
+      "currentStock": 10,
+      "minimumStock": 5,
+      "status": "AVAILABLE",
+      "categoryId": 1,
+      "supplierId": 1
+  }
+
+  Body JSON inválido (sku en blanco):
+  {
+      "sku": "",
+      "name": "Taladro percutor",
+      ...
+  }
+
+  Body JSON válido de movimiento:
+  {
+      "productId": 1,
+      "quantity": 10,
+      "type": "IN",
+      "reason": "Compra orden #45"
+  }
+
+  Body JSON inválido de movimiento (quantity = 0):
+  {
+      "productId": 1,
+      "quantity": 0,
+      "type": "IN",
+      "reason": "Compra"
+  }
+
+
+  ── POST / ───────────────────────────────────────────────────────────────────
+
+  TEST 1 — shouldCreateProductAndReturn201
+  ─────────────────────────────────────────
+  Escenario:   Body válido; el servicio retorna el DTO con id y categoryName.
+  ARRANGE:
+    when(productService.createProduct(any(ProductRequestDTO.class)))
+        .thenReturn(response)
+  ACT:
+    mockMvc.perform(post("/api/v1/inventory/products")
+        .contentType(APPLICATION_JSON)
+        .content(validProductBody))
+  ASSERT:
+    .andExpect(status().isCreated())
+    .andExpect(jsonPath("$.sku").value("TOOL-001"))
+    .andExpect(jsonPath("$.categoryName").value("Herramientas"))
+
+  TEST 2 — shouldReturn400WhenSkuIsBlank
+  ───────────────────────────────────────
+  Escenario:   sku="" falla @NotBlank. Verifica que @Valid está activo en POST.
+  ACT:
+    mockMvc.perform(post("/api/v1/inventory/products")
+        .contentType(APPLICATION_JSON)
+        .content(invalidProductBody))
+  ASSERT:
+    .andExpect(status().isBadRequest())
+
+
+  ── PUT /{id} ────────────────────────────────────────────────────────────────
+
+  TEST 3 — shouldUpdateProductAndReturn200
+  ─────────────────────────────────────────
+  Escenario:   Body válido con id=1; el servicio retorna el DTO actualizado.
+  ARRANGE:
+    when(productService.updateProduct(eq(1L), any(ProductRequestDTO.class)))
+        .thenReturn(response)
+  ACT:
+    mockMvc.perform(put("/api/v1/inventory/products/1")
+        .contentType(APPLICATION_JSON)
+        .content(validProductBody))
+  ASSERT:
+    .andExpect(status().isOk())
+    .andExpect(jsonPath("$.id").value(1))
+
+
+  ── DELETE /{id} ─────────────────────────────────────────────────────────────
+
+  TEST 4 — shouldDeactivateProductAndReturn204
+  ──────────────────────────────────────────────
+  Escenario:   El servicio ejecuta sin lanzar excepción.
+  ACT:
+    mockMvc.perform(delete("/api/v1/inventory/products/1"))
+  ASSERT:
+    .andExpect(status().isNoContent())
+
+
+  ── GET /sku/{sku} ───────────────────────────────────────────────────────────
+
+  TEST 5 — shouldReturnProductBySku
+  ──────────────────────────────────
+  Escenario:   El servicio encuentra el producto con el SKU indicado.
+  ARRANGE:
+    when(productService.getBySku("TOOL-001")).thenReturn(response)
+  ACT:
+    mockMvc.perform(get("/api/v1/inventory/products/sku/TOOL-001"))
+  ASSERT:
+    .andExpect(status().isOk())
+    .andExpect(jsonPath("$.sku").value("TOOL-001"))
+
+
+  ── GET /category/{categoryId} ───────────────────────────────────────────────
+
+  TEST 6 — shouldReturnProductsByCategoryId
+  ──────────────────────────────────────────
+  Escenario:   El servicio retorna lista de 2 productos de esa categoría.
+  ARRANGE:
+    ProductResponseDTO response2 = ProductResponseDTO(id=2L, sku="TOOL-002")
+    when(productService.getByCategoryId(1L))
+        .thenReturn(List.of(response, response2))
+  ACT:
+    mockMvc.perform(get("/api/v1/inventory/products/category/1"))
+  ASSERT:
+    .andExpect(status().isOk())
+    .andExpect(jsonPath("$.length()").value(2))
+
+
+  ── GET /low-stock ───────────────────────────────────────────────────────────
+
+  TEST 7 — shouldReturnLowStockProducts
+  ──────────────────────────────────────
+  Escenario:   El servicio retorna lista de 2 productos con stock crítico.
+  ARRANGE:
+    ProductResponseDTO response2 = ProductResponseDTO(id=2L, sku="TOOL-002")
+    when(productService.getLowStockProducts())
+        .thenReturn(List.of(response, response2))
+  ACT:
+    mockMvc.perform(get("/api/v1/inventory/products/low-stock"))
+  ASSERT:
+    .andExpect(status().isOk())
+    .andExpect(jsonPath("$.length()").value(2))
+
+
+  ── POST /movement ───────────────────────────────────────────────────────────
+
+  TEST 8 — shouldRegisterStockMovementAndReturn204
+  ─────────────────────────────────────────────────
+  Escenario:   Body válido; el servicio ejecuta void sin lanzar excepción.
+               204 No Content porque registerStockMovement retorna void.
+  ACT:
+    mockMvc.perform(post("/api/v1/inventory/products/movement")
+        .contentType(APPLICATION_JSON)
+        .content(validMovementBody))
+  ASSERT:
+    .andExpect(status().isNoContent())
+
+  TEST 9 — shouldReturn400WhenMovementQuantityIsZero
+  ────────────────────────────────────────────────────
+  Escenario:   quantity=0 falla @Min(1). Verifica que @Valid está activo en
+               el endpoint de movimientos — sin él, el servicio recibiría
+               valores inválidos y lanzaría RuntimeException en lugar de
+               retornar HTTP 400 al cliente.
+  ACT:
+    mockMvc.perform(post("/api/v1/inventory/products/movement")
+        .contentType(APPLICATION_JSON)
+        .content(invalidMovementBody))
+  ASSERT:
+    .andExpect(status().isBadRequest())
+
+
+  ── GET /{id}/movements ──────────────────────────────────────────────────────
+
+  TEST 10 — shouldReturnStockMovementsByProduct
+  ──────────────────────────────────────────────
+  Escenario:   El servicio retorna historial de 3 movimientos del producto.
+  ARRANGE:
+    StockMovementResponseDTO mov2 = StockMovementResponseDTO(id=2L, type="OUT")
+    StockMovementResponseDTO mov3 = StockMovementResponseDTO(id=3L, type="IN")
+    when(productService.getStockMovementsByProduct(1L))
+        .thenReturn(List.of(movResponse, mov2, mov3))
+  ACT:
+    mockMvc.perform(get("/api/v1/inventory/products/1/movements"))
+  ASSERT:
+    .andExpect(status().isOk())
+    .andExpect(jsonPath("$.length()").value(3))
+    .andExpect(jsonPath("$[0].type").value("IN"))
+
+
+  Total tests ProductControllerTest:  10
+  ───────────────────────────────────────
+  POST /                 2  (201 Created + 400 por @NotBlank en sku)
+  PUT  /{id}             1  (200 OK)
+  DELETE /{id}           1  (204 No Content)
+  GET  /sku/{sku}        1  (200 OK)
+  GET  /category/{id}    1  (200 OK con lista)
+  GET  /low-stock        1  (200 OK con lista)
+  POST /movement         2  (204 No Content + 400 por @Min en quantity)
+  GET  /{id}/movements   1  (200 OK con lista de 3)
+
+
+================================================================================
+  RESUMEN GENERAL
+================================================================================
+
+  Clase de test               Tests   Cobertura
+  ─────────────────────────   ─────   ──────────────────────────────────────────
+  CategoryControllerTest         6    4 endpoints: happy paths + @NotBlank
+  ProductControllerTest         10    8 endpoints: happy paths + @NotBlank + @Min
+  ───────────────────────────────────────────────────────────────────────────────
+  TOTAL                         16
+
+  Valor de los tests de validación (@NotBlank, @Min):
+  ────────────────────────────────────────────────────
+  Verifican que @Valid está correctamente colocado en el parámetro del
+  método del controlador. Si se omitiera @Valid, Spring no ejecutaría las
+  validaciones Jakarta y el servicio recibiría datos inválidos, lanzando
+  RuntimeException en lugar de devolver HTTP 400 al cliente.
+
+================================================================================

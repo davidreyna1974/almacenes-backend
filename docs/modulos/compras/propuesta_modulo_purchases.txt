@@ -1,0 +1,916 @@
+================================================================================
+  PROPUESTA: MÓDULO PURCHASES
+  Backend REST API — Gestión de Almacenes
+  Fecha: 2026-05-22  |  Actualizado con estructura real de tablas PostgreSQL
+================================================================================
+
+CONTEXTO DEL DOMINIO
+────────────────────
+El módulo gestiona proveedores y órdenes de compra del almacén. Interactúa
+directamente con el módulo inventory: al recibir una orden (estado RECEIVED),
+dispara registerStockMovement(IN) por cada línea de detalle, incrementando el
+stock de forma automática y trazable.
+
+Tablas involucradas:
+  · suppliers              — catálogo de proveedores
+  · purchase_orders        — cabecera de la orden de compra
+  · purchase_order_details — líneas de detalle (productos y cantidades)
+
+
+================================================================================
+  ANÁLISIS DE PATRONES HEREDADOS DEL PROYECTO
+================================================================================
+
+  Capa           Patrón establecido
+  ─────────────  ──────────────────────────────────────────────────────────────
+  Model          @Builder.Default para valores iniciales
+                 Soft delete con campo 'active' (boolean)
+                 'createdAt' con updatable=false
+                 FetchType.LAZY en @ManyToOne (evita queries N+1)
+                 @Enumerated(EnumType.STRING) para enums
+
+  Repository     Query methods derivados para consultas simples
+                 @Query JPQL para condiciones que comparan campos propios
+
+  DTO            Request con validaciones Jakarta / Response sin ellas
+                 Relaciones @ManyToOne aplanadas en campos simples
+                 Enums recibidos como String — el servicio convierte con valueOf()
+
+  Mapper         @Mapper(componentModel="spring")
+                 @Mapping(ignore=true) para campos gestionados por el sistema
+                 source multinivel para relaciones (supplier.id, product.name)
+                 Métodos de lista declarados explícitamente
+
+  Servicio       Interfaz + Impl separados
+                 @Service @Transactional @RequiredArgsConstructor
+                 @Transactional(readOnly=true) en consultas
+                 Métodos privados de apoyo (findOrThrow, resolveEntity)
+                 Validaciones en orden: formato → existencia → reglas de negocio
+
+  Controlador    Delegación pura, sin lógica de negocio
+                 ResponseEntity fluido: 201 / 200 / 204
+                 @Valid en todo @RequestBody
+
+
+================================================================================
+  CICLO DE VIDA DE UNA ORDEN DE COMPRA
+================================================================================
+
+                    ┌──────────────────────────────────────────────┐
+                    │                                              ▼
+   CREATE       PENDING ──── approveOrder ──── APPROVED ──── CANCELLED
+                   │                               │
+             cancelOrder                     receiveOrder
+                   │                               │
+              CANCELLED                        RECEIVED
+                                          (impacta inventario)
+
+  Estado      Impacta inventario   Editable   Transiciones posibles
+  ──────────  ───────────────────  ─────────  ────────────────────────────────
+  PENDING     No                   Sí         → APPROVED, → CANCELLED
+  APPROVED    No                   No         → RECEIVED, → CANCELLED
+  RECEIVED    Sí (IN automático)   No         Terminal — sin más transiciones
+  CANCELLED   No                   No         Terminal — sin más transiciones
+
+  Nota: RECEIVED y CANCELLED son estados terminales. Una vez alcanzados,
+  no admiten ninguna transición adicional para preservar la integridad
+  del historial.
+
+
+================================================================================
+  ESTRUCTURA DE ARCHIVOS PROPUESTA
+================================================================================
+
+  modules/purchases/
+  ├── controller/
+  │   ├── SupplierController.java
+  │   └── PurchaseOrderController.java
+  ├── dto/
+  │   ├── SupplierDTO.java
+  │   ├── PurchaseOrderRequestDTO.java
+  │   ├── PurchaseOrderResponseDTO.java
+  │   ├── PurchaseOrderDetailRequestDTO.java
+  │   └── PurchaseOrderDetailResponseDTO.java
+  ├── mapper/
+  │   ├── SupplierMapper.java
+  │   ├── PurchaseOrderMapper.java
+  │   └── PurchaseOrderDetailMapper.java
+  ├── model/
+  │   ├── PurchaseOrderStatus.java  (enum)
+  │   ├── Supplier.java
+  │   ├── PurchaseOrder.java
+  │   └── PurchaseOrderDetail.java
+  ├── repository/
+  │   ├── SupplierRepository.java
+  │   ├── PurchaseOrderRepository.java
+  │   └── PurchaseOrderDetailRepository.java
+  └── service/
+      ├── SupplierService.java
+      ├── SupplierServiceImpl.java
+      ├── PurchaseOrderService.java
+      └── PurchaseOrderServiceImpl.java
+
+  Total: 21 archivos nuevos + 1 modificación en Product.java
+
+
+================================================================================
+  SCRIPTS SQL DE MIGRACIÓN
+================================================================================
+
+  -- suppliers: 5 columnas nuevas
+  ALTER TABLE suppliers ALTER COLUMN phone TYPE VARCHAR(20);
+  ALTER TABLE suppliers ADD CONSTRAINT uq_supplier_email UNIQUE (email);
+  ALTER TABLE suppliers ADD COLUMN address    TEXT;
+  ALTER TABLE suppliers ADD COLUMN active     BOOLEAN   NOT NULL DEFAULT true;
+  ALTER TABLE suppliers ADD COLUMN created_at TIMESTAMP NOT NULL DEFAULT NOW();
+
+  -- purchase_orders: 5 columnas nuevas
+  ALTER TABLE purchase_orders ADD COLUMN notes        TEXT;
+  ALTER TABLE purchase_orders ADD COLUMN total_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+  ALTER TABLE purchase_orders ADD COLUMN approved_at  TIMESTAMP;
+  ALTER TABLE purchase_orders ADD COLUMN received_at  TIMESTAMP;
+  ALTER TABLE purchase_orders ADD COLUMN cancelled_at TIMESTAMP;
+
+  -- purchase_order_details: 1 columna nueva
+  ALTER TABLE purchase_order_details ADD COLUMN subtotal NUMERIC(12,2) NOT NULL DEFAULT 0;
+  UPDATE purchase_order_details SET subtotal = quantity * unit_price;
+  -- El UPDATE es obligatorio: pobla subtotal en registros existentes.
+
+
+================================================================================
+  1. MODELS  —  modules/purchases/model/
+================================================================================
+
+  PurchaseOrderStatus.java  (enum)
+  ─────────────────────────
+    PENDING    → orden creada, pendiente de autorización
+    APPROVED   → orden autorizada, en espera de recepción de mercancía
+    RECEIVED   → mercancía recibida; dispara movimientos IN en inventario
+    CANCELLED  → orden cancelada; no impacta inventario en ningún caso
+
+
+  Supplier.java  ★ Adaptado a la tabla real suppliers
+  ─────────────
+    @Entity  @Table(name = "suppliers")
+
+    Campo          Col. en BD       Tipo            Restricciones / Notas
+    ────────────   ──────────────   ─────────────   ──────────────────────────────────────────
+    id             id               Long            PK, auto-incremental
+    rfc            rfc              String          NOT NULL, UNIQUE, max 13 — RFC fiscal
+                                                    mexicano. Identificador único del proveedor
+                                                    ante el SAT.
+    companyName    company_name     String          NOT NULL, max 150 — razón social del
+                                                    proveedor. La propuesta inicial usaba
+                                                    'name', pero la tabla real tiene
+                                                    'company_name' con mayor longitud.
+    contactName    contact_name     String          max 100 chars, nullable
+    phone          phone            String          max 20 chars, nullable
+                                                    (ALTER de varchar(15) a varchar(20))
+    email          email            String          UNIQUE, max 100 chars, nullable
+                                                    (agregar constraint UNIQUE en BD)
+    address        address          String          TEXT, nullable (columna nueva)
+    active         active           boolean         NOT NULL, @Builder.Default = true
+                                                    (columna nueva)
+    createdAt      created_at       LocalDateTime   NOT NULL, updatable=false,
+                                                    @Builder.Default = now() (columna nueva)
+
+
+  PurchaseOrder.java  ★ Adaptado a la tabla real purchase_orders
+  ──────────────────
+    @Entity  @Table(name = "purchase_orders")
+
+    Campo          Col. en BD       Tipo                   Restricciones / Notas
+    ────────────   ──────────────   ──────────────────     ────────────────────────────────────────────
+    id             id               Long                   PK, auto-incremental
+    orderNumber    order_number     String                 NOT NULL, UNIQUE, max 50
+                                                           (la tabla tiene varchar(50),
+                                                           la propuesta inicial decía 20)
+    status         status           PurchaseOrderStatus    NOT NULL, @Enumerated(STRING),
+                                                           @Builder.Default = PENDING
+    notes          notes            String                 TEXT, nullable (columna nueva)
+    totalAmount    total_amount     BigDecimal             NOT NULL, @Builder.Default = ZERO
+                                                           (columna nueva)
+    supplier       supplier_id      Supplier               @ManyToOne(LAZY), NOT NULL
+                                                           FK ya existía en la tabla
+    createdBy      created_by       User                   @ManyToOne(LAZY), NOT NULL,
+                                                           updatable=false — quién creó la
+                                                           orden. Campo de auditoría que ya
+                                                           existía en la tabla y que la
+                                                           propuesta inicial omitió.
+                                                           El servicio lo resuelve desde
+                                                           SecurityContextHolder.
+    details        —                List<POrderDetail>     @OneToMany(mappedBy="purchaseOrder",
+                                                           cascade=ALL, orphanRemoval=true)
+    createdAt      created_at       LocalDateTime          NOT NULL, updatable=false,
+                                                           @Builder.Default = now()
+                                                           (columna ya existía)
+    updatedAt      updated_at       LocalDateTime          nullable — columna ya existía en
+                                                           la tabla. Útil para auditoría de
+                                                           última modificación.
+    approvedAt     approved_at      LocalDateTime          nullable (columna nueva)
+    receivedAt     received_at      LocalDateTime          nullable (columna nueva)
+    cancelledAt    cancelled_at     LocalDateTime          nullable (columna nueva)
+
+    Nota sobre orderNumber: se genera como "OC-" + año actual + "-" + número
+    secuencial con padding de 4 dígitos. Ejemplo: OC-2026-0001. La generación
+    es responsabilidad del servicio, nunca del cliente.
+
+    Nota sobre createdBy: el servicio extrae el username autenticado desde
+    SecurityContextHolder y resuelve la entidad User antes de persistir:
+      String username = SecurityContextHolder.getContext()
+                            .getAuthentication().getName();
+      User creator = userRepository.findByUsername(username).orElseThrow(...);
+
+
+  PurchaseOrderDetail.java  ★ Solo falta columna subtotal en la tabla real
+  ────────────────────────
+    @Entity  @Table(name = "purchase_order_details")
+
+    Campo          Col. en BD         Tipo            Restricciones / Notas
+    ────────────   ────────────────   ─────────────   ────────────────────────────────────────
+    id             id                 Long            PK, auto-incremental
+    quantity       quantity           int             NOT NULL, CHECK > 0 (BD) / @Min(1) (DTO)
+    unitPrice      unit_price         BigDecimal      NOT NULL, CHECK >= 0 (BD)
+                                                      El DTO usa @DecimalMin("0.01") — más
+                                                      estricto que el CHECK de BD. Sin conflicto.
+    subtotal       subtotal           BigDecimal      NOT NULL — quantity × unitPrice,
+                                                      calculado por el servicio (columna nueva)
+    purchaseOrder  purchase_order_id  PurchaseOrder   @ManyToOne(LAZY), NOT NULL
+                                                      ON DELETE CASCADE — alineado con
+                                                      orphanRemoval=true del modelo
+    product        product_id         Product         @ManyToOne(LAZY), NOT NULL
+                                                      ON DELETE RESTRICT — protege el historial
+
+    Decisión de diseño: unitPrice se guarda en el detalle (no se toma del
+    producto en tiempo de recepción) para garantizar la inmutabilidad del
+    historial contable de compras.
+
+
+================================================================================
+  2. REPOSITORIES  —  modules/purchases/repository/
+================================================================================
+
+  SupplierRepository.java  ★ Métodos adaptados a companyName y rfc
+  ───────────────────────
+    extends JpaRepository<Supplier, Long>
+
+    Optional<Supplier>   findByCompanyName(String companyName)
+                         → antes 'findByName'; adaptado al campo real de la entidad
+    Optional<Supplier>   findByRfc(String rfc)
+                         → búsqueda por RFC para validar unicidad al crear/actualizar
+    boolean              existsByCompanyName(String companyName)
+    boolean              existsByRfc(String rfc)
+    List<Supplier>       findByActiveTrue()
+
+
+  PurchaseOrderRepository.java
+  ────────────────────────────
+    extends JpaRepository<PurchaseOrder, Long>
+
+    Optional<PurchaseOrder>    findByOrderNumber(String orderNumber)
+    List<PurchaseOrder>        findByStatus(PurchaseOrderStatus status)
+    List<PurchaseOrder>        findBySupplierId(Long supplierId)
+    List<PurchaseOrder>        findBySupplierIdAndStatus(Long supplierId,
+                                   PurchaseOrderStatus status)
+    List<PurchaseOrder>        findByCreatedById(Long userId)
+                               → historial de órdenes creadas por un usuario
+
+    @Query("SELECT p FROM PurchaseOrder p WHERE p.supplier.id = :supplierId
+            AND p.status IN ('PENDING', 'APPROVED')")
+    List<PurchaseOrder>        findActiveOrdersBySupplier(Long supplierId)
+    → Usada para bloquear la desactivación de proveedores con órdenes activas
+
+    @Query("SELECT DISTINCT p FROM PurchaseOrder p
+            JOIN p.details d WHERE d.product.id = :productId")
+    List<PurchaseOrder>        findByProductId(@Param("productId") Long productId)
+    → Navega la relación @OneToMany details para encontrar todas las órdenes
+      que contienen un producto específico. DISTINCT evita duplicados si el
+      mismo producto apareciera más de una vez en la misma orden.
+      Usada en findOrdersByProduct del servicio.
+
+    @Query("SELECT COUNT(p) FROM PurchaseOrder p
+            WHERE YEAR(p.createdAt) = :year")
+    Long                       countByYear(@Param("year") int year)
+    → Usada por generateOrderNumber() para calcular la secuencia anual.
+      El contador se reinicia cada año: OC-2026-0001, OC-2027-0001, etc.
+
+
+  PurchaseOrderDetailRepository.java
+  ───────────────────────────────────
+    extends JpaRepository<PurchaseOrderDetail, Long>
+
+    List<PurchaseOrderDetail>        findByPurchaseOrderId(Long purchaseOrderId)
+    List<PurchaseOrderDetail>        findByProductId(Long productId)
+    boolean                          existsByPurchaseOrderIdAndProductId(
+                                         Long purchaseOrderId, Long productId)
+    → Evita que el mismo producto aparezca dos veces en la misma orden
+
+    Optional<PurchaseOrderDetail>    findByIdAndPurchaseOrderId(
+                                         Long id, Long purchaseOrderId)
+    → Encuentra un detalle específico y valida en una sola query que pertenece
+      a la orden indicada. Usada en updateDetail para evitar que un cliente
+      manipule un detailId de otra orden diferente a la del path variable.
+      Sin este método se necesitarían dos consultas separadas y una validación
+      manual de pertenencia.
+
+
+================================================================================
+  3. DTOs  —  modules/purchases/dto/
+================================================================================
+
+  SupplierDTO.java  ★ Adaptado con rfc y companyName
+  ───────────────
+    (unificado request/response — igual que CategoryDTO del módulo inventory)
+
+                              Long     id                 — null en creación
+    @NotBlank  @Size(max=13)  String   rfc                — RFC fiscal, 13 chars, único
+    @NotBlank  @Size(max=150) String   companyName        — razón social del proveedor
+               @Size(max=100) String   contactName
+    @Email     @Size(max=100) String   email
+               @Size(max=20)  String   phone
+                              String   address
+                              boolean  active
+
+
+  PurchaseOrderRequestDTO.java  (solo entrada)
+  ────────────────────────────
+    @NotNull                   Long                           supplierId
+    @Size(max=500)             String                         notes
+    @NotEmpty                  List<POrderDetailRequestDTO>   details
+
+
+  PurchaseOrderDetailRequestDTO.java
+  ──────────────────────────────────
+    @NotNull                        Long       productId
+    @NotNull  @Min(1)               int        quantity
+    @NotNull  @DecimalMin("0.01")   BigDecimal unitPrice
+
+
+  PurchaseOrderResponseDTO.java  ★ Incluye campos de auditoría de la tabla real
+  ─────────────────────────────
+    Long          id
+    String        orderNumber
+    String        status
+    String        notes
+    BigDecimal    totalAmount
+    Long          supplierId
+    String        supplierName         ← relación Supplier aplanada (companyName)
+    Long          createdById          ← quién creó la orden (campo ya existía en BD)
+    String        createdByUsername    ← nombre del usuario creador, aplanado
+    LocalDateTime createdAt
+    LocalDateTime updatedAt            ← campo de auditoría ya existente en la BD
+    LocalDateTime approvedAt
+    LocalDateTime receivedAt
+    LocalDateTime cancelledAt
+    List<PurchaseOrderDetailResponseDTO> details
+
+
+  PurchaseOrderDetailResponseDTO.java  (solo salida)
+  ───────────────────────────────────
+    Long       id
+    int        quantity
+    BigDecimal unitPrice
+    BigDecimal subtotal
+    Long       productId
+    String     productSku              ← relación Product aplanada
+    String     productName             ← relación Product aplanada
+
+
+  PurchaseOrderUpdateRequestDTO.java  ★ Nuevo — para PUT /{id}
+  ──────────────────────────────────
+    @NotNull                   Long    supplierId   — permite cambiar el proveedor
+    @Size(max=500)             String  notes        — actualiza las notas de la orden
+
+    Solo aplica cuando status == PENDING.
+    Los detalles (líneas de productos) se modifican con sus propios endpoints.
+    totalAmount, status, timestamps y createdBy no son editables por el cliente.
+
+
+  PurchaseOrderDetailUpdateRequestDTO.java  ★ Nuevo — para PUT /{id}/details/{detailId}
+  ────────────────────────────────────────
+    @NotNull  @Min(1)               int        quantity    — nueva cantidad
+    @NotNull  @DecimalMin("0.01")   BigDecimal unitPrice   — nuevo precio unitario
+
+    Solo aplica cuando status == PENDING.
+    productId NO se incluye — cambiar el producto requiere removeDetail + addDetail.
+    subtotal se recalcula automáticamente en el servicio (quantity × unitPrice).
+    El servicio también recalcula totalAmount en la orden padre y actualiza updatedAt.
+
+
+================================================================================
+  4. MAPPERS  —  modules/purchases/mapper/
+================================================================================
+
+  SupplierMapper.java  ★ Sin cambios estructurales respecto a la propuesta inicial
+  ───────────────────
+    @Mapper(componentModel = "spring")
+
+    SupplierDTO        toDTO(Supplier supplier)
+    List<SupplierDTO>  toDTOList(List<Supplier> suppliers)
+
+    @Mapping(target = "id",        ignore = true)
+    @Mapping(target = "active",    ignore = true)
+    @Mapping(target = "createdAt", ignore = true)
+    Supplier  toEntity(SupplierDTO dto)
+
+    Nota: los campos rfc, companyName, contactName, phone, email y address
+    se mapean automáticamente por coincidencia de nombre entre DTO y entidad.
+
+
+  PurchaseOrderDetailMapper.java  (sin cambios respecto a la propuesta inicial)
+  ──────────────────────────────
+    @Mapper(componentModel = "spring")
+
+    @Mapping(source = "product.id",   target = "productId")
+    @Mapping(source = "product.sku",  target = "productSku")
+    @Mapping(source = "product.name", target = "productName")
+    PurchaseOrderDetailResponseDTO  toResponseDTO(PurchaseOrderDetail detail)
+
+    List<PurchaseOrderDetailResponseDTO>  toResponseDTOList(
+        List<PurchaseOrderDetail> details)
+
+    @Mapping(target = "id",            ignore = true)
+    @Mapping(target = "subtotal",      ignore = true)  ← calculado por el servicio
+    @Mapping(target = "product",       ignore = true)  ← resuelto por el servicio
+    @Mapping(target = "purchaseOrder", ignore = true)  ← asignado por el servicio
+    PurchaseOrderDetail  toEntity(PurchaseOrderDetailRequestDTO dto)
+
+
+  PurchaseOrderMapper.java  ★ Actualizado con createdBy, updatedAt y companyName
+  ────────────────────────
+    @Mapper(componentModel = "spring")
+
+    @Mapping(source = "supplier.id",          target = "supplierId")
+    @Mapping(source = "supplier.companyName", target = "supplierName")
+                                               ← era supplier.name; ahora usa
+                                                  companyName según el modelo real
+    @Mapping(source = "createdBy.id",         target = "createdById")
+    @Mapping(source = "createdBy.username",   target = "createdByUsername")
+    PurchaseOrderResponseDTO  toResponseDTO(PurchaseOrder order)
+
+    List<PurchaseOrderResponseDTO>  toResponseDTOList(List<PurchaseOrder> orders)
+
+    @Mapping(target = "id",          ignore = true)
+    @Mapping(target = "orderNumber", ignore = true)  ← generado por el servicio
+    @Mapping(target = "status",      ignore = true)  ← siempre PENDING al crear
+    @Mapping(target = "totalAmount", ignore = true)  ← calculado por el servicio
+    @Mapping(target = "supplier",    ignore = true)  ← resuelto por el servicio
+    @Mapping(target = "createdBy",   ignore = true)  ← resuelto desde SecurityContext
+    @Mapping(target = "details",     ignore = true)  ← procesados por el servicio
+    @Mapping(target = "createdAt",   ignore = true)
+    @Mapping(target = "updatedAt",   ignore = true)
+    @Mapping(target = "approvedAt",  ignore = true)
+    @Mapping(target = "receivedAt",  ignore = true)
+    @Mapping(target = "cancelledAt", ignore = true)
+    PurchaseOrder  toEntity(PurchaseOrderRequestDTO dto)
+
+
+================================================================================
+  5. SERVICES  —  modules/purchases/service/
+================================================================================
+
+  SupplierService.java  (interfaz)
+  ─────────────────────
+    SupplierDTO          createSupplier(SupplierDTO dto)
+    List<SupplierDTO>    getAllActiveSuppliers()
+    SupplierDTO          findById(Long id)
+    SupplierDTO          updateSupplier(Long id, SupplierDTO dto)
+    void                 deactivateSupplier(Long id)
+
+
+  SupplierServiceImpl.java  ★ Validaciones adaptadas a rfc y companyName
+  ────────────────────────
+    @Service  @Transactional  @RequiredArgsConstructor
+    Dependencias: SupplierRepository, PurchaseOrderRepository, SupplierMapper
+
+    createSupplier
+      → Valida RFC único (existsByRfc)
+      → Valida razón social única (existsByCompanyName)
+      → Persiste y retorna DTO
+
+    getAllActiveSuppliers  @Transactional(readOnly=true)
+      → findByActiveTrue → toDTOList
+
+    findById  @Transactional(readOnly=true)
+      → findById o lanza RuntimeException
+
+    updateSupplier
+      → Valida existencia del proveedor
+      → Valida que el nuevo RFC no pertenezca a otro proveedor distinto
+        (findByRfc + !existing.getId().equals(id))
+      → Valida que la nueva razón social no pertenezca a otro proveedor distinto
+        (findByCompanyName + !existing.getId().equals(id))
+      → Actualiza campos editables con dirty-checking de Hibernate
+      → Retorna DTO actualizado
+
+    deactivateSupplier
+      → Valida existencia del proveedor
+      → Valida que no tenga órdenes activas (PENDING o APPROVED) con
+        findActiveOrdersBySupplier — debe cancelarlas o recibirlas primero
+      → Marca active = false (soft delete)
+
+
+  PurchaseOrderService.java  (interfaz)
+  ──────────────────────────
+    PurchaseOrderResponseDTO          createOrder(PurchaseOrderRequestDTO dto)
+    PurchaseOrderResponseDTO          findById(Long id)
+    List<PurchaseOrderResponseDTO>    findByStatus(String status)
+    List<PurchaseOrderResponseDTO>    findBySupplierId(Long supplierId)
+    List<PurchaseOrderResponseDTO>    findOrdersByProduct(Long productId)
+    PurchaseOrderResponseDTO          updateOrder(Long id,
+                                          PurchaseOrderUpdateRequestDTO dto)
+    PurchaseOrderResponseDTO          approveOrder(Long id)
+    PurchaseOrderResponseDTO          receiveOrder(Long id)
+    PurchaseOrderResponseDTO          cancelOrder(Long id)
+    PurchaseOrderResponseDTO          addDetail(Long orderId,
+                                          PurchaseOrderDetailRequestDTO dto)
+    PurchaseOrderResponseDTO          updateDetail(Long orderId, Long detailId,
+                                          PurchaseOrderDetailUpdateRequestDTO dto)
+    void                              removeDetail(Long orderId, Long detailId)
+
+
+  PurchaseOrderServiceImpl.java  ★ Agrega UserRepository para resolver createdBy
+  ─────────────────────────────
+    @Service  @Transactional  @RequiredArgsConstructor
+    Dependencias: PurchaseOrderRepository, PurchaseOrderDetailRepository,
+                  SupplierRepository, ProductRepository, UserRepository,
+                  ProductService, PurchaseOrderMapper, PurchaseOrderDetailMapper
+
+  FLUJO: findByStatus  ★ Requiere conversión String → enum (igual que registerStockMovement)
+  ──────────────────
+    findByStatus(String status) recibe el estado como texto desde el cliente
+    (ej. "PENDING") y debe convertirlo al enum antes de consultar el repositorio.
+    El mismo patrón try/catch usado en registerStockMovement aplica aquí:
+
+    1. Convierte String → enum:
+         try { PurchaseOrderStatus statusEnum = PurchaseOrderStatus.valueOf(status) }
+         catch (IllegalArgumentException) →
+           RuntimeException "Estado inválido: 'X'. Valores permitidos:
+           PENDING, APPROVED, RECEIVED, CANCELLED"
+    2. Consulta findByStatus(statusEnum) en el repositorio
+    3. Retorna lista mapeada con toResponseDTOList()
+
+  FLUJO: findOrdersByProduct  ★ Usa el @Query DISTINCT del repositorio
+  ────────────────────────────
+    1. Valida que el producto exista (findById o lanza RuntimeException)
+    2. Consulta purchaseOrderRepository.findByProductId(productId)
+       → El @Query navega la relación details para encontrar las órdenes
+    3. Retorna lista mapeada con toResponseDTOList()
+
+
+  FLUJO: updateOrder  ★ Nuevo — PUT /{id}
+  ─────────────────
+    1. Busca la orden o lanza RuntimeException
+    2. Valida status == PENDING
+       Si no → RuntimeException "Solo se pueden editar órdenes en estado PENDING"
+    3. Si supplierId cambió respecto al actual, valida existencia del nuevo proveedor
+       (resolveSupplierOrThrow) y lo asigna a la entidad
+    4. Actualiza notes con el valor del DTO
+    5. Actualiza updatedAt = now()
+    6. Dirty-checking de Hibernate persiste los cambios al cerrar la transacción
+    7. Retorna PurchaseOrderResponseDTO actualizado
+
+  FLUJO: updateDetail  ★ Nuevo — PUT /{id}/details/{detailId}
+  ──────────────────
+    1. Busca la orden o lanza RuntimeException
+    2. Valida status == PENDING
+       Si no → RuntimeException "Solo se pueden editar detalles de órdenes PENDING"
+    3. Busca el detalle con findByIdAndPurchaseOrderId(detailId, orderId):
+         · Si el resultado es vacío → RuntimeException "Detalle no encontrado
+           o no pertenece a esta orden"
+         · Un solo query reemplaza: findById + validar pertenencia manualmente
+    4. Actualiza quantity y unitPrice en el detalle
+    5. Recalcula subtotal = quantity × unitPrice
+    6. Recalcula totalAmount de la orden (llama a calculateTotal)
+    7. Actualiza updatedAt = now() en la orden
+    8. Retorna PurchaseOrderResponseDTO completo con totales actualizados
+       (no solo el detalle — el cliente necesita ver el nuevo totalAmount)
+
+  FLUJO: createOrder  ★ Agrega resolución de createdBy desde SecurityContext
+  ──────────────────
+    1. Valida existencia del proveedor
+    2. Resuelve el usuario autenticado desde SecurityContextHolder:
+         String username = SecurityContextHolder.getContext()
+                               .getAuthentication().getName();
+         User creator = userRepository.findByUsername(username).orElseThrow(...);
+    3. Genera orderNumber único: "OC-" + año + "-" + secuencia con padding 4 dígitos
+       Ejemplo: OC-2026-0001
+    4. Construye PurchaseOrder con status = PENDING, totalAmount = 0,
+       supplier = proveedor resuelto, createdBy = usuario resuelto
+    5. Por cada PurchaseOrderDetailRequestDTO:
+         · Valida existencia del Product
+         · Calcula subtotal = quantity × unitPrice
+         · Construye PurchaseOrderDetail y lo agrega a la orden
+    6. Calcula totalAmount = suma de todos los subtotales
+    7. Persiste orden y detalles en la misma transacción (cascade=ALL)
+    8. Retorna PurchaseOrderResponseDTO completo
+
+  FLUJO: approveOrder
+  ───────────────────
+    1. Busca la orden o lanza RuntimeException
+    2. Valida status == PENDING
+       Si no → RuntimeException "Solo se pueden aprobar órdenes en estado PENDING"
+    3. Valida que la orden tenga al menos un detalle
+       Si no → RuntimeException "No se puede aprobar una orden sin líneas de detalle"
+    4. Actualiza status = APPROVED, approvedAt = now(), updatedAt = now()
+    5. Retorna DTO actualizado
+
+  FLUJO: receiveOrder  ← INTEGRACIÓN CON INVENTARIO
+  ───────────────────
+    1. Busca la orden o lanza RuntimeException
+    2. Valida status == APPROVED
+       Si no → RuntimeException "Solo se pueden recibir órdenes en estado APPROVED"
+    3. Por cada detalle de la orden:
+         · Construye StockMovementRequestDTO:
+             - productId  = detail.product.id
+             - quantity   = detail.quantity
+             - type       = "IN"
+             - reason     = "Recepción orden de compra " + order.orderNumber
+         · Invoca productService.registerStockMovement(movementRequest)
+           → El inventario de cada producto se incrementa automáticamente
+           → Cada movimiento queda registrado en stock_movements con trazabilidad
+    4. Actualiza status = RECEIVED, receivedAt = now(), updatedAt = now()
+    5. Retorna DTO actualizado
+
+    Nota transaccional: todos los movimientos de stock y el cambio de estado
+    de la orden ocurren en la MISMA transacción. Si cualquier movimiento falla
+    (ej. producto dado de baja), Hibernate hace rollback completo — el inventario
+    y la orden quedan en el estado previo sin datos parciales.
+
+  FLUJO: cancelOrder
+  ──────────────────
+    1. Busca la orden o lanza RuntimeException
+    2. Valida que status sea PENDING o APPROVED
+       Si es RECEIVED → RuntimeException "No se puede cancelar una orden ya recibida"
+       Si es CANCELLED → RuntimeException "La orden ya está cancelada"
+    3. Actualiza status = CANCELLED, cancelledAt = now(), updatedAt = now()
+    4. Retorna DTO actualizado
+
+  FLUJO: addDetail
+  ────────────────
+    1. Busca la orden o lanza RuntimeException
+    2. Valida status == PENDING
+       Si no → RuntimeException "Solo se pueden modificar órdenes en estado PENDING"
+    3. Valida que el producto exista
+    4. Valida que el producto no esté ya en la orden
+       (existsByPurchaseOrderIdAndProductId) — evita duplicados
+    5. Calcula subtotal = quantity × unitPrice
+    6. Construye y persiste PurchaseOrderDetail
+    7. Recalcula totalAmount y actualiza updatedAt = now()
+    8. Retorna DTO actualizado
+
+  FLUJO: removeDetail
+  ───────────────────
+    1. Busca la orden o lanza RuntimeException
+    2. Valida status == PENDING
+    3. Busca el detalle o lanza RuntimeException
+    4. Elimina el detalle
+    5. Recalcula totalAmount y actualiza updatedAt = now()
+    6. Retorna sin cuerpo (void)
+
+  Métodos privados de apoyo
+  ─────────────────────────
+    findOrderOrThrow(Long id)        → PurchaseOrder
+    findSupplierOrThrow(Long id)     → Supplier
+    resolveAuthenticatedUser()       → User (desde SecurityContextHolder)
+    calculateTotal(PurchaseOrder)    → recalcula y asigna totalAmount
+
+    generateOrderNumber()            → String con formato OC-YYYY-NNNN
+      Implementación (Opción B — contador por año):
+        1. int year = Year.now().getValue()
+        2. long count = purchaseOrderRepository.countByYear(year)
+        3. String seq = String.format("%04d", count + 1)
+        4. String candidate = "OC-" + year + "-" + seq
+        5. if (purchaseOrderRepository.findByOrderNumber(candidate).isPresent())
+             → incrementar seq y repetir hasta encontrar uno libre
+           (colisión muy improbable pero protegida)
+        6. return candidate
+
+      Ventaja: el contador se reinicia cada año. OC-2026-0001 es el primero
+      de 2026, OC-2027-0001 es el primero de 2027. El volumen anual es
+      legible directamente del número de orden.
+
+
+================================================================================
+  6. CONTROLLERS  —  modules/purchases/controller/
+================================================================================
+
+  SupplierController.java
+  ───────────────────────
+    @RestController  @RequestMapping("/api/v1/purchases/suppliers")
+
+    Método   Ruta      Servicio                   Respuesta
+    ───────  ────────  ─────────────────────────  ──────────────────────────────
+    POST     /         createSupplier(dto)         201 Created  + SupplierDTO
+    GET      /active   getAllActiveSuppliers()      200 OK       + List<SupplierDTO>
+    GET      /{id}     findById(id)                200 OK       + SupplierDTO
+    PUT      /{id}     updateSupplier(id, dto)      200 OK       + SupplierDTO
+    DELETE   /{id}     deactivateSupplier(id)       204 No Content
+
+  Contrato del body para POST / y PUT /{id}  ★ Cambió respecto a la propuesta inicial
+  ───────────────────────────────────────────
+    El DTO usa 'rfc' y 'companyName' en lugar del 'name' genérico original.
+    Angular debe enviar el siguiente JSON:
+
+    {
+        "rfc":         "ABC123456789A",   ← obligatorio, exactamente 13 chars
+        "companyName": "Ferretería Industrial SA de CV",  ← obligatorio, max 150
+        "contactName": "Juan Pérez",       ← opcional
+        "email":       "juan@empresa.com", ← opcional, formato email
+        "phone":       "5551234567",       ← opcional, max 20 chars
+        "address":     "Calle 123, CDMX",  ← opcional
+        "active":      true                ← incluir en PUT para activar/desactivar
+    }
+
+
+  PurchaseOrderController.java
+  ────────────────────────────
+    @RestController  @RequestMapping("/api/v1/purchases/orders")
+
+    Método   Ruta                       Servicio                           Respuesta
+    ───────  ─────────────────────────  ─────────────────────────────────  ─────────────────────────────────
+    POST     /                          createOrder(dto)                   201 + PurchaseOrderResponseDTO
+    GET      /{id}                      findById(id)                       200 + PurchaseOrderResponseDTO
+    GET      /status/{status}           findByStatus(status)               200 + List<POrderResponseDTO>
+    GET      /supplier/{supplierId}     findBySupplierId(id)               200 + List<POrderResponseDTO>
+    GET      /product/{productId}       findOrdersByProduct(id)            200 + List<POrderResponseDTO>
+    PUT      /{id}                      updateOrder(id, dto)               200 + PurchaseOrderResponseDTO
+    PATCH    /{id}/approve              approveOrder(id)                   200 + PurchaseOrderResponseDTO
+    PATCH    /{id}/receive              receiveOrder(id)                   200 + PurchaseOrderResponseDTO
+    PATCH    /{id}/cancel               cancelOrder(id)                    200 + PurchaseOrderResponseDTO
+    POST     /{id}/details              addDetail(id, dto)                 201 + PurchaseOrderResponseDTO
+    PUT      /{id}/details/{detailId}   updateDetail(id, detailId, dto)    200 + PurchaseOrderResponseDTO
+    DELETE   /{id}/details/{detailId}   removeDetail(id, detailId)         204 No Content
+
+    Nota sobre PATCH vs PUT: PATCH expresa modificación parcial de un recurso.
+    Cambiar solo el campo 'status' es exactamente una modificación parcial.
+    PUT implicaría reemplazar el recurso completo, lo cual es semánticamente
+    incorrecto para una transición de estado.
+
+  Contrato del body para PUT /{id}
+  ─────────────────────────────────
+    Solo se pueden modificar notes y supplierId. Status == PENDING obligatorio.
+
+    {
+        "supplierId": 2,                  ← nuevo proveedor (o el mismo)
+        "notes":      "Ajuste de pedido"  ← nullable
+    }
+
+  Contrato del body para PUT /{id}/details/{detailId}
+  ────────────────────────────────────────────────────
+    Solo se pueden modificar quantity y unitPrice. Status == PENDING obligatorio.
+    La respuesta incluye la orden completa con el totalAmount recalculado.
+
+    {
+        "quantity":  15,
+        "unitPrice": 89.99
+    }
+
+  Contrato del body para POST /  ★ createdBy es IMPLÍCITO — no lo envía el cliente
+  ─────────────────────────────
+    El campo 'createdBy' NO aparece en PurchaseOrderRequestDTO. El servicio lo
+    resuelve automáticamente desde el JWT de la petición HTTP:
+      · El filtro JWT extrae el username del token y lo deposita en SecurityContextHolder
+      · PurchaseOrderServiceImpl lo lee con SecurityContextHolder.getContext()
+            .getAuthentication().getName()
+      · Consulta UserRepository para obtener la entidad User
+      · La asigna al campo createdBy de la orden antes de persistir
+
+    Angular solo debe enviar:
+    {
+        "supplierId": 1,
+        "notes":      "Pedido urgente Q2",   ← opcional
+        "details": [
+            { "productId": 5,  "quantity": 10, "unitPrice": 99.99 },
+            { "productId": 12, "quantity": 5,  "unitPrice": 249.50 }
+        ]
+    }
+
+  Nota sobre GET /status/{status}  ★ El valor debe ser exactamente el nombre del enum
+  ──────────────────────────────
+    El parámetro {status} debe ser uno de: PENDING, APPROVED, RECEIVED, CANCELLED
+    (case-sensitive). El servicio convierte el String al enum con valueOf() y lanza
+    RuntimeException si el valor es inválido, antes de consultar el repositorio.
+
+
+================================================================================
+  7. MODIFICACIÓN REQUERIDA EN Product.java
+================================================================================
+
+  El campo supplierId actualmente es una FK simple (Long). Con la introducción
+  de la entidad Supplier, debe convertirse en una relación real @ManyToOne:
+
+  ANTES:
+    @Column(name = "supplier_id")
+    private Long supplierId;
+
+  DESPUÉS:
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "supplier_id")
+    private Supplier supplier;
+
+  Impacto en ProductMapper — actualizar toResponseDTO:
+    @Mapping(source = "supplier.id",          target = "supplierId")
+    @Mapping(source = "supplier.companyName", target = "supplierName")
+                                               ← companyName (no 'name') según el
+                                                  modelo real de Supplier
+
+  Impacto en ProductResponseDTO — agregar campo:
+    String supplierName    ← razón social del proveedor sin objeto anidado
+
+  Impacto en ProductMapper.toEntity y updateFromDTO — agregar ignore:
+    @Mapping(target = "supplier", ignore = true)  ← resuelto por el servicio
+
+
+================================================================================
+  8. FLUJOS ADMINISTRATIVOS PROPUESTOS
+================================================================================
+
+  Gestión de inventario
+  ─────────────────────
+  Recepción automática de stock
+    Al recibir una orden (RECEIVED), cada línea de detalle dispara
+    registerStockMovement(IN). El inventario se actualiza sin intervención
+    manual y cada entrada queda en stock_movements con reason trazable.
+
+  Kardex trazable por orden
+    Cada movimiento generado por una recepción lleva reason =
+    "Recepción orden de compra OC-2026-0001", permitiendo rastrear
+    el origen de cada entrada de stock directamente desde el Kardex.
+
+  Alerta de reposición
+    GET /products/low-stock expone productos que necesitan reposición.
+    El operador puede usarlo como base para generar nuevas órdenes de compra
+    al proveedor correspondiente.
+
+  Historial de compras por producto
+    findOrdersByProduct permite consultar qué proveedores y qué precios
+    se pagaron históricamente por un producto específico.
+
+  Gestión administrativa
+  ──────────────────────
+  Número de orden automático
+    Formato OC-YYYY-NNNN generado por el servicio. Único, irrepetible y
+    legible. El cliente nunca lo envía — evita duplicados y fraudes.
+
+  Precio histórico en detalle
+    unitPrice guardado en PurchaseOrderDetail al momento de crear la orden.
+    Protege el historial contable ante cambios de precio futuros en el producto.
+
+  Auditoría de creación
+    createdBy registra qué usuario del sistema generó cada orden. Resuelto
+    automáticamente desde SecurityContextHolder — el cliente nunca lo envía.
+    updatedAt registra la última modificación para trazabilidad de cambios.
+
+  RFC como identificador único de proveedor
+    El RFC garantiza que no existan dos proveedores con el mismo identificador
+    fiscal. Se valida unicidad tanto al crear como al actualizar un proveedor.
+
+  Bloqueo de proveedor activo
+    No se puede desactivar un proveedor con órdenes PENDING o APPROVED.
+    El usuario debe cancelarlas o recibirlas antes de poder darlo de baja.
+    Protege la integridad referencial y evita órdenes huérfanas.
+
+  Inmutabilidad de detalles
+    Solo se pueden agregar o quitar líneas de detalle cuando la orden está
+    en PENDING. Una vez aprobada o recibida, los detalles quedan bloqueados.
+
+  Estados terminales protegidos
+    RECEIVED y CANCELLED no admiten transiciones adicionales. La máquina de
+    estados se valida en el servicio antes de cada operación.
+
+  Recálculo automático de total
+    totalAmount se recalcula en cada addDetail y removeDetail. El cliente
+    nunca lo envía — evita manipulación y garantiza consistencia contable.
+
+  Consistencia transaccional en recepción
+    Todos los movimientos de stock y el cambio de estado ocurren en la misma
+    transacción. Si falla cualquier movimiento, se hace rollback completo —
+    el inventario y la orden quedan íntegros sin datos parciales.
+
+
+================================================================================
+  9. RESUMEN DE ARCHIVOS
+================================================================================
+
+  Capa           Archivos                                                Total
+  ─────────────  ──────────────────────────────────────────────────────  ─────
+  Models         PurchaseOrderStatus (enum), Supplier, PurchaseOrder,       4
+                 PurchaseOrderDetail
+  Repositories   SupplierRepository, PurchaseOrderRepository,               3
+                 PurchaseOrderDetailRepository
+  DTOs           SupplierDTO,                                                7
+                 PurchaseOrderRequestDTO, PurchaseOrderUpdateRequestDTO,
+                 PurchaseOrderResponseDTO,
+                 PurchaseOrderDetailRequestDTO,
+                 PurchaseOrderDetailUpdateRequestDTO,
+                 PurchaseOrderDetailResponseDTO
+  Mappers        SupplierMapper, PurchaseOrderMapper,                        3
+                 PurchaseOrderDetailMapper
+  Services       SupplierService/Impl, PurchaseOrderService/Impl             4
+  Controllers    SupplierController, PurchaseOrderController                 2
+  Modificación   Product.java (supplierId Long → @ManyToOne Supplier)        1
+  ─────────────────────────────────────────────────────────────────────────────
+  TOTAL                                                                      24
+
+================================================================================

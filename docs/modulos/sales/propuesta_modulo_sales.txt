@@ -1,0 +1,1358 @@
+================================================================================
+PROPUESTA DE IMPLEMENTACIÓN — MÓDULO SALES (v4)
+Proyecto: Sistema de Gestión de Almacenes (almacen_db)
+Cambios v4: captura de unit_cost en productos y detalles de venta como
+            preparación para el futuro módulo financiero
+            (incluye todos los cambios de v3)
+================================================================================
+
+ÍNDICE
+------
+1.  Descripción y alcance del módulo
+2.  Decisión de diseño: cuándo impactar el inventario
+3.  Máquina de estados de SaleOrder
+4.  Esquema de base de datos
+5.  Estructura de paquetes
+6.  Entidades JPA
+7.  Enums
+8.  DTOs
+9.  Mappers (MapStruct)
+10. Repositorios
+11. Servicios
+12. Controladores REST
+13. Patrones de pruebas
+14. Plan de implementación por fases
+15. Criterios de éxito globales
+
+
+================================================================================
+1. DESCRIPCIÓN Y ALCANCE DEL MÓDULO
+================================================================================
+
+El módulo `sales` gestiona el ciclo de vida de las órdenes de venta: creación,
+aprobación con reserva automática de inventario, entrega con movimiento de stock
+OUT, cancelación con liberación de reservas, consulta de reservas activas para
+visibilidad operativa, y captura del costo unitario en cada detalle de venta
+como base de datos para el futuro módulo de analítica financiera.
+
+Entidades nuevas:
+  - Client          → cliente comprador (análogo a Supplier en purchases)
+  - SaleOrder       → cabecera de la orden de venta
+  - SaleOrderDetail → línea de detalle (producto, cantidad, precio y costo de venta)
+
+Integración con módulos existentes:
+  - inventory.Product        → reserva/libera reservedStock; decrementa currentStock;
+                               fuente del unit_cost que se copia al detalle de venta
+  - inventory.ProductService → deliverOrder() delega en registerStockMovement(OUT)
+  - inventory.StockMovement  → Kardex recibe entradas tipo OUT al entregar
+  - auth.User                → auditoría completa de cada operación
+
+Rutas base:
+  /api/v1/sales/clients      → CRUD de clientes
+  /api/v1/sales/orders       → ciclo de vida de órdenes de venta
+  /api/v1/sales/reservations → consulta de reservas activas (solo lectura)
+
+Cambios en módulos existentes requeridos:
+  - inventory.Product (entidad, DTO, mapper, repositorio, servicio, tests)
+  - BD tabla products: columnas reserved_stock, version y unit_cost
+  - BD tabla sale_order_details: columna unit_cost
+
+
+================================================================================
+2. DECISIÓN DE DISEÑO: CUÁNDO IMPACTAR EL INVENTARIO
+================================================================================
+
+Dos momentos de impacto diferenciados:
+
+  APPROVED  → reserva de stock   (reservedStock += qty por cada detalle)
+  DELIVERED → movimiento OUT real (currentStock -= qty, reservedStock -= qty)
+
+Tres magnitudes en Product:
+  currentStock   = stock físico real (solo cambia con movimientos IN/OUT)
+  reservedStock  = comprometido con órdenes APPROVED no entregadas
+  availableStock = currentStock - reservedStock (disponible para nuevas ventas)
+
+Flujo completo:
+  PENDING   → sin impacto en stock
+  APPROVED  → reservedStock += qty, currentStock sin cambio
+  DELIVERED → reservedStock -= qty, currentStock -= qty (vía registerStockMovement OUT)
+  CANCELLED → si venía de APPROVED: reservedStock -= qty
+               si venía de PENDING: sin impacto
+
+Gestión de concurrencia:
+  @Version en Product (Optimistic Locking). Dos approveOrder() concurrentes sobre
+  el mismo producto → la segunda recibe OptimisticLockingFailureException → HTTP 409.
+
+Captura de costo para futura analítica financiera:
+  Cuando se crea o actualiza un detalle de venta, el servicio copia
+  Product.unitCost → SaleOrderDetail.unitCost. Este dato es inmutable
+  desde que la orden pasa a APPROVED — preserva el costo histórico para
+  calcular margen (unit_price - unit_cost) en el futuro módulo financiero,
+  igual que unit_price preserva el precio pactado. Si el costo del producto
+  cambia después, las ventas históricas conservan su costo original.
+
+
+================================================================================
+3. MÁQUINA DE ESTADOS DE SALEORDER
+================================================================================
+
+         ┌────────────┐
+         │  PENDING   │ ← estado inicial al crear la orden
+         └─────┬──────┘
+               │ approveOrder()  · valida available >= qty (todos primero)
+               │                 · reservedStock += qty (todos después)
+         ┌─────▼──────┐
+         │  APPROVED  │
+         └─────┬──────┘
+               │ deliverOrder()  · verifica currentStock >= qty (check final)
+               │                 · reservedStock -= qty, registerStockMovement(OUT)
+         ┌─────▼──────┐
+         │  DELIVERED │ ← terminal positivo
+         └────────────┘
+
+Cancelaciones:
+  PENDING  → cancelOrder() → CANCELLED  (sin impacto en stock)
+  APPROVED → cancelOrder() → CANCELLED  (libera reservas: reservedStock -= qty)
+  DELIVERED → NO cancelable (terminal)
+  CANCELLED → NO cancelable (terminal)
+
+Edición de detalles: solo en PENDING.
+Al actualizar un detalle en PENDING, se re-lee el unit_cost actual del producto
+(puede haber cambiado desde que se creó el detalle). Una vez APPROVED, el detalle
+es inmutable: el costo quedó registrado para siempre.
+
+
+================================================================================
+4. ESQUEMA DE BASE DE DATOS
+================================================================================
+
+4.1 CAMBIOS A TABLAS EXISTENTES
+--------------------------------
+
+-- Tabla products: tres nuevas columnas.
+-- Ejecutar ANTES de los cambios en el código Java.
+
+ALTER TABLE products
+    ADD COLUMN reserved_stock INT         NOT NULL DEFAULT 0,
+    ADD COLUMN version        BIGINT      NOT NULL DEFAULT 0,
+    ADD COLUMN unit_cost      NUMERIC(12,2);   -- nullable: captura progresiva
+
+ALTER TABLE products
+    ADD CONSTRAINT chk_reserved_not_exceed_stock
+    CHECK (reserved_stock >= 0 AND reserved_stock <= current_stock);
+
+-- reserved_stock: unidades comprometidas con órdenes APPROVED.
+-- version: Optimistic Locking de Hibernate.
+-- unit_cost: costo de compra unitario del producto. Nullable porque:
+--   a) Los productos ya existentes no tienen costo definido.
+--   b) Los nuevos productos pueden registrarse sin costo y completarse después.
+--   c) El módulo financiero calculará margen solo donde unit_cost != null.
+--   En producción, cuando el módulo financiero esté activo, considerar
+--   agregar NOT NULL con DEFAULT 0 para forzar captura del dato.
+
+
+4.2 TABLAS NUEVAS
+-----------------
+
+CREATE TABLE clients (
+    id           BIGINT       PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    name         VARCHAR(150) NOT NULL,
+    rfc          VARCHAR(13)  UNIQUE,
+    contact_name VARCHAR(100),
+    phone        VARCHAR(20),
+    email        VARCHAR(100) UNIQUE,
+    address      TEXT,
+    active       BOOLEAN      NOT NULL DEFAULT true,
+    created_at   TIMESTAMP    NOT NULL DEFAULT NOW(),
+    created_by   BIGINT       REFERENCES users(id),
+    updated_at   TIMESTAMP,
+    updated_by   BIGINT       REFERENCES users(id)
+);
+
+CREATE TABLE sale_orders (
+    id            BIGINT        PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    order_number  VARCHAR(50)   NOT NULL UNIQUE,
+    status        VARCHAR(20)   NOT NULL DEFAULT 'PENDING',
+    notes         TEXT,
+    total_amount  NUMERIC(12,2) NOT NULL DEFAULT 0,
+    client_id     BIGINT        NOT NULL REFERENCES clients(id) ON DELETE RESTRICT,
+    created_by    BIGINT        NOT NULL REFERENCES users(id),
+    created_at    TIMESTAMP     NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMP,
+    updated_by    BIGINT        REFERENCES users(id),
+    approved_at   TIMESTAMP,
+    approved_by   BIGINT        REFERENCES users(id),
+    delivered_at  TIMESTAMP,
+    delivered_by  BIGINT        REFERENCES users(id),
+    cancelled_at  TIMESTAMP,
+    cancelled_by  BIGINT        REFERENCES users(id),
+    CONSTRAINT chk_sale_order_total CHECK (total_amount >= 0)
+);
+
+-- sale_order_details: unit_cost captura el costo del producto al momento
+-- de crear/actualizar el detalle. Nullable porque Product.unit_cost puede
+-- no estar definido. El módulo financiero calculará margen solo para
+-- detalles donde unit_cost != null.
+-- unit_cost NO tiene updatable=false a nivel de entidad — el servicio
+-- lo re-lee del producto cuando el detalle se actualiza en PENDING,
+-- pero una vez APPROVED ya no puede editarse (el servicio bloquea ediciones
+-- de detalles fuera de PENDING).
+
+CREATE TABLE sale_order_details (
+    id            BIGINT        PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    quantity      INT           NOT NULL CHECK (quantity > 0),
+    unit_price    NUMERIC(12,2) NOT NULL CHECK (unit_price > 0),
+    unit_cost     NUMERIC(12,2),               -- nullable: puede no estar definido
+    subtotal      NUMERIC(12,2) NOT NULL,
+    sale_order_id BIGINT        NOT NULL
+                  REFERENCES sale_orders(id) ON DELETE CASCADE,
+    product_id    BIGINT        NOT NULL
+                  REFERENCES products(id)    ON DELETE RESTRICT
+);
+
+
+4.3 ÍNDICES
+-----------
+
+CREATE INDEX idx_products_reserved_stock
+    ON products(reserved_stock) WHERE reserved_stock > 0;
+CREATE INDEX idx_sale_orders_status       ON sale_orders(status);
+CREATE INDEX idx_sale_orders_client_id    ON sale_orders(client_id);
+CREATE INDEX idx_sale_order_details_product ON sale_order_details(product_id);
+CREATE INDEX idx_clients_active           ON clients(active);
+CREATE INDEX idx_sale_orders_status_product
+    ON sale_order_details(product_id) INCLUDE (sale_order_id);
+
+
+================================================================================
+5. ESTRUCTURA DE PAQUETES
+================================================================================
+
+modules/sales/
+├── controller/
+│   ├── ClientController.java
+│   ├── SaleOrderController.java
+│   └── ReservationController.java
+├── model/
+│   ├── Client.java
+│   ├── SaleOrder.java
+│   ├── SaleOrderDetail.java
+│   └── SaleOrderStatus.java
+├── dto/
+│   ├── ClientDTO.java
+│   ├── SaleOrderRequestDTO.java
+│   ├── SaleOrderUpdateRequestDTO.java
+│   ├── SaleOrderResponseDTO.java
+│   ├── SaleOrderDetailRequestDTO.java
+│   ├── SaleOrderDetailUpdateRequestDTO.java
+│   ├── SaleOrderDetailResponseDTO.java
+│   ├── ReservationSummaryDTO.java
+│   ├── ReservedProductDTO.java
+│   ├── ReservedProductOrderDTO.java
+│   ├── ReservedClientDTO.java
+│   └── ReservedClientOrderDTO.java
+├── mapper/
+│   ├── ClientMapper.java
+│   ├── SaleOrderMapper.java
+│   └── SaleOrderDetailMapper.java
+├── repository/
+│   ├── ClientRepository.java
+│   ├── SaleOrderRepository.java
+│   └── SaleOrderDetailRepository.java
+└── service/
+    ├── ClientService.java / ClientServiceImpl.java
+    ├── SaleOrderService.java / SaleOrderServiceImpl.java
+    └── ReservationService.java / ReservationServiceImpl.java
+
+Módulos existentes con cambios (v4 agrega unit_cost):
+  inventory/model/Product.java              ← reservedStock, @Version, unitCost
+  inventory/dto/ProductRequestDTO.java      ← unitCost (opcional)
+  inventory/dto/ProductResponseDTO.java     ← reservedStock, availableStock, unitCost
+  inventory/mapper/ProductMapper.java       ← calcAvailableStock, ignores actualizados
+  inventory/repository/ProductRepository.java ← findProductsWithActiveReservations
+  inventory/service/ProductServiceImpl.java ← OUT check contra availableStock
+
+
+================================================================================
+6. ENTIDADES JPA
+================================================================================
+
+--- 6.1 Cambios a Product.java (inventory, EXISTENTE) ---
+
+Agregar los tres campos nuevos:
+
+    @Builder.Default
+    @Column(name = "reserved_stock", nullable = false)
+    private int reservedStock = 0;
+
+    // @Version sin @Builder.Default — Hibernate lo gestiona internamente.
+    @Version
+    @Column(nullable = false)
+    private Long version;
+
+    /** Costo unitario de compra del producto.
+     *  Fuente para poblar SaleOrderDetail.unitCost al crear un detalle de venta.
+     *  Nullable — captura progresiva: puede definirse después de crear el producto.
+     *  Si cambia (renegociación, inflación), las ventas históricas conservan
+     *  su costo en SaleOrderDetail.unitCost, no aquí. */
+    @Column(name = "unit_cost")
+    private BigDecimal unitCost;
+
+
+--- 6.2 Client.java ---
+
+@Data @NoArgsConstructor @AllArgsConstructor @Builder
+@Entity @Table(name = "clients")
+public class Client {
+    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false, length = 150)
+    private String name;
+
+    @Column(length = 13, unique = true)
+    private String rfc;
+
+    @Column(name = "contact_name", length = 100)
+    private String contactName;
+
+    @Column(length = 20)
+    private String phone;
+
+    @Column(unique = true, length = 100)
+    private String email;
+
+    @Column(columnDefinition = "TEXT")
+    private String address;
+
+    @Builder.Default
+    @Column(nullable = false)
+    private boolean active = true;
+
+    @Builder.Default
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private LocalDateTime createdAt = LocalDateTime.now();
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "created_by", updatable = false)
+    private User createdBy;
+
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "updated_by")
+    private User updatedBy;
+}
+
+
+--- 6.3 SaleOrderStatus.java ---
+
+public enum SaleOrderStatus {
+    PENDING, APPROVED, DELIVERED, CANCELLED
+}
+
+
+--- 6.4 SaleOrder.java ---
+
+@Data @NoArgsConstructor @AllArgsConstructor @Builder
+@Entity @Table(name = "sale_orders")
+public class SaleOrder {
+    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(name = "order_number", nullable = false, unique = true, length = 50)
+    private String orderNumber;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    @Builder.Default
+    private SaleOrderStatus status = SaleOrderStatus.PENDING;
+
+    @Column(columnDefinition = "TEXT")
+    private String notes;
+
+    @Builder.Default
+    @Column(name = "total_amount", nullable = false)
+    private BigDecimal totalAmount = BigDecimal.ZERO;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "client_id", nullable = false)
+    private Client client;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "created_by", nullable = false, updatable = false)
+    private User createdBy;
+
+    @OneToMany(mappedBy = "saleOrder", cascade = CascadeType.ALL, orphanRemoval = true)
+    @Builder.Default
+    private List<SaleOrderDetail> details = new ArrayList<>();
+
+    @Builder.Default
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private LocalDateTime createdAt = LocalDateTime.now();
+
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "updated_by")
+    private User updatedBy;
+
+    // SIN updatable=false en campos de transición — se asignan en UPDATE.
+    @Column(name = "approved_at")
+    private LocalDateTime approvedAt;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "approved_by")
+    private User approvedBy;
+
+    @Column(name = "delivered_at")
+    private LocalDateTime deliveredAt;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "delivered_by")
+    private User deliveredBy;
+
+    @Column(name = "cancelled_at")
+    private LocalDateTime cancelledAt;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "cancelled_by")
+    private User cancelledBy;
+}
+
+
+--- 6.5 SaleOrderDetail.java ---
+
+@Data @NoArgsConstructor @AllArgsConstructor @Builder
+@Entity @Table(name = "sale_order_details")
+public class SaleOrderDetail {
+    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false)
+    private int quantity;
+
+    /** Precio de venta pactado al momento de crear/editar el detalle.
+     *  Inmutable desde que la orden pasa a APPROVED. */
+    @Column(name = "unit_price", nullable = false)
+    private BigDecimal unitPrice;
+
+    /** Costo unitario de compra copiado desde Product.unitCost al crear
+     *  o actualizar el detalle (mientras la orden está en PENDING).
+     *  Nullable — si el producto no tiene unit_cost definido, este campo
+     *  queda null. El futuro módulo financiero calcula margen solo donde
+     *  unit_cost != null.
+     *  No tiene updatable=false — el servicio lo controla: se actualiza
+     *  en PENDING (re-leyendo el costo actual del producto) y queda
+     *  congelado cuando la orden pasa a APPROVED. */
+    @Column(name = "unit_cost")
+    private BigDecimal unitCost;
+
+    @Column(nullable = false)
+    private BigDecimal subtotal;   // quantity × unitPrice, calculado por el servicio
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "sale_order_id", nullable = false)
+    private SaleOrder saleOrder;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "product_id", nullable = false)
+    private Product product;
+}
+
+
+================================================================================
+7. ENUMS
+================================================================================
+
+SaleOrderStatus: definido en sección 6.3.
+MovementType (existente en inventory): sin cambios.
+  Las ventas generan movimientos OUT con reason "Entrega orden de venta OV-YYYY-NNNN".
+
+
+================================================================================
+8. DTOs
+================================================================================
+
+--- 8.1 Cambios a ProductRequestDTO.java (inventory, EXISTENTE) ---
+
+Agregar campo opcional:
+    /** Costo de compra unitario. Opcional — nullable para captura progresiva.
+     *  @DecimalMin("0.00") porque un costo de 0 es válido (productos sin costo
+     *  de adquisición, promocionales, etc.). */
+    @DecimalMin(value = "0.00", message = "El costo no puede ser negativo")
+    private BigDecimal unitCost;
+
+
+--- 8.2 Cambios a ProductResponseDTO.java (inventory, EXISTENTE) ---
+
+Agregar tres campos:
+    private int reservedStock;    // unidades comprometidas con órdenes APPROVED
+    private int availableStock;   // currentStock - reservedStock
+    private BigDecimal unitCost;  // costo de compra, null si no definido
+
+Criterio de éxito: GET /inventory/products/{id} expone los cuatro campos
+de stock y costo: currentStock, reservedStock, availableStock, unitCost.
+
+
+--- 8.3 ClientDTO.java (unificado request/response) ---
+
+Request: name @NotBlank @Size(max=150), rfc @Size(max=13), contactName,
+         phone @Size(max=20), email @Email, address, active
+Response adicional: id, createdAt, createdById, createdByUsername,
+                    updatedAt, updatedById, updatedByUsername
+
+
+--- 8.4 SaleOrderRequestDTO.java ---
+
+  Long clientId @NotNull,  String notes,
+  List<SaleOrderDetailRequestDTO> details @NotNull @Size(min=1)
+
+SaleOrderDetailRequestDTO:
+  Long productId @NotNull
+  int quantity   @Min(1)
+  BigDecimal unitPrice @NotNull @DecimalMin("0.01")
+
+  // unit_cost NO se incluye en el request — el servicio lo toma automáticamente
+  // de Product.unitCost. El cliente (frontend) nunca lo envía ni lo controla.
+  // Razón: si el usuario pudiera enviarlo, podría falsificar el costo histórico.
+
+
+--- 8.5 SaleOrderUpdateRequestDTO.java ---
+
+  Long clientId @NotNull,  String notes
+
+
+--- 8.6 SaleOrderResponseDTO.java ---
+
+  Long id, String orderNumber, String status, String notes, BigDecimal totalAmount
+  Long clientId, String clientName
+  Long createdById, String createdByUsername, LocalDateTime createdAt
+  LocalDateTime updatedAt, Long updatedById, String updatedByUsername
+  LocalDateTime approvedAt, Long approvedById, String approvedByUsername
+  LocalDateTime deliveredAt, Long deliveredById, String deliveredByUsername
+  LocalDateTime cancelledAt, Long cancelledById, String cancelledByUsername
+  List<SaleOrderDetailResponseDTO> details
+
+
+--- 8.7 SaleOrderDetailResponseDTO.java ---
+
+  Long id
+  int quantity
+  BigDecimal unitPrice    // precio de venta pactado
+  BigDecimal unitCost     // costo de compra capturado — null si no estaba definido
+  BigDecimal subtotal     // quantity × unitPrice
+  Long productId, String productSku, String productName
+
+  // El futuro módulo financiero puede calcular:
+  //   margen_unitario = unitPrice - unitCost   (si unitCost != null)
+  //   margen_total    = (unitPrice - unitCost) × quantity
+  //   margen_%        = margen_unitario / unitPrice × 100
+
+
+--- 8.8 SaleOrderDetailRequestDTO.java y SaleOrderDetailUpdateRequestDTO.java ---
+
+Request: Long productId @NotNull, int quantity @Min(1),
+         BigDecimal unitPrice @NotNull @DecimalMin("0.01")
+Update:  int quantity @Min(1), BigDecimal unitPrice @NotNull @DecimalMin("0.01")
+
+Ambos sin unitCost — el servicio lo gestiona internamente.
+
+
+--- 8.9 DTOs de reservas (v3, sin cambios en v4) ---
+
+ReservationSummaryDTO   → dashboard ejecutivo de reservas activas
+ReservedProductDTO      → producto con desglose de reservas por orden
+ReservedProductOrderDTO → orden dentro del contexto de un producto
+ReservedClientDTO       → cliente con sus órdenes APPROVED
+ReservedClientOrderDTO  → orden dentro del contexto de un cliente
+
+Ver sección 8 de la v3 para el detalle de campos.
+
+
+================================================================================
+9. MAPPERS (MapStruct)
+================================================================================
+
+--- 9.1 Cambios a ProductMapper.java (inventory, EXISTENTE) ---
+
+En toResponseDTO():
+    // unitCost se mapea automáticamente por nombre.
+    // reservedStock se mapea automáticamente por nombre.
+    // availableStock requiere cálculo:
+    @Mapping(source = ".", target = "availableStock", qualifiedByName = "calcAvailableStock")
+    ProductResponseDTO toResponseDTO(Product product);
+
+    @Named("calcAvailableStock")
+    default int calcAvailableStock(Product product) {
+        return product.getCurrentStock() - product.getReservedStock();
+    }
+
+En toEntity() y updateFromDTO():
+    @Mapping(target = "reservedStock", ignore = true)  // gestionado por SaleOrderServiceImpl
+    @Mapping(target = "version",       ignore = true)  // gestionado por Hibernate
+    // unitCost NO se ignora — el administrador sí puede enviarlo y actualizarlo.
+    // Es un dato de negocio editable, a diferencia de los campos de auditoría.
+
+Criterio de éxito: PUT /inventory/products/{id} con unitCost en el body
+persiste correctamente. GET /inventory/products/{id} devuelve unitCost actualizado.
+
+
+--- 9.2 ClientMapper.java ---
+
+@Mapper(componentModel = "spring")
+public interface ClientMapper {
+    @Mapping(source = "createdBy.id",       target = "createdById")
+    @Mapping(source = "createdBy.username", target = "createdByUsername")
+    @Mapping(source = "updatedBy.id",       target = "updatedById")
+    @Mapping(source = "updatedBy.username", target = "updatedByUsername")
+    ClientDTO toDTO(Client client);
+
+    List<ClientDTO> toDTOList(List<Client> clients);
+
+    @Mapping(target = "id",        ignore = true)
+    @Mapping(target = "active",    ignore = true)
+    @Mapping(target = "createdAt", ignore = true)
+    @Mapping(target = "createdBy", ignore = true)
+    @Mapping(target = "updatedAt", ignore = true)
+    @Mapping(target = "updatedBy", ignore = true)
+    Client toEntity(ClientDTO dto);
+}
+
+
+--- 9.3 SaleOrderDetailMapper.java ---
+
+@Mapper(componentModel = "spring")
+public interface SaleOrderDetailMapper {
+
+    // unitCost se mapea automáticamente por nombre en toResponseDTO().
+    @Mapping(source = "product.id",   target = "productId")
+    @Mapping(source = "product.sku",  target = "productSku")
+    @Mapping(source = "product.name", target = "productName")
+    SaleOrderDetailResponseDTO toResponseDTO(SaleOrderDetail detail);
+
+    List<SaleOrderDetailResponseDTO> toResponseDTOList(List<SaleOrderDetail> details);
+
+    @Mapping(target = "id",        ignore = true)
+    @Mapping(target = "subtotal",  ignore = true)   // calculado por el servicio
+    @Mapping(target = "unitCost",  ignore = true)   // poblado por el servicio desde Product
+    @Mapping(target = "saleOrder", ignore = true)
+    @Mapping(target = "product",   ignore = true)
+    SaleOrderDetail toEntity(SaleOrderDetailRequestDTO dto);
+}
+
+// Justificación del ignore en unitCost:
+// El cliente nunca envía unitCost en el request — el servicio lo lee de
+// Product.unitCost automáticamente. Si el mapper lo leyera del DTO,
+// siempre sería null (el DTO no tiene ese campo) y sobreescribiría
+// el valor que el servicio asignó.
+
+
+--- 9.4 SaleOrderMapper.java ---
+
+@Mapper(componentModel = "spring", uses = {SaleOrderDetailMapper.class})
+public interface SaleOrderMapper {
+    @Mapping(source = "client.id",             target = "clientId")
+    @Mapping(source = "client.name",           target = "clientName")
+    @Mapping(source = "createdBy.id",          target = "createdById")
+    @Mapping(source = "createdBy.username",    target = "createdByUsername")
+    @Mapping(source = "updatedBy.id",          target = "updatedById")
+    @Mapping(source = "updatedBy.username",    target = "updatedByUsername")
+    @Mapping(source = "approvedBy.id",         target = "approvedById")
+    @Mapping(source = "approvedBy.username",   target = "approvedByUsername")
+    @Mapping(source = "deliveredBy.id",        target = "deliveredById")
+    @Mapping(source = "deliveredBy.username",  target = "deliveredByUsername")
+    @Mapping(source = "cancelledBy.id",        target = "cancelledById")
+    @Mapping(source = "cancelledBy.username",  target = "cancelledByUsername")
+    SaleOrderResponseDTO toResponseDTO(SaleOrder order);
+
+    List<SaleOrderResponseDTO> toResponseDTOList(List<SaleOrder> orders);
+
+    @Mapping(target = "id",          ignore = true)
+    @Mapping(target = "orderNumber", ignore = true)
+    @Mapping(target = "status",      ignore = true)
+    @Mapping(target = "totalAmount", ignore = true)
+    @Mapping(target = "client",      ignore = true)
+    @Mapping(target = "createdBy",   ignore = true)
+    @Mapping(target = "details",     ignore = true)
+    @Mapping(target = "createdAt",   ignore = true)
+    @Mapping(target = "updatedAt",   ignore = true)
+    @Mapping(target = "updatedBy",   ignore = true)
+    @Mapping(target = "approvedAt",  ignore = true)
+    @Mapping(target = "approvedBy",  ignore = true)
+    @Mapping(target = "deliveredAt", ignore = true)
+    @Mapping(target = "deliveredBy", ignore = true)
+    @Mapping(target = "cancelledAt", ignore = true)
+    @Mapping(target = "cancelledBy", ignore = true)
+    SaleOrder toEntity(SaleOrderRequestDTO dto);
+}
+
+
+================================================================================
+10. REPOSITORIOS
+================================================================================
+
+--- 10.1 Cambios a ProductRepository.java (inventory, EXISTENTE) ---
+
+Cambio 1: findLowStockProducts — usar availableStock:
+  @Query("SELECT p FROM Product p " +
+         "WHERE (p.currentStock - p.reservedStock) <= p.minimumStock " +
+         "AND p.active = true")
+  List<Product> findLowStockProducts();
+
+Nuevo método (para ReservationServiceImpl):
+  @Query("SELECT p FROM Product p WHERE p.reservedStock > 0 AND p.active = true " +
+         "ORDER BY p.reservedStock DESC")
+  List<Product> findProductsWithActiveReservations();
+
+
+--- 10.2 ClientRepository.java ---
+
+public interface ClientRepository extends JpaRepository<Client, Long> {
+    List<Client> findByActiveTrue();
+    Optional<Client> findByRfc(String rfc);
+    boolean existsByRfc(String rfc);
+    Optional<Client> findByEmail(String email);
+    boolean existsByEmail(String email);
+}
+
+
+--- 10.3 SaleOrderDetailRepository.java ---
+
+public interface SaleOrderDetailRepository extends JpaRepository<SaleOrderDetail, Long> {
+    boolean existsBySaleOrderIdAndProductId(Long saleOrderId, Long productId);
+    Optional<SaleOrderDetail> findByIdAndSaleOrderId(Long id, Long saleOrderId);
+}
+
+
+--- 10.4 SaleOrderRepository.java ---
+
+public interface SaleOrderRepository extends JpaRepository<SaleOrder, Long> {
+    List<SaleOrder> findByStatus(SaleOrderStatus status);
+    List<SaleOrder> findByClientId(Long clientId);
+    List<SaleOrder> findByClientIdAndStatus(Long clientId, SaleOrderStatus status);
+    Optional<SaleOrder> findByOrderNumber(String orderNumber);
+
+    @Query("SELECT COUNT(so) FROM SaleOrder so WHERE YEAR(so.createdAt) = :year")
+    long countByYear(@Param("year") int year);
+
+    @Query("SELECT DISTINCT so FROM SaleOrder so JOIN so.details d " +
+           "WHERE d.product.id = :productId ORDER BY so.createdAt DESC")
+    List<SaleOrder> findByProductId(@Param("productId") Long productId);
+
+    @Query("SELECT DISTINCT so FROM SaleOrder so JOIN so.details d " +
+           "WHERE d.product.id = :productId AND so.status = :status " +
+           "ORDER BY so.approvedAt DESC")
+    List<SaleOrder> findByProductIdAndStatus(
+        @Param("productId") Long productId,
+        @Param("status") SaleOrderStatus status);
+
+    @Query("SELECT so FROM SaleOrder so WHERE so.client.id = :clientId " +
+           "AND so.status IN " +
+           "(com.codigo2enter.almacenes.modules.sales.model.SaleOrderStatus.PENDING, " +
+           " com.codigo2enter.almacenes.modules.sales.model.SaleOrderStatus.APPROVED)")
+    List<SaleOrder> findActiveOrdersByClient(@Param("clientId") Long clientId);
+
+    @Query("SELECT so FROM SaleOrder so WHERE so.status = " +
+           "com.codigo2enter.almacenes.modules.sales.model.SaleOrderStatus.APPROVED " +
+           "ORDER BY so.approvedAt ASC")
+    List<SaleOrder> findOldestApprovedOrders(Pageable pageable);
+}
+
+
+================================================================================
+11. SERVICIOS
+================================================================================
+
+--- 11.1 Cambios a ProductServiceImpl.java (inventory, EXISTENTE) ---
+
+Cambiar validación OUT en registerStockMovement():
+
+  // ANTES: valida contra currentStock
+  if (type == MovementType.OUT && product.getCurrentStock() - request.getQuantity() < 0)
+
+  // DESPUÉS: valida contra availableStock — protege el stock reservado
+  if (type == MovementType.OUT) {
+      int available = product.getCurrentStock() - product.getReservedStock();
+      if (available - request.getQuantity() < 0) {
+          throw new RuntimeException(
+              "Stock disponible insuficiente. " +
+              "Disponible (no reservado): " + available +
+              ", solicitado: " + request.getQuantity() + "."
+          );
+      }
+  }
+
+
+--- 11.2 ClientService.java / ClientServiceImpl.java ---
+
+Métodos: createClient, getAllActiveClients, findById, updateClient, deactivateClient.
+Mismo patrón resolveAuthenticatedUser() que todos los servicios del proyecto.
+deactivateClient: bloquea si findActiveOrdersByClient() no está vacío.
+
+
+--- 11.3 SaleOrderService.java (interfaz) ---
+
+  SaleOrderResponseDTO createOrder(SaleOrderRequestDTO dto)
+  SaleOrderResponseDTO findById(Long id)
+  List<SaleOrderResponseDTO> findByStatus(String status)
+  List<SaleOrderResponseDTO> findByClientId(Long clientId)
+  List<SaleOrderResponseDTO> findByClientIdAndStatus(Long clientId, String status)
+  List<SaleOrderResponseDTO> findByProductId(Long productId)
+  List<SaleOrderResponseDTO> findByProductIdAndStatus(Long productId, String status)
+  SaleOrderResponseDTO updateOrder(Long id, SaleOrderUpdateRequestDTO dto)
+  SaleOrderResponseDTO approveOrder(Long id)
+  SaleOrderResponseDTO deliverOrder(Long id)
+  SaleOrderResponseDTO cancelOrder(Long id)
+  SaleOrderResponseDTO addDetail(Long orderId, SaleOrderDetailRequestDTO dto)
+  SaleOrderResponseDTO updateDetail(Long orderId, Long detailId, SaleOrderDetailUpdateRequestDTO dto)
+  void removeDetail(Long orderId, Long detailId)
+
+
+--- 11.4 SaleOrderServiceImpl.java ---
+
+Dependencias: SaleOrderRepository, SaleOrderDetailRepository, ClientRepository,
+  ProductRepository, ProductService, UserRepository, SaleOrderMapper, SaleOrderDetailMapper.
+
+CREATEORDER():
+  /**
+   * Crea una orden de venta con sus detalles iniciales.
+   * Para cada detalle, se captura automáticamente el unit_cost actual del producto.
+   * Criterio de éxito: orderNumber en formato OV-YYYY-NNNN, totalAmount correcto,
+   * cada detail.unitCost == product.unitCost en el momento de la creación.
+   */
+  1. findClientOrThrow(dto.getClientId())
+  2. resolveAuthenticatedUser()
+  3. generateOrderNumber()
+  4. Construir SaleOrder con status=PENDING, client, createdBy
+  5. Por cada detailDto:
+     a. Validar producto activo
+     b. Calcular subtotal = unitPrice × quantity
+     c. SaleOrderDetail detail = saleOrderDetailMapper.toEntity(detailDto)
+        detail.setProduct(product)
+        detail.setSaleOrder(order)
+        detail.setSubtotal(subtotal)
+        detail.setUnitCost(product.getUnitCost())   // ← captura del costo histórico
+     d. order.getDetails().add(detail)
+  6. calculateTotal(order), save(), toResponseDTO()
+
+APPROVEORDER():
+  FASE 1 — validar todo (sin writes):
+    for each detail:
+      available = product.currentStock - product.reservedStock
+      if available < detail.quantity → throw "Stock disponible insuficiente..."
+
+  FASE 2 — reservar todo:
+    try {
+      for each detail:
+        product.setReservedStock(product.getReservedStock() + detail.getQuantity())
+        productRepository.save(product)
+    } catch (ObjectOptimisticLockingFailureException e) {
+      throw new RuntimeException("Stock modificado concurrentemente. Intente nuevamente.")
+    }
+    order: status=APPROVED, approvedAt, approvedBy, updatedAt
+
+DELIVERORDER():
+  Verificación final (currentStock, no available — reserva ya contabilizada):
+    for each detail:
+      if product.currentStock < detail.quantity → throw "Stock físico insuficiente"
+
+  Liberar reserva + OUT:
+    for each detail:
+      product.setReservedStock(product.getReservedStock() - detail.getQuantity())
+      productRepository.save(product)
+      productService.registerStockMovement(OUT, "Entrega orden de venta OV-...")
+
+  order: status=DELIVERED, deliveredAt, deliveredBy, updatedAt
+
+CANCELORDER():
+  if DELIVERED → throw. if CANCELLED → throw.
+  if status == APPROVED:
+    for each detail:
+      product.setReservedStock(product.getReservedStock() - detail.getQuantity())
+      productRepository.save(product)
+  order: status=CANCELLED, cancelledAt, cancelledBy, updatedAt
+
+UPDATEORDER() solo PENDING:
+  setClient, setNotes, setUpdatedAt, setUpdatedBy(resolveAuthenticatedUser())
+
+ADDDETAIL() solo PENDING:
+  /**
+   * Agrega un producto a la orden y captura su costo actual.
+   * Criterio de éxito: detail.unitCost == product.unitCost en el momento
+   * de agregar. Si el costo no estaba definido, unitCost queda null.
+   */
+  1. findOrderOrThrow, validatePending
+  2. findById(productId), validar active=true
+  3. existsBySaleOrderIdAndProductId → excepción si duplicado
+  4. subtotal = unitPrice × quantity
+  5. SaleOrderDetail detail = saleOrderDetailMapper.toEntity(dto)
+     detail.setProduct(product)
+     detail.setSaleOrder(order)
+     detail.setSubtotal(subtotal)
+     detail.setUnitCost(product.getUnitCost())   // ← captura del costo actual
+  6. order.getDetails().add(detail)
+  7. calculateTotal, setUpdatedAt, setUpdatedBy, save()
+
+UPDATEDETAIL() solo PENDING:
+  /**
+   * Actualiza cantidad y precio del detalle. Re-lee el unit_cost del producto
+   * porque puede haber cambiado desde que se creó el detalle.
+   * El unit_cost congelado en el momento del APPROVE es el que cuenta para
+   * el historial financiero — en PENDING puede actualizarse libremente.
+   * Criterio de éxito: detail.unitCost = valor actual de product.unitCost.
+   */
+  1. findOrderOrThrow, validatePending
+  2. findByIdAndSaleOrderId(detailId, orderId)
+  3. detail.setQuantity(dto.getQuantity())
+  4. detail.setUnitPrice(dto.getUnitPrice())
+  5. detail.setUnitCost(detail.getProduct().getUnitCost())  // ← re-lectura del costo
+  6. detail.setSubtotal(dto.getUnitPrice() × dto.getQuantity())
+  7. calculateTotal, setUpdatedAt, setUpdatedBy, save()
+
+REMOVEDETAIL() solo PENDING:
+  validatePending, findByIdAndSaleOrderId, order.getDetails().remove(detail),
+  calculateTotal, setUpdatedAt, setUpdatedBy, save()
+
+FINDBYPRODUCTIDANDSTATUS():
+  Convertir status String → enum, findProductOrThrow, findByProductIdAndStatus()
+
+MÉTODO PRIVADO generateOrderNumber():
+  OV-YYYY-NNNN con contador anual reiniciable. Bucle do-while anti-colisión.
+
+MÉTODO PRIVADO calculateTotal():
+  totalAmount = sum de detail.subtotal (no de unit_cost — el total es por precio de venta).
+
+
+--- 11.5 ReservationService.java / ReservationServiceImpl.java ---
+
+Todos los métodos @Transactional(readOnly=true). Sin SecurityContextHolder.
+Construye los DTOs de reservas directamente (sin mappers — son vistas agregadas).
+
+  getSummary()                           → ReservationSummaryDTO
+  getReservedProducts()                  → List<ReservedProductDTO>
+  getProductReservationDetail(productId) → ReservedProductDTO
+  getClientsWithReservations()           → List<ReservedClientDTO>
+  getClientReservationDetail(clientId)   → ReservedClientDTO
+
+Ver sección 11 de la v3 para el detalle de implementación de cada método.
+
+
+================================================================================
+12. CONTROLADORES REST
+================================================================================
+
+--- 12.1 ClientController.java ---
+
+Base: @RequestMapping("/api/v1/sales/clients")
+
+  POST   /        createClient(@Valid ClientDTO)           → 201
+  GET    /active  getAllActiveClients()                     → 200
+  GET    /{id}    findById(id)                             → 200
+  PUT    /{id}    updateClient(id, @Valid ClientDTO)       → 200
+  DELETE /{id}    deactivateClient(id)                     → 204
+
+
+--- 12.2 SaleOrderController.java ---
+
+Base: @RequestMapping("/api/v1/sales/orders")
+
+  POST   /                               createOrder(@Valid)             → 201
+  GET    /{id}                           findById(id)                    → 200
+  GET    /status/{status}                findByStatus(status)            → 200
+  GET    /client/{clientId}              findByClientId(clientId)        → 200
+  GET    /client/{clientId}/status/{s}   findByClientIdAndStatus(...)    → 200
+  GET    /product/{productId}            findByProductId(productId)      → 200
+  GET    /product/{productId}/status/{s} findByProductIdAndStatus(...)   → 200
+  PUT    /{id}                           updateOrder(id, @Valid)         → 200
+  PATCH  /{id}/approve                   approveOrder(id)                → 200
+  PATCH  /{id}/deliver                   deliverOrder(id)                → 200
+  PATCH  /{id}/cancel                    cancelOrder(id)                 → 200
+  POST   /{id}/details                   addDetail(id, @Valid)           → 201
+  PUT    /{id}/details/{detailId}        updateDetail(id, did, @Valid)   → 200
+  DELETE /{id}/details/{detailId}        removeDetail(id, did)           → 204
+
+
+--- 12.3 ReservationController.java ---
+
+Base: @RequestMapping("/api/v1/sales/reservations")
+
+  GET /summary              → getSummary()                     → 200
+  GET /products             → getReservedProducts()            → 200
+  GET /products/{productId} → getProductReservationDetail(id)  → 200
+  GET /clients              → getClientsWithReservations()     → 200
+  GET /clients/{clientId}   → getClientReservationDetail(id)   → 200
+
+Total endpoints del módulo:
+  ClientController:       5 endpoints
+  SaleOrderController:   14 endpoints
+  ReservationController:  5 endpoints
+  TOTAL:                 24 endpoints
+
+
+================================================================================
+13. PATRONES DE PRUEBAS
+================================================================================
+
+--- 13.1 Tests unitarios: ClientServiceImplTest (~12 casos) ---
+
+Cubre: createClient (RFC/email únicos y duplicados), getAllActiveClients,
+findById, updateClient, deactivateClient (con y sin órdenes activas).
+
+
+--- 13.2 Tests unitarios: SaleOrderServiceImplTest (~32 casos) ---
+
+Configuración:
+  @Mock: SaleOrderRepository, SaleOrderDetailRepository, ClientRepository,
+         ProductRepository, ProductService, UserRepository,
+         SaleOrderMapper, SaleOrderDetailMapper
+  @InjectMocks: SaleOrderServiceImpl
+  @BeforeEach: SecurityContextHolder lenient(), userRepository lenient()
+  @AfterEach: SecurityContextHolder.clearContext()
+
+Casos específicos para unit_cost (NUEVOS en v4):
+
+  createOrder — unitCost capturado:
+    product.unitCost = 80.00
+    detail.unitPrice = 125.00, quantity = 5
+    → detail.getUnitCost() == 80.00   (copiado de product)
+    → detail.getSubtotal() == 625.00  (5 × 125.00, NO usa unitCost)
+
+  createOrder — unitCost null cuando producto sin costo:
+    product.unitCost = null
+    → detail.getUnitCost() == null   (no lanza excepción)
+
+  addDetail — unitCost capturado del producto al momento de agregar:
+    product.unitCost = 95.00
+    → detail.getUnitCost() == 95.00
+
+  updateDetail — unitCost re-leído del producto actual:
+    product.unitCost cambió de 80.00 a 90.00 entre create y update
+    → detail.getUnitCost() == 90.00 después del update
+
+Casos de reservas (de v3, sin cambios):
+
+  approveOrder happy path: reservedStock incrementa, sin writes si falla alguno
+  approveOrder stock insuficiente: sin save(), status sigue PENDING
+  deliverOrder happy path: reservedStock=0, registerStockMovement OUT llamado
+  deliverOrder stock insuficiente: sin save() ni registerStockMovement
+  cancelOrder desde APPROVED: reservedStock liberado
+  cancelOrder desde PENDING: sin save() en productos
+  cancelOrder desde DELIVERED/CANCELLED: throw
+  updateOrder: updatedBy asignado
+  findByProductIdAndStatus: status inválido → throw, producto inexistente → throw
+
+
+--- 13.3 Tests unitarios: ReservationServiceImplTest (~15 casos) ---
+
+Ver sección 13 de la v3 para la lista completa.
+No requiere SecurityContextHolder (todos los métodos son readOnly).
+
+
+--- 13.4 Tests de integración de controladores ---
+
+ClientControllerTest (~6), SaleOrderControllerTest (~14), ReservationControllerTest (~5).
+Configuración: @WebMvcTest + @MockBean + @MockBean JwtUtils.
+
+
+--- 13.5 Tests @SpringBootTest pendientes (críticos) ---
+
+Además de los de v3, agregar para v4:
+
+  unitCost capturado en createOrder:
+    Crear producto con unitCost=80. Crear orden con ese producto.
+    GET /sales/orders/{id} → detail.unitCost == 80.
+
+  unitCost null no rompe el flujo:
+    Crear producto sin unitCost. Crear orden. GET /sales/orders/{id}
+    → detail.unitCost == null, sin excepción.
+
+  unitCost re-leído en updateDetail:
+    Crear orden (unitCost=80 al crear). PUT /products/{id} con unitCost=95.
+    PUT /sales/orders/{id}/details/{did} (actualizar qty). GET /sales/orders/{id}
+    → detail.unitCost == 95.
+
+  unitCost congelado después de APPROVE:
+    Crear orden, aprobar. PUT /products/{id} con unitCost=120.
+    GET /sales/orders/{id} → detail.unitCost sigue siendo el valor original
+    (los detalles no se pueden editar en APPROVED — la congelación es implícita
+    por la restricción de edición al estado PENDING).
+
+  unitCost en ProductResponseDTO:
+    PUT /inventory/products/{id} con unitCost=75.
+    GET /inventory/products/{id} → unitCost == 75.
+
+
+================================================================================
+14. PLAN DE IMPLEMENTACIÓN POR FASES
+================================================================================
+
+Secuencia: BD primero → módulos existentes → módulo sales nuevo.
+
+────────────────────────────────────────────────────────────────────────────────
+FASE 0 — MIGRACIONES SQL (antes de cualquier código Java)
+────────────────────────────────────────────────────────────────────────────────
+
+Paso 0.1 — Modificar tabla products (v3 + v4):
+  ALTER TABLE products
+      ADD COLUMN reserved_stock INT         NOT NULL DEFAULT 0,
+      ADD COLUMN version        BIGINT      NOT NULL DEFAULT 0,
+      ADD COLUMN unit_cost      NUMERIC(12,2);   -- nullable, captura progresiva
+  ALTER TABLE products
+      ADD CONSTRAINT chk_reserved_not_exceed_stock
+      CHECK (reserved_stock >= 0 AND reserved_stock <= current_stock);
+
+Paso 0.2 — Crear tabla clients.
+Paso 0.3 — Crear tabla sale_orders (con updated_by y todas las columnas de transición).
+Paso 0.4 — Crear tabla sale_order_details (incluye unit_cost nullable).
+Paso 0.5 — Crear índices (sección 4.3).
+
+Paso 0.6 — Verificar arranque sin SchemaValidationException:
+  Las entidades Java aún no declaran los nuevos campos → Hibernate los ignora.
+  Criterio de éxito: ./mvnw clean package -DskipTests && java -jar target/... arranca.
+
+
+────────────────────────────────────────────────────────────────────────────────
+FASE 1 — CAMBIOS EN MÓDULO INVENTORY EXISTENTE (v3 + v4)
+────────────────────────────────────────────────────────────────────────────────
+
+Paso 1.1 — Product.java: agregar reservedStock, @Version y unitCost.
+  Criterio: compilación OK, app arranca.
+
+Paso 1.2 — ProductRequestDTO.java: agregar unitCost (@DecimalMin("0.00"), nullable).
+  Criterio: compilación OK.
+
+Paso 1.3 — ProductResponseDTO.java: agregar reservedStock, availableStock, unitCost.
+  Criterio: compilación OK.
+
+Paso 1.4 — ProductMapper.java:
+  + @Mapping + @Named calcAvailableStock en toResponseDTO()
+  + @Mapping(target="reservedStock", ignore=true) en toEntity() y updateFromDTO()
+  + @Mapping(target="version",       ignore=true) en toEntity() y updateFromDTO()
+  + unitCost NO se ignora — el admin puede enviarlo y actualizarlo.
+  Criterio: compilación OK, ProductMapperImpl generado sin errores.
+  Verificar: PUT /inventory/products/{id} con unitCost persiste correctamente.
+
+Paso 1.5 — ProductRepository.java:
+  + Actualizar findLowStockProducts() → availableStock
+  + Agregar findProductsWithActiveReservations()
+  Criterio: compilación OK.
+
+Paso 1.6 — ProductServiceImpl.java:
+  + Actualizar validación OUT en registerStockMovement()
+  Criterio: compilación OK.
+
+Paso 1.7 — ProductServiceImplTest.java:
+  Los tests existentes siguen pasando porque reservedStock=0 (Builder.Default)
+  y unitCost=null no afecta la lógica de movimientos de stock.
+  Verificar: ./mvnw test -Dtest=ProductServiceImplTest → 20/20 pasan.
+
+Paso 1.8 — Suite completa existente:
+  ./mvnw test
+  Criterio: 118/118 pasan, 0 fallos. BLOQUEANTE para continuar.
+
+
+────────────────────────────────────────────────────────────────────────────────
+FASE 2 — ENTIDADES Y ENUM DEL MÓDULO SALES
+────────────────────────────────────────────────────────────────────────────────
+
+Paso 2.1 — SaleOrderStatus.java (PENDING, APPROVED, DELIVERED, CANCELLED).
+Paso 2.2 — Client.java con auditoría completa.
+Paso 2.3 — SaleOrder.java con updatedBy y SIN updatable=false en transiciones.
+Paso 2.4 — SaleOrderDetail.java con unitCost nullable y sin updatable=false.
+
+Criterio: compilación OK, app arranca y Hibernate valida las 3 tablas nuevas.
+Verificar: las 3 tablas tienen las columnas exactas del esquema en sección 4.
+
+
+────────────────────────────────────────────────────────────────────────────────
+FASE 3 — REPOSITORIOS DEL MÓDULO SALES
+────────────────────────────────────────────────────────────────────────────────
+
+Paso 3.1 — ClientRepository.java.
+Paso 3.2 — SaleOrderDetailRepository.java.
+Paso 3.3 — SaleOrderRepository.java (todos los métodos incluyendo
+  findByProductIdAndStatus y findOldestApprovedOrders).
+
+Criterio: compilación OK.
+
+
+────────────────────────────────────────────────────────────────────────────────
+FASE 4 — DTOs DEL MÓDULO SALES
+────────────────────────────────────────────────────────────────────────────────
+
+Paso 4.1 — ClientDTO.java.
+Paso 4.2 — SaleOrderRequestDTO.java (@Size(min=1) en details).
+Paso 4.3 — SaleOrderUpdateRequestDTO.java.
+Paso 4.4 — SaleOrderResponseDTO.java (con updatedById y todos los campos de transición).
+Paso 4.5 — SaleOrderDetailRequestDTO.java (sin unitCost — lo gestiona el servicio).
+Paso 4.6 — SaleOrderDetailUpdateRequestDTO.java (sin unitCost).
+Paso 4.7 — SaleOrderDetailResponseDTO.java (CON unitCost — es campo de salida).
+Paso 4.8 — DTOs de reservas: ReservationSummaryDTO, ReservedProductDTO,
+  ReservedProductOrderDTO, ReservedClientDTO, ReservedClientOrderDTO.
+
+Criterio: compilación OK, validaciones Jakarta correctas en DTOs de request.
+
+
+────────────────────────────────────────────────────────────────────────────────
+FASE 5 — MAPPERS DEL MÓDULO SALES
+────────────────────────────────────────────────────────────────────────────────
+
+Paso 5.1 — ClientMapper.java.
+Paso 5.2 — SaleOrderDetailMapper.java (unitCost en ignore list de toEntity()).
+Paso 5.3 — SaleOrderMapper.java (uses={SaleOrderDetailMapper.class}).
+
+Criterio: compilación OK. Verificar especialmente que:
+  - toEntity() en SaleOrderDetailMapper ignora unitCost (el servicio lo asigna)
+  - toResponseDTO() en SaleOrderDetailMapper mapea unitCost automáticamente
+
+
+────────────────────────────────────────────────────────────────────────────────
+FASE 6 — SERVICIOS DEL MÓDULO SALES
+────────────────────────────────────────────────────────────────────────────────
+
+Paso 6.1 — ClientService.java + ClientServiceImpl.java.
+
+Paso 6.2 — SaleOrderService.java + SaleOrderServiceImpl.java:
+
+  Sub-paso A: métodos de consulta (findById, findByStatus, findByClientId,
+    findByClientIdAndStatus, findByProductId, findByProductIdAndStatus).
+
+  Sub-paso B: createOrder y gestión de detalles (createOrder, updateOrder,
+    addDetail, updateDetail, removeDetail). Verificar en cada uno:
+    - detail.setUnitCost(product.getUnitCost()) presente
+    - subtotal = unitPrice × quantity (nunca involucra unitCost)
+
+  Sub-paso C: transiciones (approveOrder, deliverOrder, cancelOrder).
+    Verificar: approveOrder tiene dos loops separados, deliverOrder libera
+    reserva ANTES de registerStockMovement, cancelOrder libera condicionalmente.
+
+Paso 6.3 — ReservationService.java + ReservationServiceImpl.java.
+  Todos los métodos @Transactional(readOnly=true).
+
+Criterio: ./mvnw clean package -DskipTests sin errores, app arranca.
+
+
+────────────────────────────────────────────────────────────────────────────────
+FASE 7 — CONTROLADORES DEL MÓDULO SALES
+────────────────────────────────────────────────────────────────────────────────
+
+Paso 7.1 — ClientController.java (5 endpoints).
+Paso 7.2 — SaleOrderController.java (14 endpoints).
+Paso 7.3 — ReservationController.java (5 endpoints GET).
+
+Criterio: compilación OK, app arranca, todos los @RequestBody tienen @Valid.
+
+
+────────────────────────────────────────────────────────────────────────────────
+FASE 8 — TESTS UNITARIOS Y DE INTEGRACIÓN
+────────────────────────────────────────────────────────────────────────────────
+
+Paso 8.1 — ClientServiceImplTest.java (~12 tests).
+Paso 8.2 — SaleOrderServiceImplTest.java (~32 tests).
+  Incluir los nuevos casos de unitCost definidos en sección 13.2.
+  Criterio: ./mvnw test -Dtest=SaleOrderServiceImplTest → 32/32.
+
+Paso 8.3 — ReservationServiceImplTest.java (~15 tests).
+Paso 8.4 — ClientControllerTest.java (~6 tests).
+Paso 8.5 — SaleOrderControllerTest.java (~14 tests).
+Paso 8.6 — ReservationControllerTest.java (~5 tests).
+
+Paso 8.7 — Suite completa:
+  ./mvnw test
+  Criterio: 118 existentes + ~84 nuevos ≈ 202 tests, 0 fallos. BLOQUEANTE.
+
+
+────────────────────────────────────────────────────────────────────────────────
+FASE 9 — VALIDACIÓN E2E CON CURL
+────────────────────────────────────────────────────────────────────────────────
+
+Pasos 1-36: idénticos a la v3 (flujo completo de clients, orders, reservations,
+  approve, deliver, cancel).
+
+Pasos adicionales para unitCost (NUEVOS en v4):
+
+  37. PUT /inventory/products/{id} → actualizar unitCost=80.00
+      GET /inventory/products/{id} → verificar unitCost=80.00
+
+  38. POST /sales/orders → crear orden con ese producto
+      GET /sales/orders/{id} → detail.unitCost == 80.00
+
+  39. PUT /sales/orders/{id}/details/{did} → actualizar cantidad (sin enviar unitCost)
+      GET /sales/orders/{id} → detail.unitCost sigue reflejando el costo actual del producto
+
+  40. PUT /inventory/products/{id} → cambiar unitCost=95.00
+      PUT /sales/orders/{id}/details/{did} → actualizar (re-lee el costo)
+      GET /sales/orders/{id} → detail.unitCost == 95.00
+
+  41. PATCH /sales/orders/{id}/approve
+      PUT /inventory/products/{id} → cambiar unitCost=110.00
+      GET /sales/orders/{id} → detail.unitCost sigue siendo 95.00
+      (la congelación es implícita: los detalles no se pueden editar en APPROVED)
+
+  42. Producto sin unitCost definido:
+      PUT /inventory/products/{id} → unitCost=null
+      POST /sales/orders → crear orden
+      GET /sales/orders/{id} → detail.unitCost == null, sin errores
+
+
+================================================================================
+15. CRITERIOS DE ÉXITO GLOBALES DEL MÓDULO
+================================================================================
+
+FUNCIONALIDAD BASE:
+  ✓ 24 endpoints responden con los HTTP status correctos
+  ✓ Formato OV-YYYY-NNNN generado y único
+  ✓ totalAmount recalculado en cada cambio de detalle (basado en unitPrice, no unitCost)
+  ✓ Máquina de estados rechaza transiciones inválidas con mensaje claro
+  ✓ updatedById asignado y persistido al actualizar una orden PENDING
+
+RESERVAS DE INVENTARIO:
+  ✓ APPROVE: reservedStock += qty, validación total-antes-de-reservar
+  ✓ APPROVE: rechaza si available < qty sin modificar ningún producto
+  ✓ APPROVE: HTTP 409 si concurrencia detectada
+  ✓ DELIVER: libera reserva + OUT en la misma transacción
+  ✓ CANCEL desde APPROVED: reservedStock liberado e inmediatamente visible
+  ✓ CANCEL desde PENDING: sin impacto en reservedStock
+  ✓ OUT manual rechazado si quantity > availableStock
+
+CAPTURA DE COSTO PARA MÓDULO FINANCIERO (NUEVO v4):
+  ✓ PUT /inventory/products/{id} persiste unitCost correctamente
+  ✓ GET /inventory/products/{id} devuelve unitCost actualizado
+  ✓ Al crear una orden: detail.unitCost == product.unitCost en el momento de la creación
+  ✓ Al agregar un detalle: detail.unitCost == product.unitCost actual
+  ✓ Al actualizar un detalle en PENDING: detail.unitCost re-lee el costo actual del producto
+  ✓ Congelación implícita en APPROVED: los detalles no son editables → unitCost preservado
+  ✓ Producto sin unitCost (null): el flujo completo funciona sin excepciones
+  ✓ SaleOrderDetailResponseDTO expone unitCost para consumo del futuro módulo financiero
+  ✓ El cálculo de totalAmount NUNCA involucra unitCost — solo unitPrice × quantity
+  ✓ Los tests unitarios de createOrder y addDetail verifican detail.unitCost capturado
+
+VISIBILIDAD DE RESERVAS:
+  ✓ GET /sales/reservations/summary: campos coherentes entre sí
+  ✓ GET /sales/reservations/products: sum(orders[i].qty) == product.reservedStock
+  ✓ GET /sales/reservations/clients: ordenado por totalReservedValue descendente
+  ✓ Endpoints retornan datos vacíos (no excepción) cuando no hay reservas
+
+CONSULTAS ACTUALIZADAS EN MÓDULO INVENTORY:
+  ✓ GET /inventory/products/{id}: expone currentStock, reservedStock, availableStock, unitCost
+  ✓ GET /inventory/products/low-stock: usa availableStock <= minimumStock
+
+AUDITORÍA COMPLETA:
+  ✓ createdById, approvedById, deliveredById, cancelledById, updatedById
+    persistidos en BD y visibles en GET posterior (ninguno tiene updatable=false)
+
+CONCURRENCIA:
+  ✓ @Version en Product → HTTP 409 claro en approveOrder() concurrente
+  ✓ Constraint CHECK en BD como segunda línea de defensa
+
+PRUEBAS:
+  ✓ ~84 tests nuevos (unitarios + integración)
+  ✓ Suite total ≈ 202 tests pasan, 0 fallos
+  ✓ Flujo E2E verificado en 42 pasos
+
+================================================================================
+FIN DE LA PROPUESTA — MÓDULO SALES v4
+================================================================================

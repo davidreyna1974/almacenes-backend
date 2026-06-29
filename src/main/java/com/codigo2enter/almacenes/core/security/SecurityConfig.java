@@ -1,0 +1,316 @@
+package com.codigo2enter.almacenes.core.security;
+
+import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
+import org.springframework.security.config.Customizer;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+
+import java.util.Arrays;
+import java.util.List;
+
+/**
+ * Configuración central de Spring Security para la aplicación.
+ *
+ * @Configuration  — marca la clase como fuente de beans de Spring.
+ * @EnableWebSecurity — activa el módulo de seguridad web de Spring Security,
+ *                      reemplazando la configuración por defecto automática.
+ * @RequiredArgsConstructor — Lombok genera el constructor con los campos 'final',
+ *                            permitiendo la inyección de JwtAuthenticationFilter
+ *                            sin necesidad de @Autowired.
+ */
+@Configuration
+@EnableWebSecurity
+@EnableMethodSecurity
+@RequiredArgsConstructor
+public class SecurityConfig {
+
+    /**
+     * Filtro personalizado que intercepta cada petición para validar el JWT.
+     * Se inyecta aquí para registrarlo en la cadena de filtros de Spring Security.
+     */
+    private final JwtAuthenticationFilter jwtAuthenticationFilter;
+
+    /**
+     * Responde 401 cuando la petición no tiene autenticación válida en el
+     * SecurityContext (token ausente, malformado o expirado). BUG-INV-09.
+     */
+    private final JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint;
+
+    /**
+     * Responde 403 cuando el usuario está autenticado pero no tiene el rol
+     * requerido por la ruta. BUG-INV-09.
+     */
+    private final JwtAccessDeniedHandler jwtAccessDeniedHandler;
+
+    /**
+     * Orígenes permitidos para CORS, separados por comas (configurable vía
+     * la variable de entorno CORS_ALLOWED_ORIGINS — ver application.yaml).
+     * Por defecto solo el frontend Angular de desarrollo (localhost:4200).
+     */
+    @Value("${cors.allowed-origins}")
+    private String allowedOrigins;
+
+    /**
+     * Registra BCryptPasswordEncoder como bean disponible en todo el contexto.
+     *
+     * BCrypt aplica un algoritmo de hashing adaptativo con sal aleatoria,
+     * lo que lo hace resistente a ataques de fuerza bruta y tablas rainbow.
+     * Se usa en UserServiceImpl para cifrar contraseñas antes de persistirlas
+     * y para verificarlas durante el login.
+     *
+     * Se declara con el tipo de interfaz PasswordEncoder (no BCryptPasswordEncoder)
+     * para que el código dependiente esté desacoplado de la implementación concreta.
+     */
+    @Bean
+    PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+
+    /**
+     * Define las reglas de seguridad HTTP de la aplicación.
+     *
+     * Spring Security aplica estos filtros en el orden en que se configuran.
+     * El objeto HttpSecurity usa una API fluida (builder pattern) donde cada
+     * llamada encadenada configura un aspecto distinto de la seguridad.
+     *
+     * @param http objeto builder de Spring Security para configurar la seguridad HTTP
+     * @return la cadena de filtros de seguridad construida y lista para ser aplicada
+     */
+    @Bean
+    SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+        http
+            // 0. CORS — permite peticiones desde Postman Web y futuros clientes Angular.
+            //    Se habilita aquí para que Spring Security aplique los headers CORS
+            //    antes que cualquier otro filtro de seguridad (incluyendo el 403 por JWT).
+            //    Para desarrollo se permite cualquier origen; en producción se restringe
+            //    al dominio del frontend.
+            .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+
+            // 1. DESHABILITAR CSRF
+            //    CSRF (Cross-Site Request Forgery) es un mecanismo de protección basado
+            //    en tokens de sesión. En APIs REST stateless con JWT, este mecanismo
+            //    no aplica — el token JWT ya cumple esa función de autenticidad.
+            //    Dejarlo activo causaría errores 403 Forbidden en todas las peticiones
+            //    POST/PUT/DELETE desde Angular.
+            .csrf(AbstractHttpConfigurer::disable)
+
+            // 2. REGLAS DE AUTORIZACIÓN POR RUTA Y ROL
+            //    Las reglas se evalúan en orden: la primera que coincide gana.
+            //    Las reglas más específicas (paths concretos) deben ir ANTES
+            //    de las más generales (wildcards amplios).
+            .authorizeHttpRequests(auth -> auth
+
+                // ── RUTAS PÚBLICAS ──────────────────────────────────────────
+                // Swagger UI y la especificación OpenAPI son accesibles sin JWT.
+                // El preflight del browser también necesita estas rutas sin autenticación.
+                .requestMatchers("/swagger-ui/**", "/swagger-ui.html",
+                                 "/v3/api-docs", "/v3/api-docs/**").permitAll()
+                .requestMatchers("/api/v1/auth/login").permitAll()
+
+                // ── GESTIÓN DE USUARIOS — solo ADMIN ───────────────────────
+                .requestMatchers("/api/v1/auth/users/**").hasRole("ADMIN")
+
+                // ── PERFIL Y CONTRASEÑA — cualquier autenticado ─────────────
+                .requestMatchers("/api/v1/auth/me/**").authenticated()
+
+                // ── INVENTORY: lectura — todos los roles ────────────────────
+                .requestMatchers(HttpMethod.GET, "/api/v1/inventory/**")
+                        .hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN","SALES")
+
+                // ── INVENTORY: movimiento de stock — ADMIN, MANAGER, WHOUSE ─
+                // Regla específica antes que el POST general de inventory
+                .requestMatchers(HttpMethod.POST, "/api/v1/inventory/products/movement")
+                        .hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN")
+
+                // ── INVENTORY: desactivar producto — solo ADMIN ─────────────
+                // Antes del DELETE general de inventory
+                .requestMatchers(HttpMethod.DELETE, "/api/v1/inventory/products/**")
+                        .hasRole("ADMIN")
+
+                // ── INVENTORY: escritura general — ADMIN, MANAGER ───────────
+                .requestMatchers(HttpMethod.POST,   "/api/v1/inventory/**").hasAnyRole("ADMIN","MANAGER")
+                .requestMatchers(HttpMethod.PUT,    "/api/v1/inventory/**").hasAnyRole("ADMIN","MANAGER")
+                .requestMatchers(HttpMethod.DELETE, "/api/v1/inventory/**").hasAnyRole("ADMIN","MANAGER")
+
+                // ── PURCHASES: lectura — ADMIN, MANAGER, WAREHOUSEMAN ───────
+                .requestMatchers(HttpMethod.GET, "/api/v1/purchases/**")
+                        .hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN")
+
+                // ── PURCHASES: recepción — ADMIN, MANAGER, WAREHOUSEMAN ─────
+                // Antes del PATCH general de purchases
+                .requestMatchers(HttpMethod.PATCH, "/api/v1/purchases/orders/*/receive")
+                        .hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN")
+
+                // ── PURCHASES: escritura general — ADMIN, MANAGER ───────────
+                .requestMatchers(HttpMethod.POST,   "/api/v1/purchases/**").hasAnyRole("ADMIN","MANAGER")
+                .requestMatchers(HttpMethod.PUT,    "/api/v1/purchases/**").hasAnyRole("ADMIN","MANAGER")
+                .requestMatchers(HttpMethod.PATCH,  "/api/v1/purchases/**").hasAnyRole("ADMIN","MANAGER")
+                .requestMatchers(HttpMethod.DELETE, "/api/v1/purchases/**").hasAnyRole("ADMIN","MANAGER")
+
+                // ── SALES: lectura — todos los roles ────────────────────────
+                .requestMatchers(HttpMethod.GET, "/api/v1/sales/**")
+                        .hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN","SALES")
+
+                // ── SALES: transiciones de estado (orden importa) ───────────
+                // approve: ADMIN, MANAGER (antes del PATCH general)
+                .requestMatchers(HttpMethod.PATCH, "/api/v1/sales/orders/*/approve")
+                        .hasAnyRole("ADMIN","MANAGER")
+                // deliver: ADMIN, MANAGER, WAREHOUSEMAN
+                .requestMatchers(HttpMethod.PATCH, "/api/v1/sales/orders/*/deliver")
+                        .hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN")
+                // cancel: ADMIN, MANAGER, SALES
+                .requestMatchers(HttpMethod.PATCH, "/api/v1/sales/orders/*/cancel")
+                        .hasAnyRole("ADMIN","MANAGER","SALES")
+
+                // ── SALES: DELETE clientes — ADMIN, MANAGER (no SALES) ──────
+                // Antes del DELETE general de sales
+                .requestMatchers(HttpMethod.DELETE, "/api/v1/sales/clients/**")
+                        .hasAnyRole("ADMIN","MANAGER")
+
+                // ── SALES: escritura general — ADMIN, MANAGER, SALES ────────
+                .requestMatchers(HttpMethod.POST,   "/api/v1/sales/**").hasAnyRole("ADMIN","MANAGER","SALES")
+                .requestMatchers(HttpMethod.PUT,    "/api/v1/sales/**").hasAnyRole("ADMIN","MANAGER","SALES")
+                .requestMatchers(HttpMethod.PATCH,  "/api/v1/sales/**").hasAnyRole("ADMIN","MANAGER","SALES")
+                .requestMatchers(HttpMethod.DELETE, "/api/v1/sales/**").hasAnyRole("ADMIN","MANAGER","SALES")
+
+                // ── REPORTS: dashboard ejecutivo — solo ADMIN ───────────────
+                // El dashboard contiene datos financieros sensibles (revenue, COGS,
+                // margen bruto). Se restringe al rol más privilegiado.
+                .requestMatchers(HttpMethod.GET, "/api/v1/reports/dashboard/**")
+                        .hasRole("ADMIN")
+
+                // ── REPORTS: stock bajo mínimo — ADMIN, MANAGER, WAREHOUSEMAN ─
+                // Antes de la regla general de /inventory/** — la específica debe ir primero.
+                .requestMatchers(HttpMethod.GET, "/api/v1/reports/inventory/low-stock")
+                        .hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN")
+
+                // ── REPORTS: Kardex — ADMIN, MANAGER, WAREHOUSEMAN ───────────
+                // El Kardex es una herramienta operativa de auditoría de inventario.
+                .requestMatchers(HttpMethod.GET, "/api/v1/reports/inventory/kardex/**")
+                        .hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN")
+
+                // ── REPORTS: operaciones pendientes — ADMIN, MANAGER, WH, SALES
+                // SALES necesita ver las órdenes de venta pendientes para hacer seguimiento.
+                .requestMatchers(HttpMethod.GET, "/api/v1/reports/operations/**")
+                        .hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN","SALES")
+
+                // ── REPORTS: resumen de movimientos — ADMIN, MANAGER, WAREHOUSEMAN ─
+                // Antes de la regla general inventory/**. WAREHOUSEMAN necesita
+                // el resumen de movimientos para su trabajo operativo diario.
+                .requestMatchers(HttpMethod.GET, "/api/v1/reports/inventory/movements")
+                        .hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN")
+
+                // ── REPORTS: inventory analítico — solo ADMIN, MANAGER ─────────
+                // Valuación, ABC y rotación son reportes financieros/estratégicos.
+                // WAREHOUSEMAN accede a las vistas operativas mediante reglas específicas
+                // anteriores (low-stock, kardex, movements), no a los analíticos.
+                .requestMatchers(HttpMethod.GET, "/api/v1/reports/inventory/**")
+                        .hasAnyRole("ADMIN","MANAGER")
+
+                // ── REPORTS: resto de endpoints — ADMIN, MANAGER ─────────────
+                // Cubre /products/top-performers, /purchases/by-supplier, /sales/**
+                // Regla más amplia al final para no interferir con las específicas anteriores.
+                .requestMatchers(HttpMethod.GET, "/api/v1/reports/**")
+                        .hasAnyRole("ADMIN","MANAGER")
+
+                // ── CUALQUIER OTRA RUTA — autenticado ───────────────────────
+                .anyRequest().authenticated()
+            )
+
+            // 3. POLÍTICA DE SESIONES: SIN ESTADO (STATELESS)
+            //    Le indica a Spring Security que NO cree ni use sesiones HTTP
+            //    en el servidor (HttpSession). Cada petición debe autenticarse
+            //    por sí sola presentando su token JWT.
+            //    Esto es fundamental para APIs REST escalables — sin estado en
+            //    el servidor significa que cualquier instancia puede atender
+            //    cualquier petición sin compartir sesiones.
+            .sessionManagement(session ->
+                session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+            )
+
+            // 3.1 MANEJO DE EXCEPCIONES DE SEGURIDAD (BUG-INV-09)
+            //     Por defecto, Spring Security usa Http403ForbiddenEntryPoint, que
+            //     responde 403 tanto para "no autenticado" como para "sin rol".
+            //     Se reemplaza por dos manejadores distintos:
+            //     - authenticationEntryPoint: 401 cuando no hay autenticación válida
+            //       (token ausente, inválido o expirado).
+            //     - accessDeniedHandler: 403 cuando el usuario está autenticado pero
+            //       no tiene el rol requerido por la ruta.
+            .exceptionHandling(ex -> ex
+                .authenticationEntryPoint(jwtAuthenticationEntryPoint)
+                .accessDeniedHandler(jwtAccessDeniedHandler)
+            )
+
+            // 3.2 HEADERS DE SEGURIDAD HTTP (defensa en profundidad)
+            //     Nginx ya emite estos headers en producción; se configuran también
+            //     en el backend para proteger accesos directos internos.
+            //     - X-Frame-Options: DENY — previene clickjacking via iframe.
+            //     - X-XSS-Protection: deshabilitado — los navegadores modernos usan
+            //       CSP; el header legado puede introducir vulnerabilidades por sí solo.
+            //     - X-Content-Type-Options: nosniff — impide MIME-sniffing.
+            //     - Referrer-Policy — solo envía el origen al hacer cross-origin.
+            //     - HSTS — solo se emite sobre HTTPS; en dev (HTTP) Spring lo omite.
+            .headers(headers -> headers
+                .frameOptions(fo -> fo.deny())
+                .xssProtection(xss -> xss.disable())
+                .contentTypeOptions(Customizer.withDefaults())
+                .referrerPolicy(rp -> rp.policy(
+                    ReferrerPolicyHeaderWriter.ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN))
+                .httpStrictTransportSecurity(hsts -> hsts
+                    .maxAgeInSeconds(31_536_000)
+                    .includeSubDomains(true))
+            )
+
+            // 4. REGISTRAR EL FILTRO JWT EN LA CADENA DE SEGURIDAD
+            //    addFilterBefore coloca JwtAuthenticationFilter ANTES de
+            //    UsernamePasswordAuthenticationFilter (el filtro estándar de
+            //    Spring que procesa formularios de login con usuario/contraseña).
+            //    Esto garantiza que el token JWT sea validado primero, y si es
+            //    válido, la autenticación queda establecida en el SecurityContext
+            //    antes de que los filtros posteriores la necesiten.
+            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+
+        return http.build();
+    }
+
+    /**
+     * Configuración CORS — restringe los orígenes permitidos a la lista configurada
+     * en cors.allowed-origins (por defecto solo http://localhost:4200 en desarrollo).
+     * Habilita el flujo OPTIONS (preflight) requerido por los navegadores antes de
+     * enviar peticiones cross-origin con headers personalizados como Authorization.
+     *
+     * BUG-INV-15: anteriormente se usaba setAllowedOriginPatterns(List.of("*")) junto
+     * con setAllowCredentials(true) — Spring refleja el header Origin recibido,
+     * permitiendo a CUALQUIER origen enviar credenciales (JWT). Con setAllowedOrigins
+     * y una lista explícita, solo los orígenes configurados reciben
+     * Access-Control-Allow-Origin + Access-Control-Allow-Credentials: true.
+     */
+    @Bean
+    CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration config = new CorsConfiguration();
+        config.setAllowedOrigins(Arrays.stream(allowedOrigins.split(","))
+                .map(String::trim)
+                .toList());
+        config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
+        config.setAllowedHeaders(List.of("*"));
+        config.setAllowCredentials(true);
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", config);
+        return source;
+    }
+}

@@ -1,0 +1,31 @@
+#!/bin/sh
+# pre-commit: bloquea commits directos en ramas protegidas.
+#
+# Por qué existe: develop y main solo deben recibir trabajo mediante merges
+# de feature/fix branches. Un commit directo en estas ramas viola el flujo
+# de trabajo acordado y dificulta el seguimiento del historial.
+#
+# Instalación en una máquina nueva:
+#   cp hooks/pre-commit .git/hooks/pre-commit
+#   chmod +x .git/hooks/pre-commit
+
+BRANCH=$(git branch --show-current)
+PROTECTED="develop main"
+
+for protected in $PROTECTED; do
+  if [ "$BRANCH" = "$protected" ]; then
+    echo ""
+    echo "  ✗ COMMIT BLOQUEADO"
+    echo "  La branch '$BRANCH' está protegida — no acepta commits directos."
+    echo ""
+    echo "  Pasos correctos:"
+    echo "    1. git checkout -b feature/<nombre>   (o fix/<nombre>)"
+    echo "    2. git cherry-pick HEAD               (si ya tienes cambios)"
+    echo "    3. Commitear en la nueva branch"
+    echo "    4. git checkout $BRANCH && git merge --no-ff feature/<nombre>"
+    echo ""
+    exit 1
+  fi
+done
+
+exit 0

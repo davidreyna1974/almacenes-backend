@@ -1,0 +1,499 @@
+================================================================================
+  PROPUESTA: PRUEBAS UNITARIAS — CAPA DE SERVICIOS — MÓDULO INVENTORY
+  Backend REST API — Gestión de Almacenes
+  Fecha: 2026-05-22
+================================================================================
+
+CONTEXTO
+────────
+Pruebas unitarias para CategoryServiceImpl y ProductServiceImpl.
+Cubren la lógica de negocio crítica: validaciones de duplicados, restricciones
+de stock, manejo de entidades no encontradas y operaciones de soft delete.
+
+Objetivo: garantizar que cada método del servicio se comporta correctamente
+tanto en el flujo exitoso (happy path) como en los escenarios de error,
+ANTES de construir los controladores REST encima.
+
+
+================================================================================
+  CONFIGURACIÓN BASE
+================================================================================
+
+  Framework y herramientas
+  ────────────────────────
+  JUnit 5        → @Test, @BeforeEach, @DisplayName, @ExtendWith
+  Mockito        → @Mock, @InjectMocks, @ExtendWith(MockitoExtension.class)
+  AssertJ/JUnit  → assertThrows, assertEquals, assertNotNull, verify
+
+  Anotaciones clave
+  ─────────────────
+  @ExtendWith(MockitoExtension.class)
+    Activa Mockito sin levantar el contexto de Spring. Los tests son puramente
+    unitarios — instancian solo la clase bajo prueba con dependencias simuladas.
+    Tiempo de ejecución: milisegundos por test.
+
+  @Mock
+    Crea un doble de prueba para cada dependencia (repositorios, mappers).
+    Ninguna consulta real llega a la base de datos.
+
+  @InjectMocks
+    Crea la instancia real de la clase bajo prueba (ServiceImpl) e inyecta
+    automáticamente los @Mock declarados en sus campos final.
+
+  @BeforeEach
+    Se ejecuta antes de cada @Test. Inicializa los datos reutilizables para
+    mantener cada test independiente y sin estado compartido.
+
+  Patrón de cada test: AAA
+  ────────────────────────
+  ARRANGE  → configurar el comportamiento del mock (when...thenReturn)
+  ACT      → invocar el método bajo prueba
+  ASSERT   → verificar el resultado y las interacciones (verify, assertThrows)
+
+
+================================================================================
+  ARCHIVO 1 — CategoryServiceImplTest.java
+================================================================================
+
+  Ubicación:  src/test/java/.../modules/inventory/service/
+  Clase bajo prueba:  CategoryServiceImpl
+
+  Mocks necesarios
+  ────────────────
+  @Mock  CategoryRepository  categoryRepository
+  @Mock  ProductRepository   productRepository
+  @Mock  CategoryMapper      categoryMapper
+
+  Datos en @BeforeEach
+  ────────────────────
+  CategoryDTO  inputDTO    → name="Herramientas", description="Desc", active=true
+  Category     entity      → id=1L, name="Herramientas", active=true
+  CategoryDTO  outputDTO   → id=1L, name="Herramientas", active=true
+
+
+  ── createCategory ───────────────────────────────────────────────────────────
+
+  TEST 1 — shouldCreateCategorySuccessfully
+  ─────────────────────────────────────────
+  Escenario:   El nombre no existe en la base de datos.
+  ARRANGE:
+    when(categoryRepository.findByName("Herramientas")).thenReturn(Optional.empty())
+    when(categoryMapper.toEntity(inputDTO)).thenReturn(entity)
+    when(categoryRepository.save(entity)).thenReturn(entity)
+    when(categoryMapper.toDTO(entity)).thenReturn(outputDTO)
+  ACT:
+    CategoryDTO result = categoryService.createCategory(inputDTO)
+  ASSERT:
+    assertNotNull(result)
+    assertEquals("Herramientas", result.getName())
+    verify(categoryRepository, times(1)).save(entity)
+
+  TEST 2 — shouldThrowWhenCategoryNameAlreadyExists
+  ──────────────────────────────────────────────────
+  Escenario:   Ya existe una categoría con ese nombre.
+  ARRANGE:
+    when(categoryRepository.findByName("Herramientas")).thenReturn(Optional.of(entity))
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> categoryService.createCategory(inputDTO))
+    verify(categoryRepository, never()).save(any())
+
+
+  ── getAllActiveCategories ────────────────────────────────────────────────────
+
+  TEST 3 — shouldReturnAllActiveCategories
+  ─────────────────────────────────────────
+  Escenario:   Existen 2 categorías activas en la base de datos.
+  ARRANGE:
+    when(categoryRepository.findByActiveTrue()).thenReturn(List.of(entity, entity2))
+    when(categoryMapper.toDTOList(anyList())).thenReturn(List.of(outputDTO, outputDTO2))
+  ACT:
+    List<CategoryDTO> result = categoryService.getAllActiveCategories()
+  ASSERT:
+    assertEquals(2, result.size())
+    verify(categoryMapper, times(1)).toDTOList(anyList())
+
+
+  ── updateCategory ───────────────────────────────────────────────────────────
+
+  TEST 4 — shouldUpdateCategorySuccessfully
+  ──────────────────────────────────────────
+  Escenario:   La categoría existe y el nuevo nombre no está en uso por otra.
+  ARRANGE:
+    when(categoryRepository.findById(1L)).thenReturn(Optional.of(entity))
+    when(categoryRepository.findByName("Herramientas")).thenReturn(Optional.of(entity))
+    when(categoryMapper.toDTO(entity)).thenReturn(outputDTO)
+  ACT:
+    CategoryDTO result = categoryService.updateCategory(1L, inputDTO)
+  ASSERT:
+    assertNotNull(result)
+    assertEquals("Herramientas", result.getName())
+
+  TEST 5 — shouldThrowWhenCategoryNotFoundOnUpdate
+  ─────────────────────────────────────────────────
+  Escenario:   El id no corresponde a ninguna categoría existente.
+  ARRANGE:
+    when(categoryRepository.findById(99L)).thenReturn(Optional.empty())
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> categoryService.updateCategory(99L, inputDTO))
+
+  TEST 6 — shouldThrowWhenNewNameBelongsToAnotherCategory
+  ─────────────────────────────────────────────────────────
+  Escenario:   El nombre nuevo ya está registrado en una categoría con id=2L,
+               diferente a la categoría id=1L que se está editando.
+  ARRANGE:
+    Category otherCategory = Category(id=2L, name="Herramientas", ...)
+    when(categoryRepository.findById(1L)).thenReturn(Optional.of(entity))
+    when(categoryRepository.findByName("Herramientas")).thenReturn(Optional.of(otherCategory))
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> categoryService.updateCategory(1L, inputDTO))
+
+
+  ── deactivateCategory ───────────────────────────────────────────────────────
+
+  TEST 7 — shouldDeactivateCategorySuccessfully
+  ──────────────────────────────────────────────
+  Escenario:   La categoría existe y no tiene productos activos asignados.
+  ARRANGE:
+    when(categoryRepository.findById(1L)).thenReturn(Optional.of(entity))
+    when(productRepository.findByCategoryIdAndActiveTrue(1L)).thenReturn(Collections.emptyList())
+  ACT:
+    categoryService.deactivateCategory(1L)
+  ASSERT:
+    assertFalse(entity.isActive())   ← setActive(false) fue aplicado
+
+  TEST 8 — shouldThrowWhenCategoryNotFoundOnDeactivate
+  ──────────────────────────────────────────────────────
+  Escenario:   El id no corresponde a ninguna categoría existente.
+  ARRANGE:
+    when(categoryRepository.findById(99L)).thenReturn(Optional.empty())
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> categoryService.deactivateCategory(99L))
+
+  TEST 9 — shouldThrowWhenCategoryHasActiveProducts
+  ───────────────────────────────────────────────────
+  Escenario:   La categoría tiene al menos 1 producto activo asignado.
+  ARRANGE:
+    when(categoryRepository.findById(1L)).thenReturn(Optional.of(entity))
+    when(productRepository.findByCategoryIdAndActiveTrue(1L)).thenReturn(List.of(product))
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> categoryService.deactivateCategory(1L))
+
+
+  Total tests CategoryServiceImplTest:  9
+  ──────────────────────────────────────
+  createCategory         2  (happy path + nombre duplicado)
+  getAllActiveCategories  1  (happy path)
+  updateCategory         3  (happy path + no encontrada + nombre en uso)
+  deactivateCategory     3  (happy path + no encontrada + tiene productos)
+
+
+================================================================================
+  ARCHIVO 2 — ProductServiceImplTest.java
+================================================================================
+
+  Ubicación:  src/test/java/.../modules/inventory/service/
+  Clase bajo prueba:  ProductServiceImpl
+
+  Mocks necesarios
+  ────────────────
+  @Mock  ProductRepository       productRepository
+  @Mock  CategoryRepository      categoryRepository
+  @Mock  StockMovementRepository stockMovementRepository
+  @Mock  ProductMapper           productMapper
+  @Mock  StockMovementMapper     stockMovementMapper
+
+  Datos en @BeforeEach
+  ────────────────────
+  Category           category    → id=1L, name="Herramientas", active=true
+  Product            product     → id=1L, sku="TOOL-001", currentStock=50,
+                                   minimumStock=10, active=true, category=category
+  ProductRequestDTO  requestDTO  → sku="TOOL-001", categoryId=1L, price=99.99,
+                                   currentStock=10, minimumStock=5, status="AVAILABLE"
+  ProductResponseDTO responseDTO → id=1L, sku="TOOL-001", categoryName="Herramientas"
+
+
+  ── createProduct ────────────────────────────────────────────────────────────
+
+  TEST 1 — shouldCreateProductSuccessfully
+  ─────────────────────────────────────────
+  Escenario:   SKU único y categoría existente.
+  ARRANGE:
+    when(productRepository.existsBySku("TOOL-001")).thenReturn(false)
+    when(categoryRepository.findById(1L)).thenReturn(Optional.of(category))
+    when(productMapper.toEntity(requestDTO)).thenReturn(product)
+    when(productRepository.save(product)).thenReturn(product)
+    when(productMapper.toResponseDTO(product)).thenReturn(responseDTO)
+  ACT:
+    ProductResponseDTO result = productService.createProduct(requestDTO)
+  ASSERT:
+    assertNotNull(result)
+    assertEquals("TOOL-001", result.getSku())
+    verify(productRepository, times(1)).save(product)
+
+  TEST 2 — shouldThrowWhenSkuAlreadyExists
+  ─────────────────────────────────────────
+  Escenario:   El SKU ya está registrado en otro producto.
+  ARRANGE:
+    when(productRepository.existsBySku("TOOL-001")).thenReturn(true)
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> productService.createProduct(requestDTO))
+    verify(productRepository, never()).save(any())
+
+  TEST 3 — shouldThrowWhenCategoryNotFoundOnCreate
+  ─────────────────────────────────────────────────
+  Escenario:   El categoryId del DTO no existe en la base de datos.
+  ARRANGE:
+    when(productRepository.existsBySku("TOOL-001")).thenReturn(false)
+    when(categoryRepository.findById(1L)).thenReturn(Optional.empty())
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> productService.createProduct(requestDTO))
+
+
+  ── updateProduct ────────────────────────────────────────────────────────────
+
+  TEST 4 — shouldUpdateProductSuccessfully
+  ─────────────────────────────────────────
+  Escenario:   Producto existe; el SKU no pertenece a otro producto diferente.
+  ARRANGE:
+    when(productRepository.findById(1L)).thenReturn(Optional.of(product))
+    when(productRepository.findBySku("TOOL-001")).thenReturn(Optional.of(product))
+    when(categoryRepository.findById(1L)).thenReturn(Optional.of(category))
+    when(productRepository.save(product)).thenReturn(product)
+    when(productMapper.toResponseDTO(product)).thenReturn(responseDTO)
+  ACT:
+    ProductResponseDTO result = productService.updateProduct(1L, requestDTO)
+  ASSERT:
+    assertNotNull(result)
+    verify(productMapper, times(1)).updateFromDTO(requestDTO, product)
+
+  TEST 5 — shouldThrowWhenProductNotFoundOnUpdate
+  ────────────────────────────────────────────────
+  Escenario:   El id no corresponde a ningún producto existente.
+  ARRANGE:
+    when(productRepository.findById(99L)).thenReturn(Optional.empty())
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> productService.updateProduct(99L, requestDTO))
+
+  TEST 6 — shouldThrowWhenSkuBelongsToAnotherProduct
+  ────────────────────────────────────────────────────
+  Escenario:   El nuevo SKU ya existe y pertenece a un producto con id=2L.
+  ARRANGE:
+    Product otherProduct = Product(id=2L, sku="TOOL-001", ...)
+    when(productRepository.findById(1L)).thenReturn(Optional.of(product))
+    when(productRepository.findBySku("TOOL-001")).thenReturn(Optional.of(otherProduct))
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> productService.updateProduct(1L, requestDTO))
+
+
+  ── getLowStockProducts ──────────────────────────────────────────────────────
+
+  TEST 7 — shouldReturnLowStockProducts
+  ──────────────────────────────────────
+  Escenario:   Hay 2 productos con stock en nivel crítico.
+  ARRANGE:
+    when(productRepository.findLowStockProducts()).thenReturn(List.of(product, product2))
+    when(productMapper.toResponseDTOList(anyList())).thenReturn(List.of(responseDTO, responseDTO2))
+  ACT:
+    List<ProductResponseDTO> result = productService.getLowStockProducts()
+  ASSERT:
+    assertEquals(2, result.size())
+
+
+  ── registerStockMovement ────────────────────────────────────────────────────
+
+  Datos adicionales para estos tests:
+    StockMovementRequestDTO inRequest  → productId=1L, quantity=10, type="IN",  reason="Compra"
+    StockMovementRequestDTO outRequest → productId=1L, quantity=10, type="OUT", reason="Venta"
+    StockMovementRequestDTO badType    → productId=1L, quantity=10, type="ENTRADA"
+    StockMovementRequestDTO zeroQty    → productId=1L, quantity=0,  type="IN"
+    StockMovementRequestDTO bigOut     → productId=1L, quantity=100, type="OUT"
+
+  TEST 8 — shouldRegisterInMovementSuccessfully
+  ──────────────────────────────────────────────
+  Escenario:   Movimiento IN con stock suficiente. currentStock pasa de 50 a 60.
+  ARRANGE:
+    when(productRepository.findById(1L)).thenReturn(Optional.of(product))
+    when(productRepository.save(product)).thenReturn(product)
+  ACT:
+    productService.registerStockMovement(inRequest)
+  ASSERT:
+    assertEquals(60, product.getCurrentStock())
+    verify(stockMovementRepository, times(1)).save(any(StockMovement.class))
+
+  TEST 9 — shouldRegisterOutMovementSuccessfully
+  ───────────────────────────────────────────────
+  Escenario:   Movimiento OUT con stock suficiente. currentStock pasa de 50 a 40.
+  ARRANGE:
+    when(productRepository.findById(1L)).thenReturn(Optional.of(product))
+    when(productRepository.save(product)).thenReturn(product)
+  ACT:
+    productService.registerStockMovement(outRequest)
+  ASSERT:
+    assertEquals(40, product.getCurrentStock())
+    verify(stockMovementRepository, times(1)).save(any(StockMovement.class))
+
+  TEST 10 — shouldThrowWhenMovementTypeIsInvalid
+  ───────────────────────────────────────────────
+  Escenario:   El campo type contiene "ENTRADA" en lugar de "IN" o "OUT".
+  ARRANGE:
+    (no se necesita mock de repositorio — falla antes de consultar la BD)
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> productService.registerStockMovement(badType))
+    verify(productRepository, never()).findById(any())
+
+  TEST 11 — shouldThrowWhenQuantityIsZeroOrNegative
+  ───────────────────────────────────────────────────
+  Escenario:   La cantidad del movimiento es 0 (defensa en profundidad).
+  ARRANGE:
+    when(productRepository.findById(1L)).thenReturn(Optional.of(product))
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> productService.registerStockMovement(zeroQty))
+    verify(stockMovementRepository, never()).save(any())
+
+  TEST 12 — shouldThrowWhenInsufficientStockForOutMovement
+  ──────────────────────────────────────────────────────────
+  Escenario:   Movimiento OUT de 100 unidades con stock=50. Resultado sería negativo.
+  ARRANGE:
+    when(productRepository.findById(1L)).thenReturn(Optional.of(product))
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> productService.registerStockMovement(bigOut))
+    verify(productRepository, never()).save(any())
+
+
+  ── getBySku ─────────────────────────────────────────────────────────────────
+
+  TEST 13 — shouldReturnProductBySku
+  ───────────────────────────────────
+  Escenario:   Existe un producto con el SKU buscado.
+  ARRANGE:
+    when(productRepository.findBySku("TOOL-001")).thenReturn(Optional.of(product))
+    when(productMapper.toResponseDTO(product)).thenReturn(responseDTO)
+  ACT:
+    ProductResponseDTO result = productService.getBySku("TOOL-001")
+  ASSERT:
+    assertEquals("TOOL-001", result.getSku())
+
+  TEST 14 — shouldThrowWhenSkuNotFound
+  ─────────────────────────────────────
+  Escenario:   No existe ningún producto con el SKU buscado.
+  ARRANGE:
+    when(productRepository.findBySku("INEXISTENTE")).thenReturn(Optional.empty())
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> productService.getBySku("INEXISTENTE"))
+
+
+  ── getByCategoryId ───────────────────────────────────────────────────────────
+
+  TEST 15 — shouldReturnProductsByCategoryId
+  ───────────────────────────────────────────
+  Escenario:   La categoría existe y tiene 2 productos activos.
+  ARRANGE:
+    when(categoryRepository.existsById(1L)).thenReturn(true)
+    when(productRepository.findByCategoryIdAndActiveTrue(1L))
+        .thenReturn(List.of(product, product2))
+    when(productMapper.toResponseDTOList(anyList()))
+        .thenReturn(List.of(responseDTO, responseDTO2))
+  ACT:
+    List<ProductResponseDTO> result = productService.getByCategoryId(1L)
+  ASSERT:
+    assertEquals(2, result.size())
+
+  TEST 16 — shouldThrowWhenCategoryNotFoundOnGetByCategoryId
+  ───────────────────────────────────────────────────────────
+  Escenario:   El categoryId no corresponde a ninguna categoría.
+  ARRANGE:
+    when(categoryRepository.existsById(99L)).thenReturn(false)
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> productService.getByCategoryId(99L))
+
+
+  ── deactivateProduct ────────────────────────────────────────────────────────
+
+  TEST 17 — shouldDeactivateProductSuccessfully
+  ──────────────────────────────────────────────
+  Escenario:   El producto existe y está activo.
+  ARRANGE:
+    when(productRepository.findById(1L)).thenReturn(Optional.of(product))
+  ACT:
+    productService.deactivateProduct(1L)
+  ASSERT:
+    assertFalse(product.isActive())   ← setActive(false) fue aplicado
+
+  TEST 18 — shouldThrowWhenProductNotFoundOnDeactivate
+  ──────────────────────────────────────────────────────
+  Escenario:   El id no corresponde a ningún producto existente.
+  ARRANGE:
+    when(productRepository.findById(99L)).thenReturn(Optional.empty())
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> productService.deactivateProduct(99L))
+
+
+  ── getStockMovementsByProduct ────────────────────────────────────────────────
+
+  TEST 19 — shouldReturnStockMovementsForProduct
+  ────────────────────────────────────────────────
+  Escenario:   Producto existente con 3 movimientos registrados.
+  ARRANGE:
+    when(productRepository.findById(1L)).thenReturn(Optional.of(product))
+    when(stockMovementRepository.findByProductIdOrderByCreatedAtDesc(1L))
+        .thenReturn(List.of(mov1, mov2, mov3))
+    when(stockMovementMapper.toResponseDTOList(anyList()))
+        .thenReturn(List.of(movDTO1, movDTO2, movDTO3))
+  ACT:
+    List<StockMovementResponseDTO> result =
+        productService.getStockMovementsByProduct(1L)
+  ASSERT:
+    assertEquals(3, result.size())
+
+  TEST 20 — shouldThrowWhenProductNotFoundOnGetMovements
+  ────────────────────────────────────────────────────────
+  Escenario:   El productId no corresponde a ningún producto existente.
+  ARRANGE:
+    when(productRepository.findById(99L)).thenReturn(Optional.empty())
+  ACT + ASSERT:
+    assertThrows(RuntimeException.class,
+        () -> productService.getStockMovementsByProduct(99L))
+    verify(stockMovementRepository, never()).findByProductIdOrderByCreatedAtDesc(any())
+
+
+  Total tests ProductServiceImplTest:  20
+  ───────────────────────────────────────
+  createProduct                3  (happy path + SKU duplicado + categoría inexistente)
+  updateProduct                3  (happy path + no encontrado + SKU en uso)
+  getLowStockProducts          1  (happy path)
+  registerStockMovement        5  (IN + OUT + tipo inválido + qty=0 + stock insuficiente)
+  getBySku                     2  (happy path + no encontrado)
+  getByCategoryId              2  (happy path + categoría inexistente)
+  deactivateProduct            2  (happy path + no encontrado)
+  getStockMovementsByProduct   2  (happy path + producto inexistente)
+
+
+================================================================================
+  RESUMEN GENERAL
+================================================================================
+
+  Clase de test                Total   Casos cubiertos
+  ─────────────────────────    ─────   ────────────────────────────────────────
+  CategoryServiceImplTest        9     Happy paths + duplicados + no encontrado
+                                       + restricción de productos activos
+  ProductServiceImplTest        20     Happy paths + SKU duplicado + stock
+                                       insuficiente + tipo inválido + no encontrado
+  ───────────────────────────────────────────────────────────────────────────
+  TOTAL                         29
+
+================================================================================

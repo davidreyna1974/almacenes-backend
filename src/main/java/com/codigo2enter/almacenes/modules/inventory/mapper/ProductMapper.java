@@ -1,0 +1,143 @@
+package com.codigo2enter.almacenes.modules.inventory.mapper;
+
+import com.codigo2enter.almacenes.modules.inventory.dto.ProductRequestDTO;
+import com.codigo2enter.almacenes.modules.inventory.dto.ProductResponseDTO;
+import com.codigo2enter.almacenes.modules.inventory.model.Product;
+import org.mapstruct.Mapper;
+import org.mapstruct.Mapping;
+import org.mapstruct.MappingTarget;
+import org.mapstruct.Named;
+
+import java.util.List;
+
+/**
+ * Mapper MapStruct para la conversión entre Product y sus DTOs.
+ *
+ * El caso más relevante de este mapper es toResponseDTO: la entidad Product
+ * tiene una relación @ManyToOne con Category (objeto anidado), pero
+ * ProductResponseDTO expone esa relación aplanada en dos campos simples
+ * (categoryId, categoryName). Las anotaciones @Mapping con 'source' de
+ * múltiples niveles (category.id, category.name) le indican a MapStruct
+ * cómo navegar la relación y extraer los valores correctos.
+ */
+@Mapper(componentModel = "spring")
+public interface ProductMapper {
+
+    /**
+     * Convierte una entidad Product a su DTO de salida.
+     *
+     * Las instrucciones source = "category.id" y source = "category.name"
+     * le indican a MapStruct que navegue la relación LAZY de la entidad
+     * (product.getCategory().getId() y product.getCategory().getName())
+     * y deposite esos valores en los campos planos del DTO.
+     *
+     * Esto debe ejecutarse dentro de una transacción activa para que
+     * Hibernate pueda resolver el proxy LAZY de Category sin lanzar
+     * LazyInitializationException.
+     *
+     * @param product entidad persistida con su relación Category cargada
+     * @return ProductResponseDTO con categoryId y categoryName resueltos
+     */
+    /**
+     * Convierte una entidad Product a su DTO de salida.
+     *
+     * Campos mapeados automáticamente por nombre: sku, name, description, price,
+     * currentStock, minimumStock, status, active, createdAt, reservedStock, unitCost.
+     *
+     * availableStock no existe en la entidad — se calcula con el método
+     * @Named calcAvailableStock para que MapStruct lo genere en compilación.
+     * Criterio de éxito: availableStock = currentStock - reservedStock.
+     */
+    @Mapping(source = "category.id",        target = "categoryId")
+    @Mapping(source = "category.name",      target = "categoryName")
+    @Mapping(source = "supplier.id",          target = "supplierId")
+    @Mapping(source = "supplier.companyName", target = "supplierName")
+    @Mapping(source = "createdBy.id",       target = "createdById")
+    @Mapping(source = "createdBy.username", target = "createdByUsername")
+    @Mapping(source = "updatedBy.id",       target = "updatedById")
+    @Mapping(source = "updatedBy.username", target = "updatedByUsername")
+    @Mapping(source = ".",                  target = "availableStock",
+             qualifiedByName = "calcAvailableStock")
+    ProductResponseDTO toResponseDTO(Product product);
+
+    /**
+     * Calcula el stock disponible para nuevas ventas.
+     * Método default — MapStruct lo incluye en la clase generada ProductMapperImpl.
+     * El uso de @Named desacopla el cálculo del campo fuente,
+     * permitiendo acceder a múltiples campos del objeto Product.
+     */
+    @Named("calcAvailableStock")
+    default int calcAvailableStock(Product product) {
+        return product.getCurrentStock() - product.getReservedStock();
+    }
+
+    /**
+     * Convierte una lista de entidades Product a lista de ProductResponseDTO.
+     * MapStruct aplica toResponseDTO() a cada elemento automáticamente.
+     * Usado en los endpoints que devuelven colecciones (findAllActive, findLowStock, etc.).
+     *
+     * @param products lista de entidades recuperadas de la base de datos
+     * @return lista de DTOs lista para serializar como JSON array
+     */
+    List<ProductResponseDTO> toResponseDTOList(List<Product> products);
+
+    /**
+     * Convierte un ProductRequestDTO en una nueva entidad Product.
+     *
+     * Campos ignorados y motivo:
+     *   - id          : generado por PostgreSQL con IDENTITY
+     *   - active      : el servicio lo inicializa en true
+     *   - createdAt   : el servicio lo inicializa con @Builder.Default = LocalDateTime.now()
+     *   - category    : el servicio resuelve la entidad Category desde categoryId
+     *                   consultando CategoryRepository; no puede inferirse solo del ID
+     *   - categoryId  : es un campo del DTO sin campo equivalente en la entidad
+     *                   (la entidad tiene el objeto Category, no su ID como campo propio)
+     *
+     * @param dto datos del producto enviados por el cliente
+     * @return entidad Product lista para que el servicio complete category y persista
+     */
+    /**
+     * Convierte un ProductRequestDTO en una nueva entidad Product.
+     *
+     * Campos ignorados:
+     *   - id, active, createdAt, createdBy, updatedAt, updatedBy: gestionados por el sistema
+     *   - category, supplier: relaciones @ManyToOne resueltas por el servicio
+     *   - reservedStock: gestionado exclusivamente por SaleOrderServiceImpl
+     *   - version: gestionado por Hibernate (Optimistic Locking)
+     *
+     *   unitCost NO se ignora — el administrador puede enviarlo y actualizarlo.
+     *   Es un dato de negocio editable, a diferencia de los campos de auditoría.
+     */
+    @Mapping(target = "id",           ignore = true)
+    @Mapping(target = "active",       ignore = true)
+    @Mapping(target = "createdAt",    ignore = true)
+    @Mapping(target = "createdBy",    ignore = true)
+    @Mapping(target = "updatedAt",    ignore = true)
+    @Mapping(target = "updatedBy",    ignore = true)
+    @Mapping(target = "category",     ignore = true)
+    @Mapping(target = "supplier",     ignore = true)
+    @Mapping(target = "reservedStock", ignore = true)
+    @Mapping(target = "version",       ignore = true)
+    Product toEntity(ProductRequestDTO dto);
+
+    /**
+     * Actualiza una entidad Product existente con los datos del DTO.
+     * Mismo conjunto de ignores que toEntity por las mismas razones.
+     * El servicio resuelve y actualiza Category y Supplier si cambiaron.
+     *
+     * @param dto     datos nuevos enviados por el cliente
+     * @param product entidad existente recuperada de la base de datos
+     */
+    @Mapping(target = "id",           ignore = true)
+    @Mapping(target = "active",       ignore = true)
+    @Mapping(target = "createdAt",    ignore = true)
+    @Mapping(target = "createdBy",    ignore = true)
+    @Mapping(target = "updatedAt",    ignore = true)
+    @Mapping(target = "updatedBy",    ignore = true)
+    @Mapping(target = "category",     ignore = true)
+    @Mapping(target = "supplier",     ignore = true)
+    @Mapping(target = "reservedStock", ignore = true)
+    @Mapping(target = "version",       ignore = true)
+    @Mapping(target = "currentStock",  ignore = true)
+    void updateFromDTO(ProductRequestDTO dto, @MappingTarget Product product);
+}

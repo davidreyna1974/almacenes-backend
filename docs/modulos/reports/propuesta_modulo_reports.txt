@@ -1,0 +1,910 @@
+================================================================================
+  PROPUESTA DE IMPLEMENTACIÓN — MÓDULO REPORTS  (v2 — 2026-05-31)
+  Sistema de Gestión de Almacenes — Backend Spring Boot
+
+  v1 (2026-05-31): propuesta inicial
+  v2 (2026-05-31): corrección post-fix de unitCost NOT NULL; criterio ampliado
+                   de la memoria técnica para incluir ejecución de tests
+================================================================================
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ÍNDICE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  1.  Contexto y justificación
+  2.  Análisis de audiencias y necesidades
+  3.  Catálogo de reportes por audiencia
+  4.  Disponibilidad de datos en el schema actual
+  5.  Arquitectura técnica del módulo
+  6.  Especificación de endpoints y control de acceso RBAC
+  7.  Plan de implementación por fases
+  8.  Plan de tests
+  9.  Estructura de la memoria técnica
+  10. Riesgos conocidos antes de empezar
+  11. Criterios de éxito del módulo
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  1. CONTEXTO Y JUSTIFICACIÓN
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Módulos implementados hasta este punto:
+    - auth       → Autenticación, autorización, RBAC (4 roles)
+    - inventory  → Categorías, productos, movimientos de stock (Kardex)
+    - purchases  → Proveedores, órdenes de compra (PENDING→APPROVED→RECEIVED)
+    - sales      → Clientes, órdenes de venta (PENDING→APPROVED→DELIVERED)
+
+  El módulo `reports` es el siguiente paso natural porque:
+
+  a) La data necesaria ya existe en la base de datos y no requiere nuevas tablas.
+     El módulo sales capturó `unitCost` en cada `sale_order_detail` específicamente
+     para habilitar análisis financiero futuro. Ese futuro es `reports`.
+
+  b) Sin reportes, los datos de los módulos anteriores solo son consultables
+     registro por registro vía los endpoints de cada módulo. No existe una vista
+     agregada que permita tomar decisiones de negocio.
+
+  c) Un sistema de gestión de almacenes (WMS) sin reportes no cumple los
+     estándares mínimos de la industria. Los reportes son la capa de inteligencia
+     que convierte datos operativos en información para la toma de decisiones.
+
+  Problemática que resuelve:
+    - El dueño no puede saber si su negocio es rentable sin calcular manualmente
+      revenue y costos desde múltiples tablas.
+    - La dirección no puede identificar qué productos generan más valor ni cuáles
+      tienen baja rotación.
+    - El personal operativo no tiene una vista consolidada de lo que requiere
+      atención inmediata (stock bajo, órdenes pendientes).
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  2. ANÁLISIS DE AUDIENCIAS Y NECESIDADES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  La diferencia entre audiencias no es solo qué datos ver, sino qué pregunta
+  responden y con qué frecuencia los consultan.
+
+  ┌──────────────────┬─────────────────────────────────┬──────────────┬──────────────────┐
+  │ Audiencia        │ Pregunta central                │ Granularidad │ Frecuencia       │
+  ├──────────────────┼─────────────────────────────────┼──────────────┼──────────────────┤
+  │ Dueño            │ ¿Es rentable mi negocio?        │ Totales y %  │ Semanal/mensual  │
+  │ Alta dirección   │ ¿Qué productos/proveedores      │ Por categoría│ Diario/semanal   │
+  │                  │ rinden más?                     │ y proveedor  │                  │
+  │ Personal         │ ¿Qué necesita atención hoy?     │ Por producto │ Varias veces     │
+  │ operativo        │                                 │ individual   │ al día           │
+  └──────────────────┴─────────────────────────────────┴──────────────┴──────────────────┘
+
+  Roles del sistema que corresponden a cada audiencia:
+    - Dueño          → ROLE_ADMIN (visión completa de todos los reportes)
+    - Alta dirección → ROLE_ADMIN + ROLE_MANAGER
+    - Operativo      → ROLE_WAREHOUSEMAN + ROLE_SALES (reportes operativos)
+
+  Criterio de diseño aplicado:
+    Los reportes del dueño muestran totales y porcentajes. No necesita ver el
+    Kardex de un producto específico para tomar decisiones estratégicas.
+    El operativo necesita el Kardex y los alertas de stock, pero no la
+    rentabilidad global ni el análisis ABC. Esta separación evita sobrecargar
+    cada interfaz con información irrelevante para su rol.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  3. CATÁLOGO DE REPORTES POR AUDIENCIA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ── 3.1 DUEÑO — Visión estratégica ──────────────────────────────────────────
+
+  Reporte 1: Dashboard Ejecutivo
+    Pregunta: ¿Cómo está el negocio en este momento?
+    Datos fuente: SaleOrder(DELIVERED), SaleOrderDetail, Product
+    Campos de respuesta:
+      - totalRevenue        → SUM(sale_order_details.subtotal) de órdenes DELIVERED
+      - totalCogs           → SUM(sod.quantity × sod.unit_cost) de órdenes DELIVERED
+      - grossMargin         → totalRevenue − totalCogs
+      - grossMarginPct      → (grossMargin / totalRevenue) × 100
+      - inventoryValue      → SUM(current_stock × unit_cost) de productos activos
+      - pendingPurchaseOrders → COUNT de PurchaseOrders en PENDING o APPROVED
+      - pendingSaleOrders    → COUNT de SaleOrders en PENDING o APPROVED
+      - generatedAt         → timestamp del momento de cálculo
+    Parámetros opcionales: from, to (rango de fechas para revenue y COGS)
+    Acceso: ADMIN
+
+  Reporte 2: Valuación de Inventario
+    Pregunta: ¿Cuánto vale mi inventario actual en costo?
+    Datos fuente: Product, Category
+    Campos de respuesta:
+      - totalValue          → SUM total de todos los productos activos
+      - categories          → lista de:
+          categoryId, categoryName, productCount,
+          categoryValue (SUM del grupo), pct (% del total)
+      - generatedAt
+    Parámetros: ninguno (siempre refleja el estado actual del inventario)
+    Acceso: ADMIN, MANAGER
+
+  Reporte 3: Rentabilidad por Período
+    Pregunta: ¿Cuánto gané (o perdí) en un período?
+    Datos fuente: SaleOrder(DELIVERED), SaleOrderDetail
+    Campos de respuesta:
+      - from, to            → período consultado
+      - totalRevenue
+      - totalCogs
+      - grossMargin
+      - grossMarginPct
+      - deliveredOrderCount → número de órdenes entregadas en el período
+      - avgTicket           → totalRevenue / deliveredOrderCount
+      - generatedAt
+    Parámetros: from, to (obligatorios para este reporte)
+    Acceso: ADMIN, MANAGER
+
+  ── 3.2 ALTA DIRECCIÓN — Visión táctica ─────────────────────────────────────
+
+  Reporte 4: Top Productos
+    Pregunta: ¿Qué productos generan más valor?
+    Datos fuente: SaleOrderDetail + SaleOrder(DELIVERED) + Product + Category
+    Campos de respuesta (lista ordenada por totalRevenue DESC):
+      - rank
+      - productId, sku, name, categoryName
+      - totalQuantitySold   → SUM(quantity)
+      - totalRevenue        → SUM(subtotal)
+      - totalCogs           → SUM(quantity × unitCost) de órdenes DELIVERED
+      - grossMargin         → totalRevenue − totalCogs
+      - grossMarginPct
+    Parámetros: from, to (opcional), limit (default 10, max 50)
+    Acceso: ADMIN, MANAGER
+
+  Reporte 5: Análisis ABC
+    Pregunta: ¿Cuáles son mis productos más valiosos y cuáles tienen poco impacto?
+    Fundamento: Principio de Pareto aplicado a inventario.
+                Categoría A = 80% del revenue (típicamente 20% de los productos)
+                Categoría B = siguiente 15% del revenue
+                Categoría C = 5% restante del revenue
+    Datos fuente: SaleOrderDetail + SaleOrder(DELIVERED) + Product
+    Campos de respuesta (lista ordenada por totalRevenue DESC):
+      - classification      → "A", "B" o "C"
+      - productId, sku, name
+      - totalRevenue        → revenue generado por el producto en el período
+      - revenuePct          → % que representa del revenue total
+      - cumulativePct       → % acumulado (usado para determinar A/B/C)
+    Algoritmo:
+      1. Calcular totalRevenue por producto (solo DELIVERED)
+      2. Ordenar DESC
+      3. Calcular cumulativePct incremental
+      4. Asignar A si cumulativePct <= 80, B si <= 95, C el resto
+    Parámetros: from, to (opcional — default: último año)
+    Nota: requiere mínimo 3 productos con ventas para clasificación significativa
+    Acceso: ADMIN, MANAGER
+
+  Reporte 6: Rotación de Inventario
+    Pregunta: ¿Qué tan rápido se vende mi inventario?
+    Fundamento: Rotación alta = el inventario se renueva frecuentemente (positivo).
+                Rotación baja = el inventario está paralizado (capital inmovilizado).
+    Fórmula: Rotación = COGS del período / Valor actual del inventario a costo
+    Datos fuente: SaleOrderDetail(DELIVERED) + Product
+    Campos de respuesta (lista por producto):
+      - productId, sku, name, categoryName
+      - cogsInPeriod        → SUM(quantity × unitCost) de órdenes DELIVERED
+      - currentInventoryValue → currentStock × unitCost
+      - turnoverRate        → cogsInPeriod / currentInventoryValue
+                              (null si currentInventoryValue = 0, i.e. producto sin stock)
+      - interpretation      → "Alta" (>4), "Media" (1-4), "Baja" (<1), "Sin datos"
+    Parámetros: from, to (default: último año)
+    Acceso: ADMIN, MANAGER
+
+  Reporte 7: Análisis de Compras por Proveedor
+    Pregunta: ¿Cuánto compro a cada proveedor y qué tan activos son?
+    Datos fuente: PurchaseOrder(RECEIVED) + PurchaseOrderDetail + Supplier
+    Campos de respuesta (lista por proveedor):
+      - supplierId, supplierName, rfc
+      - orderCount          → número de órdenes recibidas en el período
+      - totalAmount         → SUM(totalAmount) de órdenes RECEIVED
+      - avgOrderAmount      → totalAmount / orderCount
+      - lastOrderDate       → fecha de la orden más reciente
+    Parámetros: from, to (opcional)
+    Acceso: ADMIN, MANAGER
+
+  Reporte 8: Tendencia de Ventas
+    Pregunta: ¿Cómo evolucionan mis ventas en el tiempo?
+    Datos fuente: SaleOrder(DELIVERED)
+    Campos de respuesta (lista de períodos):
+      - period              → valor del período (ej. "2025-01", "2025-W03", "2025-01-15")
+      - revenue             → SUM(totalAmount) de órdenes entregadas en el período
+      - orderCount          → número de órdenes entregadas
+      - avgTicket           → revenue / orderCount
+    Parámetros:
+      - from, to (obligatorios)
+      - groupBy: "DAY" | "WEEK" | "MONTH" (default: MONTH)
+    Nota técnica: el agrupamiento por período se implementa con FUNCTION('TO_CHAR', ...)
+                  en JPQL, específico del dialecto PostgreSQL.
+    Acceso: ADMIN, MANAGER
+
+  ── 3.3 PERSONAL OPERATIVO — Visión operativa ────────────────────────────────
+
+  Reporte 9: Productos Bajo Mínimo de Stock
+    Pregunta: ¿Qué productos necesito reabastecer hoy?
+    Datos fuente: Product + Category
+    Campos de respuesta (lista ordenada por déficit DESC):
+      - productId, sku, name, categoryName
+      - currentStock
+      - minimumStock
+      - availableStock      → currentStock − reservedStock
+      - reservedStock
+      - deficit             → minimumStock − currentStock (siempre >= 1 en este reporte)
+    Sin parámetros. Siempre refleja el estado actual.
+    Acceso: ADMIN, MANAGER, WAREHOUSEMAN
+
+  Reporte 10: Kardex por Producto
+    Pregunta: ¿Cuál es el historial de movimientos de este producto?
+    Diferencia con el endpoint existente GET /inventory/products/{id}/movements:
+      Este reporte incluye saldo acumulado por movimiento y resumen de apertura/cierre,
+      información que el endpoint de inventario no calcula.
+    Datos fuente: StockMovement + Product
+    Campos de respuesta:
+      - productId, sku, name
+      - from, to
+      - openingStock        → stock antes del primer movimiento del período
+                              (calculado como: stockActual − netMovements del período)
+      - closingStock        → currentStock actual
+      - totalIn             → SUM(quantity) de movimientos IN en el período
+      - totalOut            → SUM(quantity) de movimientos OUT en el período
+      - movements (lista):
+          date, type (IN/OUT), quantity, reason, balance (saldo acumulado),
+          createdByUsername
+    Parámetros: productId (path), from, to (opcional — default: último mes)
+    Acceso: ADMIN, MANAGER, WAREHOUSEMAN
+
+  Reporte 11: Operaciones Pendientes
+    Pregunta: ¿Qué órdenes requieren acción ahora mismo?
+    Datos fuente: PurchaseOrder(PENDING/APPROVED) + SaleOrder(PENDING/APPROVED)
+    Campos de respuesta:
+      - pendingPurchaseOrders (lista):
+          orderId, orderNumber, status, supplierName,
+          createdAt, totalAmount, detailCount
+      - pendingSaleOrders (lista):
+          orderId, orderNumber, status, clientName,
+          createdAt, totalAmount, detailCount
+      - summary:
+          totalPendingPurchases, totalPendingSales
+    Sin parámetros. Siempre refleja el estado actual.
+    Acceso: ADMIN, MANAGER, WAREHOUSEMAN, SALES
+
+  Reporte 12: Resumen de Movimientos de Stock
+    Pregunta: ¿Cuántas unidades entraron y salieron en un período?
+    Datos fuente: StockMovement + Product + Category
+    Campos de respuesta:
+      - from, to
+      - totalIn             → SUM(quantity) de movimientos IN
+      - totalOut            → SUM(quantity) de movimientos OUT
+      - netMovement         → totalIn − totalOut
+      - movementsByType (lista agrupada):
+          type, reason (agrupado por razón), count, totalQuantity
+    Parámetros: from, to (default: hoy)
+    Acceso: ADMIN, MANAGER, WAREHOUSEMAN
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  4. DISPONIBILIDAD DE DATOS EN EL SCHEMA ACTUAL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Toda la información necesaria existe en tablas actuales. No se requieren
+  nuevas tablas para ninguno de los 12 reportes.
+
+  Cálculos y su origen:
+
+    Revenue total:
+      SELECT SUM(sod.subtotal)
+      FROM sale_order_details sod
+      JOIN sale_orders so ON sod.sale_order_id = so.id
+      WHERE so.status = 'DELIVERED'
+        AND so.delivered_at BETWEEN :from AND :to
+
+    COGS (Costo de Ventas):
+      SELECT SUM(sod.quantity * sod.unit_cost)
+      FROM sale_order_details sod
+      JOIN sale_orders so ON sod.sale_order_id = so.id
+      WHERE so.status = 'DELIVERED'
+        AND so.delivered_at BETWEEN :from AND :to
+
+    Valuación de inventario:
+      SELECT SUM(p.current_stock * p.unit_cost)
+      FROM products p
+      WHERE p.active = true
+
+    Margen bruto:
+      Revenue − COGS (cálculo en Java, no en SQL)
+
+    Rotación:
+      COGS del período / SUM(current_stock * unit_cost)
+
+  Integridad de datos garantizada (corrección pre-desarrollo):
+    Antes de iniciar la implementación del módulo reports, `unit_cost` fue
+    declarado NOT NULL en `products` y `sale_order_details` (ALTER TABLE +
+    @NotNull en ProductRequestDTO). No existe riesgo de COGS incompleto —
+    todo producto activo tiene costo y todo detalle de venta tiene unitCost.
+    Esta corrección eliminó la necesidad de cogsCompleteness y simplificó
+    todas las queries de agregación.
+
+  Campos relevantes confirmados en entidades:
+    Product:          price, unitCost (NOT NULL), currentStock, minimumStock,
+                      reservedStock, active, @ManyToOne Category
+    SaleOrderDetail:  quantity, unitPrice, unitCost (NOT NULL), subtotal,
+                      @ManyToOne Product, @ManyToOne SaleOrder
+    SaleOrder:        totalAmount, status, createdAt, deliveredAt, cancelledAt,
+                      @ManyToOne Client, @OneToMany details
+    StockMovement:    quantity, type (IN/OUT), reason, createdAt,
+                      @ManyToOne Product, @ManyToOne createdBy
+    PurchaseOrder:    totalAmount, status, createdAt, receivedAt,
+                      @ManyToOne Supplier
+    PurchaseOrderDetail: quantity, unitPrice, subtotal, @ManyToOne Product
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  5. ARQUITECTURA TÉCNICA DEL MÓDULO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Estructura de paquetes:
+
+    modules/reports/
+    ├── controller/
+    │   └── ReportController.java
+    ├── dto/
+    │   ├── executive/
+    │   │   ├── ExecutiveDashboardDTO.java
+    │   │   ├── InventoryValuationDTO.java
+    │   │   ├── InventoryValuationCategoryDTO.java
+    │   │   └── SalesProfitabilityDTO.java
+    │   ├── management/
+    │   │   ├── TopProductDTO.java
+    │   │   ├── AbcProductDTO.java
+    │   │   ├── InventoryTurnoverItemDTO.java
+    │   │   ├── PurchaseBySupplierDTO.java
+    │   │   └── SalesTrendItemDTO.java
+    │   └── operational/
+    │       ├── LowStockReportItemDTO.java
+    │       ├── KardexItemDTO.java
+    │       ├── KardexReportDTO.java
+    │       ├── PendingOperationsDTO.java
+    │       ├── PendingOrderSummaryDTO.java
+    │       └── MovementsSummaryDTO.java
+    └── service/
+        ├── ExecutiveReportService.java
+        ├── ExecutiveReportServiceImpl.java
+        ├── ManagementReportService.java
+        ├── ManagementReportServiceImpl.java
+        ├── OperationalReportService.java
+        └── OperationalReportServiceImpl.java
+
+  Total: 1 controller + 12 DTOs + 3 interfaces + 3 implementaciones = 19 clases
+
+  Decisiones de diseño:
+
+  a) Sin model/, mapper/ ni repository/ propios.
+     El módulo reports consume los repositorios de otros módulos directamente
+     (patrón de módulo de solo lectura). No persiste, no transforma entidades:
+     solo agrega y proyecta datos existentes.
+
+  b) 3 servicios separados por audiencia, no 1 servicio monolítico.
+     Criterio: cada servicio tiene dependencias de repositorios distintas y una
+     audiencia con responsabilidad bien definida. Un único servicio con los 12
+     métodos tendría 7+ repositorios inyectados y 800+ líneas. La separación
+     respeta el principio de responsabilidad única (SRP).
+
+  c) Sin mappers MapStruct.
+     Los DTOs de reportes son vistas agregadas construidas desde múltiples entidades
+     y cálculos en Java. MapStruct opera sobre conversiones 1-a-1 de entidad→DTO.
+     Las proyecciones de reportes (con SUM, GROUP BY, cálculos de ABC) se
+     construyen directamente en el servicio. Patrón ya establecido en
+     ReservationServiceImpl del módulo sales.
+
+  d) Todos los métodos de servicio con @Transactional(readOnly = true).
+     El módulo no escribe ningún dato. readOnly = true le comunica a Hibernate
+     que puede omitir el flush y optimizar la sesión de lectura.
+
+  e) Parámetros de fecha como LocalDate, no LocalDateTime.
+     Los reportes filtran por día completo. El servicio convierte:
+       from → from.atStartOfDay()
+       to   → to.plusDays(1).atStartOfDay() (exclusive)
+     Esto evita que ventas a las 23:59 del día final queden excluidas.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  6. ESPECIFICACIÓN DE ENDPOINTS Y CONTROL DE ACCESO RBAC
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Todos los endpoints son GET. Base: /api/v1/reports
+
+  ┌─────────────────────────────────────────────────────┬──────────┬──────────────────────────────┐
+  │ Endpoint                                            │ HTTP     │ Acceso (roles)               │
+  ├─────────────────────────────────────────────────────┼──────────┼──────────────────────────────┤
+  │ /dashboard/executive                                │ GET      │ ADMIN                        │
+  │ /inventory/valuation                                │ GET      │ ADMIN, MANAGER               │
+  │ /sales/profitability                                │ GET      │ ADMIN, MANAGER               │
+  │ /products/top-performers                            │ GET      │ ADMIN, MANAGER               │
+  │ /inventory/abc                                      │ GET      │ ADMIN, MANAGER               │
+  │ /inventory/turnover                                 │ GET      │ ADMIN, MANAGER               │
+  │ /purchases/by-supplier                              │ GET      │ ADMIN, MANAGER               │
+  │ /sales/trend                                        │ GET      │ ADMIN, MANAGER               │
+  │ /inventory/low-stock                                │ GET      │ ADMIN, MANAGER, WAREHOUSEMAN │
+  │ /inventory/kardex/{productId}                       │ GET      │ ADMIN, MANAGER, WAREHOUSEMAN │
+  │ /operations/pending                                 │ GET      │ ADMIN, MANAGER, WAREHOUSEMAN,│
+  │                                                     │          │ SALES                        │
+  │ /inventory/movements                                │ GET      │ ADMIN, MANAGER, WAREHOUSEMAN │
+  └─────────────────────────────────────────────────────┴──────────┴──────────────────────────────┘
+
+  Parámetros de fecha (query params, formato ISO 8601: YYYY-MM-DD):
+    - from  (opcional según reporte — ver catálogo sección 3)
+    - to    (opcional según reporte — ver catálogo sección 3)
+
+  Parámetros adicionales:
+    - /products/top-performers : limit (int, default 10, max 50)
+    - /sales/trend             : groupBy (DAY | WEEK | MONTH, default MONTH)
+    - /inventory/kardex/{id}   : from, to (default: último mes)
+
+  Justificación del acceso diferenciado:
+    - /dashboard/executive solo ADMIN: contiene márgenes y rentabilidad global,
+      información que en una empresa el dueño puede no querer compartir con MANAGER.
+    - /operations/pending para SALES: el vendedor necesita ver el estado de las
+      órdenes de venta pendientes para dar seguimiento a sus clientes.
+    - Kardex y movimientos NO para SALES: información de inventario interno que
+      no es relevante para la función comercial.
+
+  Reglas a agregar en SecurityConfig.java (Fase 4):
+    .requestMatchers(HttpMethod.GET, "/api/v1/reports/dashboard/**")
+        .hasRole("ADMIN")
+    .requestMatchers(HttpMethod.GET, "/api/v1/reports/inventory/low-stock")
+        .hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN")
+    .requestMatchers(HttpMethod.GET, "/api/v1/reports/inventory/kardex/**")
+        .hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN")
+    .requestMatchers(HttpMethod.GET, "/api/v1/reports/operations/**")
+        .hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN","SALES")
+    .requestMatchers(HttpMethod.GET, "/api/v1/reports/inventory/**")
+        .hasAnyRole("ADMIN","MANAGER","WAREHOUSEMAN")
+    .requestMatchers(HttpMethod.GET, "/api/v1/reports/**")
+        .hasAnyRole("ADMIN","MANAGER")
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  7. PLAN DE IMPLEMENTACIÓN POR FASES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Fase 0 — Preparación y memoria técnica inicial
+  ──────────────────────────────────────────────
+  Acciones:
+    - Crear branch feature/reports desde develop
+    - Crear memoria_tecnica_modulo_reports.md con estructura completa
+    - Documentar en la memoria técnica: contexto, justificación,
+      audiencias, catálogo de reportes, disponibilidad de datos
+    - Verificar que no se requieren nuevas columnas (confirmado — sin ALTER TABLE)
+    - Documentar la corrección previa: unitCost NOT NULL en products y sale_order_details
+  Entregable: memoria técnica con secciones 1-4 pobladas, branch lista
+
+  Fase 1 — DTOs de respuesta (12 DTOs, sin lógica)
+  ─────────────────────────────────────────────────
+  Acciones:
+    - Crear los 3 subdirectorios: executive/, management/, operational/
+    - Implementar los 12 DTOs con @Builder, campos correctamente tipados
+    - Tipos a usar:
+        BigDecimal para montos y porcentajes (nunca double — precisión financiera)
+        Integer para conteos de stock y cantidades
+        Long para IDs
+        LocalDate / LocalDateTime para fechas
+        String para clasificaciones (A/B/C) y períodos formateados
+    - DTOs de respuesta sin validaciones Jakarta (son solo de salida)
+  Entregable: 12 DTOs compilando, sin lógica de negocio
+  Actualizar memoria técnica: sección de DTOs con justificación de tipos
+
+  Fase 2 — Queries JPQL en repositorios existentes
+  ─────────────────────────────────────────────────
+  Repositorios a modificar:
+
+  SaleOrderDetailRepository (nuevos métodos):
+    - sumRevenue(from, to)           → BigDecimal
+    - sumCogs(from, to)              → BigDecimal
+    - revenueByProduct(from, to)     → List<Object[]> (productId, revenue)
+                                       para ABC y Top Products
+    - cogsByProduct(from, to)        → List<Object[]> (productId, cogs)
+    - quantitySoldByProduct(from, to)→ List<Object[]> (productId, qty)
+
+  ProductRepository (nuevos métodos):
+    - inventoryValueByCategory()     → List<Object[]> (categoryId, categoryName,
+                                       productCount, totalValue)
+    - totalInventoryValue()          → BigDecimal
+
+  StockMovementRepository (nuevos métodos):
+    - findByProductAndPeriod(productId, from, to) → List<StockMovement>
+    - sumInByPeriod(from, to)        → Integer
+    - sumOutByPeriod(from, to)       → Integer
+    - countByTypeAndPeriod(from, to) → List<Object[]>
+
+  PurchaseOrderRepository (nuevos métodos):
+    - countByStatusIn(statuses)      → Long
+    - totalsBySupplier(from, to)     → List<Object[]>
+
+  SaleOrderRepository (nuevos métodos):
+    - countByStatusIn(statuses)      → Long
+    - revenueByPeriod(from, to, groupBy) → List<Object[]>
+
+  Nota técnica — agrupamiento por período:
+    JPQL no tiene funciones de formato de fecha estándar. Para groupBy=MONTH
+    se usará FUNCTION('TO_CHAR', so.deliveredAt, 'YYYY-MM') específico de
+    PostgreSQL. Para DAY: 'YYYY-MM-DD'. Para WEEK: 'IYYY-IW'.
+    Esto se documentará en la memoria técnica como dependencia del dialecto.
+
+  Entregable: queries JPQL probadas (via @DataJpaTest en Fase 5)
+  Actualizar memoria técnica: sección de queries con SQL equivalente y
+  justificación de cada decisión técnica
+
+  Fase 3 — Servicios con lógica de negocio
+  ─────────────────────────────────────────
+  ExecutiveReportServiceImpl:
+    Dependencias: SaleOrderDetailRepository, ProductRepository,
+                  PurchaseOrderRepository, SaleOrderRepository
+    Métodos:
+      - getExecutiveDashboard(from, to)   → ExecutiveDashboardDTO
+      - getInventoryValuation()           → InventoryValuationDTO
+      - getSalesProfitability(from, to)   → SalesProfitabilityDTO
+
+  ManagementReportServiceImpl:
+    Dependencias: SaleOrderDetailRepository, ProductRepository,
+                  PurchaseOrderRepository, SaleOrderRepository
+    Métodos:
+      - getTopProducts(from, to, limit)   → List<TopProductDTO>
+      - getAbcAnalysis(from, to)          → List<AbcProductDTO>
+      - getInventoryTurnover(from, to)    → List<InventoryTurnoverItemDTO>
+      - getPurchasesBySupplier(from, to)  → List<PurchaseBySupplierDTO>
+      - getSalesTrend(from, to, groupBy)  → List<SalesTrendItemDTO>
+
+  OperationalReportServiceImpl:
+    Dependencias: ProductRepository, StockMovementRepository,
+                  PurchaseOrderRepository, SaleOrderRepository
+    Métodos:
+      - getLowStock()                     → List<LowStockReportItemDTO>
+      - getKardex(productId, from, to)    → KardexReportDTO
+      - getPendingOperations()            → PendingOperationsDTO
+      - getMovementsSummary(from, to)     → MovementsSummaryDTO
+
+  Lógica de negocio no trivial que va en el servicio (no en JPQL):
+
+  Algoritmo ABC:
+    1. Obtener revenueByProduct(from, to) desde repositorio
+    2. Calcular totalRevenue = SUM de todos
+    3. Ordenar productos por revenue DESC
+    4. Iterar acumulando cumulativePct:
+       cumulativePct += (productRevenue / totalRevenue) * 100
+    5. Asignar: A si cumulativePct <= 80, B si <= 95, C resto
+    6. Caso edge: si hay menos de 3 productos con ventas, devolver lista
+       con clasificación best-effort y advertencia en el DTO
+
+  Saldo acumulado del Kardex:
+    El Kardex requiere mostrar el saldo después de cada movimiento.
+    Este saldo no está almacenado — se calcula iterando los movimientos
+    en orden cronológico y aplicando: saldo = anterior + IN - OUT
+    El "saldo de apertura" se calcula como:
+    openingStock = currentStock − SUM(IN en período) + SUM(OUT en período)
+    (trabaja hacia atrás desde el estado actual)
+
+  Entregable: 3 servicios con lógica completa
+  Actualizar memoria técnica: sección de algoritmos no triviales
+
+  Fase 4 — Controlador y actualización de SecurityConfig
+  ───────────────────────────────────────────────────────
+  ReportController:
+    - @RestController, @RequestMapping("/api/v1/reports")
+    - @RequiredArgsConstructor con los 3 servicios inyectados
+    - 12 métodos GET, cada uno delega al servicio correspondiente
+    - Parámetros de fecha como @RequestParam LocalDate (Spring los convierte)
+    - Sin lógica de negocio — delegación pura
+
+  SecurityConfig.java:
+    - Agregar 6 reglas para /api/v1/reports/** (ver sección 6)
+    - Las reglas de reports van ANTES de .anyRequest().authenticated()
+    - El orden importa: la regla más específica (/dashboard/**) va primero
+
+  Entregable: 12 endpoints operativos
+  Actualizar memoria técnica: sección de endpoints y RBAC
+
+  Fase 5 — Tests
+  ──────────────
+  Ver sección 8 para detalle completo.
+  Entregable: suite de tests sin regresiones, cobertura >= 70%
+  Actualizar memoria técnica: sección de plan de tests y resultados
+
+  Fase 6 — Memoria técnica completa y cierre
+  ───────────────────────────────────────────
+  Acciones:
+    - Completar todas las secciones de la memoria técnica
+    - Documentar bugs encontrados durante el desarrollo (sección viva)
+    - Documentar estándares y buenas prácticas aplicadas
+    - Validación E2E con curl (12 endpoints × escenarios básicos)
+    - Actualizar CLAUDE.md con estándares del módulo reports
+    - Merge a develop
+  Entregable: memoria técnica final + CLAUDE.md actualizado + branch mergeada
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  8. PLAN DE TESTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Taxonomía aplicada (misma que el resto del proyecto):
+    Tipo A  → @ExtendWith(MockitoExtension.class) — lógica de negocio
+    Tipo B  → @WebMvcTest + addFilters=false — HTTP, parámetros, JSON
+    Tipo D  → @DataJpaTest + replace=NONE — queries JPQL con PostgreSQL real
+
+  ┌────────────────────────────────────────┬──────┬──────────┬──────────────────────────────┐
+  │ Clase de test                          │ Tipo │ Tests    │ Qué cubre                    │
+  │                                        │      │ estim.   │                              │
+  ├────────────────────────────────────────┼──────┼──────────┼──────────────────────────────┤
+  │ ExecutiveReportServiceImplTest         │ A    │ ~10      │ Dashboard KPIs, valuación,   │
+  │                                        │      │          │ rentabilidad; mocks de repos │
+  │                                        │      │          │ con y sin datos; período sin │
+  │                                        │      │          │ ventas → revenue = 0         │
+  ├────────────────────────────────────────┼──────┼──────────┼──────────────────────────────┤
+  │ ManagementReportServiceImplTest        │ A    │ ~15      │ ABC (< 3 productos, todos A),│
+  │                                        │      │          │ turnover (inventario en 0),  │
+  │                                        │      │          │ top products (período sin    │
+  │                                        │      │          │ ventas), tendencia groupBy   │
+  ├────────────────────────────────────────┼──────┼──────────┼──────────────────────────────┤
+  │ OperationalReportServiceImplTest       │ A    │ ~12      │ Kardex (saldo acumulado),    │
+  │                                        │      │          │ low stock (ninguno / varios),│
+  │                                        │      │          │ pendientes (listas vacías),  │
+  │                                        │      │          │ movimientos sin datos         │
+  ├────────────────────────────────────────┼──────┼──────────┼──────────────────────────────┤
+  │ ReportControllerTest                   │ B    │ ~14      │ HTTP 200 por endpoint,       │
+  │                                        │      │          │ parámetros de fecha válidos  │
+  │                                        │      │          │ e inválidos, serialización   │
+  │                                        │      │          │ JSON de BigDecimal, acceso   │
+  │                                        │      │          │ denegado simulado (403)      │
+  ├────────────────────────────────────────┼──────┼──────────┼──────────────────────────────┤
+  │ ReportRepositoryTest                   │ D    │ ~8       │ sumRevenue, sumCogs,         │
+  │                                        │      │          │ inventoryValueByCategory,    │
+  │                                        │      │          │ revenueByPeriod con groupBy  │
+  │                                        │      │          │ MONTH contra PostgreSQL real │
+  └────────────────────────────────────────┴──────┴──────────┴──────────────────────────────┘
+
+  Total estimado: ~59 tests nuevos
+  Suite total proyectada: 292 (actual) + 59 = ~351 tests
+
+  Casos edge que deben cubrirse obligatoriamente:
+    - Período sin ventas → revenue = 0, COGS = 0, margin = 0 (no NullPointerException)
+    - Stock en cero para todos los productos → inventoryValue = 0, turnover = null
+    - ABC con un solo producto → clasificación A al 100%
+    - Kardex sin movimientos en el período → lista vacía, openingStock = closingStock
+    - Pendientes: ninguna orden pendiente → listas vacías, totales = 0
+    - División por cero en porcentajes → null o 0 según la semántica del campo
+
+  Regla heredada del proyecto (dirty-checking vs save):
+    Los servicios de reports nunca llaman save(). No aplica el patrón
+    verify(repository).save(). Todas las verificaciones son sobre el valor
+    retornado por el método del servicio.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  9. ESTRUCTURA DE LA MEMORIA TÉCNICA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Archivo: memoria_tecnica_modulo_reports.md
+  Ubicación: raíz del proyecto (junto a CLAUDE.md)
+  Naturaleza: documento vivo — se actualiza al finalizar cada fase
+
+  La memoria técnica está orientada a cualquier desarrollador externo que
+  necesite entender el trabajo ejecutado. Incluye no solo qué se hizo, sino
+  por qué, qué problemas se encontraron, qué criterios guiaron las decisiones
+  y cómo verificar que el módulo funciona correctamente.
+
+  Secciones del documento:
+
+  ── Sección 1: Contexto y justificación ──────────────────
+    Contenido:
+      - Problemática que resuelve el módulo
+      - Por qué en este momento del proyecto (datos ya disponibles)
+      - Usuarios beneficiados y su necesidad específica
+      - Relación con los módulos anteriores (inventory, purchases, sales)
+    Se llena en: Fase 0
+
+  ── Sección 2: Decisiones de diseño ──────────────────────
+    Contenido:
+      - Por qué 3 servicios y no 1 (criterio de cohesión, SRP)
+      - Por qué no nuevas tablas (módulo de solo lectura)
+      - Por qué no mappers MapStruct (proyecciones agregadas vs conversión 1-a-1)
+      - Por qué BigDecimal y no double para montos
+      - Por qué LocalDate y no LocalDateTime en parámetros
+      - Criterio de selección de los 12 reportes (por qué estos y no otros)
+      - Por qué los reportes del dueño son solo para ADMIN
+    Se llena en: Fase 0 y 1
+
+  ── Sección 3: Especificación de reportes ─────────────────
+    Contenido (por cada uno de los 12 reportes):
+      - Audiencia objetivo
+      - Pregunta de negocio que responde
+      - Fuente de datos (tablas/entidades)
+      - Fórmula de cálculo
+      - Descripción de cada campo del DTO de respuesta
+      - Endpoint y parámetros
+      - Criterio de éxito: qué condiciones deben cumplirse
+      - Casos edge y comportamiento esperado
+      - Limitaciones conocidas
+    Se llena en: Fase 1
+
+  ── Sección 4: Queries JPQL ────────────────────────────────
+    Contenido (por cada query añadida a repositorios):
+      - Repositorio y nombre del método
+      - JPQL con anotación @Query
+      - SQL equivalente (para legibilidad)
+      - Justificación: por qué JPQL y no @NativeQuery
+      - Dependencias de dialecto (funciones PostgreSQL-específicas)
+      - Resultado esperado con datos de ejemplo
+      - Qué test de tipo D lo verifica
+    Se llena en: Fase 2
+
+  ── Sección 5: Algoritmos no triviales ────────────────────
+    Contenido:
+      - Algoritmo ABC paso a paso con pseudocódigo
+      - Cálculo de saldo acumulado en Kardex
+      - Cálculo de openingStock (hacia atrás desde estado actual)
+      - Conversión de fechas LocalDate → LocalDateTime en el servicio
+      - Agrupamiento de tendencias (DAY/WEEK/MONTH) con TO_CHAR
+      - Manejo de división por cero en porcentajes (margin%, pct, turnover)
+    Se llena en: Fase 3
+
+  ── Sección 6: RBAC — Criterio de acceso por rol ──────────
+    Contenido:
+      - Matriz completa: endpoint × rol → permitido/denegado
+      - Justificación de cada decisión de acceso
+      - Reglas exactas añadidas a SecurityConfig.java
+      - Orden de las reglas y por qué importa
+    Se llena en: Fase 4
+
+  ── Sección 7: Ejecución de tests y resultados ────────────
+    Contenido:
+      - Taxonomía aplicada (A, B, D) y justificación de por qué no Tipo C
+        para reports (módulo de solo lectura, sin estado que verificar en BD)
+
+      - Por cada clase de test ejecutada:
+          Nombre de la clase
+          Comando: ./mvnw test -Dtest=NombreClase
+          Resultado: Tests run: X, Failures: 0, Errors: 0 — BUILD SUCCESS
+          Si hubo fallos: síntoma exacto, causa raíz, corrección aplicada
+
+      - Resultado consolidado de la suite completa:
+          Comando: ./mvnw test
+          Salida: Tests run: X, Failures: 0, Errors: 0 — BUILD SUCCESS
+          Comparativa: X tests antes del módulo reports (292) → X tests después
+
+      - Cobertura JaCoCo del módulo reports:
+          Comando: ./mvnw verify
+          Salida de líneas: X% (X covered / Y total)
+          Salida de métodos: X%
+          Salida de ramas: X%
+          Referencia al reporte HTML: target/site/jacoco/index.html
+          Nota: si algún paquete no alcanza el umbral del 70%, documentar
+          la excepción y su justificación (ej. DTOs sin lógica)
+
+      - Validación E2E con curl (por cada endpoint):
+          Comando curl ejecutado
+          Código HTTP recibido vs esperado
+          Campos del response verificados (revenue, cogs, grossMargin, etc.)
+          Resultado: X/12 endpoints — 0 fallos
+
+      - Regresiones en módulos anteriores:
+          Suite completa pre-reports: 292/292 — BUILD SUCCESS
+          Suite completa post-reports: X/X — BUILD SUCCESS
+          Diferencia: +X tests, 0 fallos nuevos
+    Se llena en: Fase 5
+
+  ── Sección 8: Bugs y retos durante el desarrollo ─────────
+    Contenido (sección viva — se llena conforme aparecen):
+      - Por cada bug o reto:
+          Síntoma observado
+          Causa raíz identificada
+          Por qué los tests automáticos no lo detectaron (si aplica)
+          Corrección aplicada
+          Lección para futuros módulos
+    Se llena en: Fases 2-5 (conforme aparecen)
+
+  ── Sección 9: Estándares y buenas prácticas aplicadas ────
+    Contenido:
+      - @Transactional(readOnly=true) en todos los métodos del servicio
+      - BigDecimal para cálculos financieros (nunca float/double)
+      - Validación de rango de fechas en el servicio (from <= to)
+      - Manejo de división por cero: retornar null cuando el denominador es 0
+        (grossMarginPct, turnoverRate, pct en ABC) — documentar semántica en DTO
+      - unitCost garantizado NOT NULL: no se requieren filtros IS NOT NULL
+        en ninguna query de COGS (corrección realizada antes del módulo)
+      - Tests de casos edge obligatorios (período sin datos, stock en cero)
+      - Parámetros de fecha como LocalDate con conversión a LocalDateTime
+        en el servicio (from.atStartOfDay(), to.plusDays(1).atStartOfDay())
+    Se llena en: Fase 6
+
+  ── Sección 10: Cumplimiento y validación ─────────────────
+    Contenido:
+      - Suite de tests: X/X — BUILD SUCCESS
+      - Cobertura JaCoCo líneas / métodos / ramas
+      - Validación E2E (curl): X/12 endpoints verificados
+      - Checklist de criterios de éxito del módulo (ver sección 11)
+    Se llena en: Fase 6
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  10. RIESGOS CONOCIDOS ANTES DE EMPEZAR
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ┌─────────────────────────────────────────┬─────────────┬──────────────────────────────────┐
+  │ Riesgo                                  │ Probabilidad│ Mitigación                       │
+  ├─────────────────────────────────────────┼─────────────┼──────────────────────────────────┤
+  │ [RESUELTO] unitCost null en ventas      │ ~~Alta~~    │ ALTER TABLE products/            │
+  │ (captura progresiva del módulo sales)   │ → N/A       │ sale_order_details SET NOT NULL  │
+  │                                         │             │ ejecutado antes de iniciar el     │
+  │                                         │             │ módulo. No se requiere ningún     │
+  │                                         │             │ filtro IS NOT NULL en las queries.│
+  ├─────────────────────────────────────────┼─────────────┼──────────────────────────────────┤
+  │ Queries de agregación lentas con        │ Media       │ Documentar en memoria técnica.   │
+  │ volumen alto de datos                   │             │ Agregar índices en created_at,   │
+  │                                         │             │ status, product_id si es         │
+  │                                         │             │ necesario. Paginación futura.    │
+  ├─────────────────────────────────────────┼─────────────┼──────────────────────────────────┤
+  │ ABC con pocos productos o sin ventas    │ Media       │ Mínimo 1 producto para ejecutar. │
+  │ en el período                           │             │ Con < 3 productos devolver        │
+  │                                         │             │ resultados best-effort sin error. │
+  ├─────────────────────────────────────────┼─────────────┼──────────────────────────────────┤
+  │ División por cero en cálculos de        │ Media       │ Validar denominadores antes de   │
+  │ porcentajes (revenue = 0, stock = 0)    │             │ dividir. Retornar null o 0 según  │
+  │                                         │             │ semántica del campo.             │
+  ├─────────────────────────────────────────┼─────────────┼──────────────────────────────────┤
+  │ FUNCTION('TO_CHAR', ...) en JPQL        │ Baja        │ Verificar con @DataJpaTest        │
+  │ puede no funcionar en todos los         │             │ (replace=NONE) contra PostgreSQL  │
+  │ dialectos de Hibernate                  │             │ real en Fase 5. Si falla,         │
+  │                                         │             │ cambiar a @NativeQuery.           │
+  ├─────────────────────────────────────────┼─────────────┼──────────────────────────────────┤
+  │ SaleOrderDetail no tiene referencia     │ Baja        │ JOIN obligatorio con SaleOrder   │
+  │ directa al status de la orden padre     │             │ en todas las queries que filtren  │
+  │                                         │             │ por DELIVERED.                   │
+  └─────────────────────────────────────────┴─────────────┴──────────────────────────────────┘
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  11. CRITERIOS DE ÉXITO DEL MÓDULO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  El módulo reports se considera completado cuando:
+
+  Funcionalidad:
+    [ ] Los 12 endpoints responden HTTP 200 con datos coherentes
+    [ ] El dashboard ejecutivo muestra revenue, COGS y margen calculados
+        correctamente a partir de las órdenes DELIVERED
+    [ ] La valuación de inventario coincide con la suma manual de
+        (currentStock × unitCost) por producto activo
+    [ ] El análisis ABC clasifica productos según la distribución de Pareto
+    [ ] El Kardex muestra saldo acumulado correcto en cada movimiento
+    [ ] Los reportes de pendientes reflejan el estado real de la BD
+    [ ] COGS y margen calculados sin filtros especiales (unitCost garantizado NOT NULL)
+
+  Seguridad:
+    [ ] ADMIN accede a los 12 reportes
+    [ ] MANAGER accede a 11 reportes (no /dashboard/executive)
+    [ ] WAREHOUSEMAN accede a 4 reportes operativos
+    [ ] SALES accede solo a /operations/pending
+    [ ] Sin JWT → 403 en todos los reportes
+
+  Tests:
+    [ ] ~59 tests nuevos — 0 fallos
+    [ ] Suite completa (proyectada ~351) — BUILD SUCCESS
+    [ ] Cobertura JaCoCo del paquete reports >= 70% líneas
+    [ ] @DataJpaTest verifica las queries de agregación con PostgreSQL real
+
+  Documentación:
+    [ ] memoria_tecnica_modulo_reports.md completa con las 10 secciones
+    [ ] CLAUDE.md actualizado con estándares del módulo reports
+    [ ] Bugs documentados (aunque sean cero)
+
+  Calidad:
+    [ ] Todos los métodos de servicio con @Transactional(readOnly = true)
+    [ ] BigDecimal para todos los cálculos monetarios
+    [ ] Sin lógica de negocio en el controlador
+    [ ] División por cero manejada en todos los cálculos de porcentaje
+
+
+================================================================================
+  FIN DEL DOCUMENTO  (v2)
+  v1 generada el 2026-05-31 — propuesta inicial
+  v2 generada el 2026-05-31 — corrección unitCost NOT NULL + criterio de tests
+  Estado: aprobada — lista para inicio de implementación (Fase 0)
+================================================================================

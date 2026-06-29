@@ -1,0 +1,226 @@
+package com.codigo2enter.almacenes.modules.purchases.repository;
+
+import com.codigo2enter.almacenes.modules.purchases.model.PurchaseOrder;
+import com.codigo2enter.almacenes.modules.purchases.model.PurchaseOrderStatus;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.repository.query.Param;
+import org.springframework.stereotype.Repository;
+
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Optional;
+
+/**
+ * Repositorio de persistencia para la entidad PurchaseOrder.
+ *
+ * Combina query methods derivados para consultas simples con @Query JPQL
+ * para condiciones que no pueden expresarse con la nomenclatura de Spring Data:
+ *   - findActiveOrdersBySupplier: filtra por dos valores de enum en la misma columna
+ *   - findByProductId: navega la relación @OneToMany details para filtrar por producto
+ *   - countByYear: compara un campo de fecha extraído con un parámetro entero
+ */
+@Repository
+public interface PurchaseOrderRepository extends JpaRepository<PurchaseOrder, Long> {
+
+    /**
+     * Busca una orden por su número único en formato OC-YYYY-NNNN.
+     * Usado en generateOrderNumber para verificar que el candidato generado
+     * no esté ya registrado antes de asignarlo a la nueva orden.
+     *
+     * @param orderNumber número de orden a buscar
+     * @return Optional con la orden si existe, vacío si no
+     */
+    Optional<PurchaseOrder> findByOrderNumber(String orderNumber);
+
+    /**
+     * Recupera todas las órdenes que se encuentran en el estado indicado.
+     * El servicio convierte el String recibido del cliente al enum antes de
+     * invocar este método, con manejo de IllegalArgumentException para
+     * devolver un mensaje de error claro si el valor es inválido.
+     *
+     * @param status estado del enum por el que filtrar
+     * @return lista de órdenes en ese estado, vacía si no hay ninguna
+     */
+    List<PurchaseOrder> findByStatus(PurchaseOrderStatus status);
+
+    /**
+     * Versión paginada del filtro por estado.
+     * La versión sin Pageable se conserva para uso interno en los servicios.
+     *
+     * @param status   estado del enum por el que filtrar
+     * @param pageable parámetros de paginación y ordenación
+     * @return página de órdenes en ese estado
+     */
+    Page<PurchaseOrder> findByStatus(PurchaseOrderStatus status, Pageable pageable);
+
+    /**
+     * Recupera todas las órdenes de un proveedor específico.
+     * Spring Data navega la relación @ManyToOne supplier para generar
+     * el JOIN y el filtro por supplier.id automáticamente.
+     *
+     * @param supplierId ID del proveedor
+     * @return lista de órdenes del proveedor, vacía si no tiene ninguna
+     */
+    List<PurchaseOrder> findBySupplierId(Long supplierId);
+
+    /**
+     * Recupera las órdenes de un proveedor filtradas por estado.
+     * Combinación de los dos filtros anteriores para consultas más específicas.
+     *
+     * @param supplierId ID del proveedor
+     * @param status     estado del enum por el que filtrar
+     * @return lista de órdenes del proveedor en ese estado
+     */
+    List<PurchaseOrder> findBySupplierIdAndStatus(Long supplierId, PurchaseOrderStatus status);
+
+    /**
+     * Recupera las órdenes creadas por un usuario específico.
+     * Spring Data navega la relación @ManyToOne createdBy para generar
+     * el JOIN y el filtro por createdBy.id automáticamente.
+     *
+     * @param userId ID del usuario creador
+     * @return lista de órdenes creadas por ese usuario
+     */
+    List<PurchaseOrder> findByCreatedById(Long userId);
+
+    /**
+     * Recupera las órdenes activas (PENDING o APPROVED) de un proveedor.
+     * Usada en deactivateSupplier para bloquear la baja del proveedor cuando
+     * tiene órdenes que aún no han sido recibidas o canceladas.
+     *
+     * Se usa @Query JPQL porque el filtro por múltiples valores de enum
+     * (IN con valores literales) no puede expresarse con query methods derivados.
+     *
+     * @param supplierId ID del proveedor a verificar
+     * @return lista de órdenes activas del proveedor
+     */
+    @Query("SELECT p FROM PurchaseOrder p " +
+           "WHERE p.supplier.id = :supplierId " +
+           "AND p.status IN (com.codigo2enter.almacenes.modules.purchases.model.PurchaseOrderStatus.PENDING, " +
+           "                 com.codigo2enter.almacenes.modules.purchases.model.PurchaseOrderStatus.APPROVED)")
+    List<PurchaseOrder> findActiveOrdersBySupplier(@Param("supplierId") Long supplierId);
+
+    /**
+     * Recupera todas las órdenes que contienen un producto específico,
+     * navegando la relación @OneToMany details de cada orden.
+     *
+     * DISTINCT elimina duplicados — aunque un producto no debería aparecer
+     * más de una vez en la misma orden (validado por existsByPurchaseOrderIdAndProductId),
+     * DISTINCT garantiza resultados únicos ante cualquier caso edge.
+     *
+     * Se requiere @Query porque Spring Data no puede derivar automáticamente
+     * un JOIN a través de una colección (@OneToMany) con filtro en un campo
+     * de la entidad relacionada.
+     *
+     * @param productId ID del producto a buscar en los detalles
+     * @return lista de órdenes que contienen ese producto
+     */
+    @Query("SELECT DISTINCT p FROM PurchaseOrder p " +
+           "JOIN p.details d " +
+           "WHERE d.product.id = :productId")
+    List<PurchaseOrder> findByProductId(@Param("productId") Long productId);
+
+    /**
+     * Cuenta el número de órdenes creadas en un año específico.
+     * Usada por generateOrderNumber() para calcular la secuencia anual:
+     *   count + 1 determina el siguiente número de orden del año.
+     *
+     * El contador se reinicia cada año — OC-2026-0001 es el primero de 2026,
+     * OC-2027-0001 es el primero de 2027, independientemente del volumen
+     * del año anterior.
+     *
+     * Se requiere @Query porque YEAR() sobre un campo LocalDateTime no puede
+     * expresarse como query method derivado de Spring Data.
+     *
+     * @param year año por el que filtrar (ej. 2026)
+     * @return número de órdenes creadas en ese año
+     */
+    @Query("SELECT COUNT(p) FROM PurchaseOrder p " +
+           "WHERE YEAR(p.createdAt) = :year")
+    Long countByYear(@Param("year") int year);
+
+    /**
+     * Búsqueda de órdenes por estado + término libre (número de orden, proveedor, usuario).
+     * Usa f_unaccent para búsqueda insensible a mayúsculas y diacríticos (L8/BUG-INV-06).
+     * Solo se invoca cuando el término de búsqueda no está vacío.
+     *
+     * @param status estado de la orden (STRING — "PENDING", "APPROVED", etc.)
+     * @param search término de búsqueda libre (no vacío)
+     * @param pageable parámetros de paginación (sin sort — ORDER BY en la query)
+     * @return página de órdenes que coinciden con el filtro
+     */
+    @Query(value =
+        "SELECT o.* FROM purchase_orders o " +
+        "JOIN suppliers s ON o.supplier_id = s.id " +
+        "JOIN users u ON o.created_by = u.id " +
+        "WHERE o.status = :status " +
+        "AND (f_unaccent(lower(o.order_number)) LIKE '%' || f_unaccent(lower(CAST(:search AS text))) || '%' " +
+        "     OR f_unaccent(lower(s.company_name)) LIKE '%' || f_unaccent(lower(CAST(:search AS text))) || '%' " +
+        "     OR f_unaccent(lower(u.username)) LIKE '%' || f_unaccent(lower(CAST(:search AS text))) || '%') " +
+        "ORDER BY o.created_at DESC",
+        countQuery =
+        "SELECT COUNT(o.id) FROM purchase_orders o " +
+        "JOIN suppliers s ON o.supplier_id = s.id " +
+        "JOIN users u ON o.created_by = u.id " +
+        "WHERE o.status = :status " +
+        "AND (f_unaccent(lower(o.order_number)) LIKE '%' || f_unaccent(lower(CAST(:search AS text))) || '%' " +
+        "     OR f_unaccent(lower(s.company_name)) LIKE '%' || f_unaccent(lower(CAST(:search AS text))) || '%' " +
+        "     OR f_unaccent(lower(u.username)) LIKE '%' || f_unaccent(lower(CAST(:search AS text))) || '%')",
+        nativeQuery = true)
+    Page<PurchaseOrder> searchByStatus(
+            @Param("status") String status,
+            @Param("search") String search,
+            Pageable pageable);
+
+    // ── QUERIES ANALÍTICAS PARA EL MÓDULO REPORTS ──────────────────────────
+
+    /**
+     * Cuenta órdenes de compra en estado PENDING o APPROVED.
+     * Representa compromisos activos con proveedores que no han sido completados
+     * ni cancelados. Usado en el dashboard ejecutivo para el KPI de operaciones pendientes.
+     *
+     * @return número de órdenes activas (PENDING + APPROVED)
+     */
+    @Query("SELECT COUNT(p) FROM PurchaseOrder p WHERE p.status IN " +
+           "(com.codigo2enter.almacenes.modules.purchases.model.PurchaseOrderStatus.PENDING, " +
+           " com.codigo2enter.almacenes.modules.purchases.model.PurchaseOrderStatus.APPROVED)")
+    Long countPendingAndApproved();
+
+    /**
+     * Totales de compras agrupados por proveedor, considerando solo órdenes RECEIVED.
+     * Solo las órdenes RECEIVED representan dinero efectivamente desembolsado —
+     * las PENDING, APPROVED y CANCELLED no.
+     *
+     * Retorna Object[] {supplierId (Long), supplierName (String), rfc (String),
+     * orderCount (Long), totalAmount (BigDecimal), lastReceivedAt (LocalDateTime)}.
+     *
+     * ORDER BY SUM DESC muestra primero los proveedores con mayor volumen de compras.
+     *
+     * @param from inicio del período (receivedAt >= from)
+     * @param to   fin del período (receivedAt < to)
+     * @return lista de Object[] ordenada por totalAmount DESC
+     */
+    @Query("SELECT p.supplier.id, p.supplier.companyName, p.supplier.rfc, COUNT(p), " +
+           "COALESCE(SUM(p.totalAmount), 0), MAX(p.receivedAt) " +
+           "FROM PurchaseOrder p WHERE p.status = com.codigo2enter.almacenes.modules.purchases.model.PurchaseOrderStatus.RECEIVED " +
+           "AND p.receivedAt >= :from AND p.receivedAt < :to " +
+           "GROUP BY p.supplier.id, p.supplier.companyName, p.supplier.rfc " +
+           "ORDER BY SUM(p.totalAmount) DESC")
+    List<Object[]> totalsBySupplier(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
+
+    /**
+     * Retorna órdenes de compra en estado PENDING o APPROVED para el reporte operativo.
+     * Ordenadas por createdAt DESC para mostrar las más recientes primero.
+     * No incluye órdenes RECEIVED ni CANCELLED — solo las que requieren acción.
+     *
+     * @return lista de órdenes activas, la más reciente primero
+     */
+    @Query("SELECT p FROM PurchaseOrder p WHERE p.status IN " +
+           "(com.codigo2enter.almacenes.modules.purchases.model.PurchaseOrderStatus.PENDING, " +
+           " com.codigo2enter.almacenes.modules.purchases.model.PurchaseOrderStatus.APPROVED) " +
+           "ORDER BY p.createdAt DESC")
+    List<PurchaseOrder> findPendingAndApproved();
+}

@@ -122,6 +122,14 @@ public class SecurityConfig {
                                  "/v3/api-docs", "/v3/api-docs/**").permitAll()
                 .requestMatchers("/api/v1/auth/login").permitAll()
 
+                // ── ACTUATOR — health/info público (BACK-I8) ────────────────
+                // Necesario para los smoke tests post-deploy y los liveness/
+                // readiness probes de balanceadores. Solo health e info se
+                // exponen (management.endpoints en application-prod.yaml);
+                // el resto de endpoints de actuator no se publica.
+                .requestMatchers("/actuator/health", "/actuator/health/**",
+                                 "/actuator/info").permitAll()
+
                 // ── GESTIÓN DE USUARIOS — solo ADMIN ───────────────────────
                 .requestMatchers("/api/v1/auth/users/**").hasRole("ADMIN")
 

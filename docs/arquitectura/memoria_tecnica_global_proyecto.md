@@ -664,6 +664,22 @@ secreto entra al historial de git, debe considerarse comprometido.
 | `locations` | Gestión de ubicaciones físicas (zona → pasillo → estante → posición) |
 | `shipping` | Gestión de transportistas, guías de envío, tracking |
 
+### Production-readiness / DevOps (v1.1+)
+
+Mejoras de infraestructura/operación evaluadas contra estándares de la industria
+(SRE Production Readiness Review, DORA, OWASP ASVS, 12-Factor, Well-Architected).
+No bloquean la escala declarada (un almacén, <100 usuarios); se difieren a v1.1+.
+Detalle completo en el plan de salida a producción, §13.
+
+| Área | Mejora | Prioridad |
+|---|---|---|
+| CI/CD (DORA) | Pipeline GitHub Actions (build + tests + lint por PR/push) en ambos repos | Alta |
+| Supply chain (OWASP) | Dependabot + npm audit / OWASP Dependency-Check + escaneo de secretos | Alta |
+| SRE | Drills en staging: despliegue completo, restauración de backup, rollback | Alta |
+| Observabilidad (SRE) | Métricas Actuator (metrics/prometheus) + alertas (caída, 5xx, disco) | Media |
+| Reliability | Límites cpu/mem en compose + `server.shutdown: graceful` + uptime externo | Media |
+| Performance | Prueba de carga básica (k6/JMeter) para la concurrencia esperada | Media |
+
 ---
 
 *Memoria técnica global — Sistema de Gestión de Almacenes*  

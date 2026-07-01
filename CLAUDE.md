@@ -1154,7 +1154,7 @@ open target/site/jacoco/index.html
 
 **Umbrales configurados**: 70% de cobertura de líneas por paquete (excluyendo paquetes `dto`, `model`, `mapper` — son código auto-generado por MapStruct o solo campos sin lógica).
 
-**Métricas actuales** (**406 tests — backend completo**, 0 fallos — BUILD SUCCESS; 2026-06-28):
+**Métricas actuales** (**408 tests — backend completo**, 0 fallos — BUILD SUCCESS; 2026-06-30; la campaña de QA certificó 406, +2 de Actuator post-certificación):
 - Líneas: ~84.6% ✓ (umbral: 70%)
 - Métodos: ~87.5% ✓
 - Ramas: ~61.6% ~ (área de mejora — sin umbral configurado aún)
@@ -1295,11 +1295,12 @@ assertFalse(jwtUtils.validateToken(expiredToken));
   4. Flujo completo MANAGER: crea categoría, producto, orden de compra y la aprueba — verifica en BD que `approvedByUsername` es el usuario MANAGER
   5. Token con firma manipulada → 403 (verifica try-catch real del filtro JWT)
 
-### Suite de tests actual: **406 tests — 0 fallos** (2026-06-28)
+### Suite de tests actual: **408 tests — 0 fallos** (2026-06-30)
 
-> El desglose por tipo de abajo es el snapshot histórico (378). El total verificado actual es **406**
-> (`./mvnw test` → `Tests run: 406, Failures: 0, Errors: 0 — BUILD SUCCESS`), incluye el test de regresión
-> `ReportControllerTest.parametroFechaInvalido_retorna400SinFiltrarTipoInterno` (CYBER-05, fix 500→400).
+> El desglose por tipo de abajo es el snapshot histórico (378). El total verificado actual es **408**
+> (`./mvnw test` → `Tests run: 408, Failures: 0, Errors: 0 — BUILD SUCCESS`). Incluye el test de regresión
+> `ReportControllerTest.parametroFechaInvalido_retorna400SinFiltrarTipoInterno` (CYBER-05, fix 500→400) y
+> `ActuatorHealthTest` (BACK-I8, +2 tests post-certificación). La campaña de QA de 4 fases certificó 406.
 
 ```
 Tipo A (Mockito):            175 tests
@@ -1308,7 +1309,7 @@ Tipo B* (con seguridad):      45 tests  (+12 RBAC reports)
 Tipo C (@SpringBootTest):     51 tests
 Tipo D (@DataJpaTest):        22 tests
 ──────────────────────────────────────
-TOTAL MAVEN (snapshot):      378 tests   →  actual: 406 tests
+TOTAL MAVEN (snapshot):      378 tests   →  actual: 408 tests
 Tests E2E curl:              129 tests  (fuera del pipeline Maven)
 ```
 

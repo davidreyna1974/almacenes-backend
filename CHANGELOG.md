@@ -22,13 +22,18 @@ Primera versión estable. Sistema certificado bajo el Protocolo de QA de 4 fases
   `JwtAuthenticationEntryPoint` / `JwtAccessDeniedHandler` (401 vs 403).
 - **Documentación API:** springdoc-openapi (Swagger UI).
 - **Despliegue:** `Dockerfile`, scripts de puesta en producción e instructivo.
+- **Observabilidad:** Spring Boot Actuator con `/actuator/health` público (BACK-I8),
+  para smoke tests post-deploy y probes de balanceadores.
 
 ### Corregido
 - `MethodArgumentTypeMismatchException` → HTTP **400** (antes 500), sin filtrar el tipo interno
   (`LocalDate`) en el cuerpo de la respuesta. Manejado en `GlobalExceptionHandler`.
+- `Dockerfile`: se crea `/var/log/almacenes` con el propietario correcto para el usuario no-root,
+  de modo que logback (perfil prod) pueda escribir el log con rotación.
 
 ### Calidad
-- **406 tests** (JUnit 5) · 0 fallos · BUILD SUCCESS.
+- **408 tests** (JUnit 5) · 0 fallos · BUILD SUCCESS. _(La campaña de QA de 4 fases certificó
+  406; el mantenimiento post-certificación de Actuator añadió 2 tests → 408.)_
 - Campaña de QA de 4 fases coordinada con el frontend: 704 casos de prueba, 5 módulos certificados,
   0 bugs funcionales, 0 regresiones.
 - Verificación de seguridad server-side con `curl` + JWT por rol (enforcement RBAC + redacción de campos).

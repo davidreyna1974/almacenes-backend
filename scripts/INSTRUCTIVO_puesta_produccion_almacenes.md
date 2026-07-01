@@ -364,7 +364,9 @@ docker compose -f /opt/almacenes/docker-compose.yml ps
 # El backend debe responder
 docker compose -f /opt/almacenes/docker-compose.yml exec backend \
   curl -sf http://localhost:8080/actuator/health
-# Resultado esperado: {"status":"UP","components":{"db":{"status":"UP"},...}}
+# Resultado esperado: {"status":"UP"}
+# (application-prod.yaml usa management.endpoint.health.show-details: never, por lo
+#  que NO se muestran los 'components'; ver el detalle de la BD con la consulta de abajo.)
 
 # Verificar que la BD está inicializada
 docker compose -f /opt/almacenes/docker-compose.yml exec db \
@@ -579,8 +581,9 @@ curl -s -X POST https://almacenes.codigo2enter.com/api/v1/auth/login \
 ## PASO MANUAL — [OPS-B1/B2] Configuración de backup automático diario
 
 El backup protege la base de datos PostgreSQL ante fallos del servidor, errores
-humanos o corrupción de datos. Se configura un `pg_dump` diario con retención de
-7 días locales, y opcionalmente copia offsite.
+humanos o corrupción de datos. Se configura un `pg_dump` diario con retención
+local de **30 días**. Opcional: copia offsite (rsync/S3) y archivado mensual
+(hasta 12 meses) en el destino offsite.
 
 ### Paso 1 — Crear el script de backup
 
@@ -595,7 +598,7 @@ Pegar este contenido:
 # ============================================================
 # Backup diario de PostgreSQL — Almacenes
 # Ejecutado por cron todos los días a las 02:00 AM
-# Retención: 7 días locales
+# Retención local: 30 días
 # ============================================================
 
 set -euo pipefail
@@ -604,7 +607,7 @@ DEPLOY_DIR="/opt/almacenes"
 BACKUP_DIR="/opt/almacenes/backups"
 DATE=$(date '+%Y-%m-%d_%H-%M')
 BACKUP_FILE="$BACKUP_DIR/almacenes_db_$DATE.sql.gz"
-RETENTION_DAYS=7
+RETENTION_DAYS=30
 
 # Cargar variables de entorno del archivo .env
 # (para obtener POSTGRES_USER, POSTGRES_DB, POSTGRES_PASSWORD)

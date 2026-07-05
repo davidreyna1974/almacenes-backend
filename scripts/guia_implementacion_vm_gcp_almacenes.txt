@@ -179,13 +179,29 @@ C.3  RE-APUNTAR si la IP cambia (la IP efímera cambia si detienes/arrancas la V
        gcloud compute addresses create almacenes-test-ip --region=northamerica-south1
        # luego asignarla a la VM. Recuerda liberarla en la FASE G.
 
-C.4  Verificar la resolución DNS (desde tu equipo)
-     nslookup <SUBDOMINIO>.duckdns.org
-     # Debe resolver a <IP_PUBLICA>. Puede tardar 1-2 min en propagar.
-     # Alternativa: dig +short <SUBDOMINIO>.duckdns.org
+C.4  Verificar la resolución DNS  ← COMPUERTA: no sigas a la FASE E hasta que resuelva
+     DuckDNS es rápido (TTL ~60 s): normalmente resuelve en segundos a 1-2 minutos.
+     No esperes "a ciegas": VERIFICA que ya devuelve la IP de la VM.
+
+     Consulta contra un RESOLVEDOR PÚBLICO (evita la caché local, que podría dar un
+     falso negativo si antes consultaste el nombre y no existía):
+       dig +short <SUBDOMINIO>.duckdns.org @8.8.8.8
+       # (equivalente)  nslookup <SUBDOMINIO>.duckdns.org 8.8.8.8
+
+     · Si devuelve <IP_PUBLICA>  → puedes continuar a la FASE E (02-ssl.sh).
+     · Si devuelve vacío o una IP vieja → espera 30-60 s y repite (o re-apunta C.2).
+
+     Opcional — esperar automáticamente hasta que resuelva:
+       until [ "$(dig +short <SUBDOMINIO>.duckdns.org @8.8.8.8)" = "<IP_PUBLICA>" ]; do
+         echo "esperando DNS..."; sleep 15
+       done; echo "DNS listo"
+
+     Por qué importa: 02-ssl.sh usa Let's Encrypt (validación HTTP-01), que le pega a
+     http://<SUBDOMINIO>.duckdns.org/.well-known/... en el puerto 80. Si el DNS aún no
+     resuelve (o el puerto 80 no está abierto — FASE B), la emisión del certificado falla.
 
 VERIFICACIÓN FASE C
-  [ ] `nslookup <SUBDOMINIO>.duckdns.org` devuelve <IP_PUBLICA>.
+  [ ] `dig +short <SUBDOMINIO>.duckdns.org @8.8.8.8` devuelve <IP_PUBLICA>.
   [ ] La respuesta del update de DuckDNS fue "OK".
 
 
@@ -213,16 +229,13 @@ D.2  A PARTIR DE AQUÍ: SEGUIR EL INSTRUCTIVO ORIGINAL
        (b) SSL:      sudo bash 02-ssl.sh <SUBDOMINIO>.duckdns.org
        (c) Deploy:   bash 03-deploy.sh <SUBDOMINIO>.duckdns.org
                      (el script pide la contraseña de BD y genera el resto del .env)
-       (d) EDITAR DOS ARCHIVOS antes de construir imágenes (dominio hardcodeado):
-           · almacenes-frontend/nginx.conf  (líneas ssl_certificate / ssl_certificate_key):
-               /etc/letsencrypt/live/almacenes.codigo2enter.com/  →
-               /etc/letsencrypt/live/<SUBDOMINIO>.duckdns.org/
-             (server_name ya es "_" y acepta cualquier host — no se toca.)
-           · almacenes-frontend/src/environments/environment.prod.ts:
-               apiUrl: 'https://almacenes.codigo2enter.com/api/v1'  →
-               apiUrl: 'https://<SUBDOMINIO>.duckdns.org/api/v1'
-             (03-deploy.sh VALIDA que environment.prod.ts use el dominio correcto;
-              si no coincide, el script lo advierte.)
+       (d) NO se edita ningún archivo. El despliegue es agnóstico del dominio:
+           · El frontend usa apiUrl relativo '/api/v1' (mismo origen vía nginx) — no
+             lleva el dominio.
+           · nginx.conf toma el dominio de la variable DOMAIN (envsubst al arrancar el
+             contenedor); 03-deploy.sh la pasa desde el argumento (b/c).
+           (Antes había que editar nginx.conf y environment.prod.ts; desde la
+            parametrización de dominio ya NO es necesario — solo el argumento.)
        (e) Prerrequisito [B] del instructivo (merge develop→main): OMITIR para la
            prueba — clona directamente las ramas ya publicadas (main o develop).
 
@@ -240,7 +253,7 @@ El detalle, salidas esperadas y diagnóstico están en el INSTRUCTIVO original.
        sudo bash 02-ssl.sh <SUBDOMINIO>.duckdns.org
        (Requiere puerto 80 abierto en AMBOS firewalls y DNS ya apuntando — FASE B y C.)
   3. Clonar los repos en /opt/almacenes/ (backend/ y frontend/).
-  4. Editar nginx.conf y environment.prod.ts (sustituciones (d) de la FASE D).
+  4. (Sin edición de archivos — el dominio va como argumento; ver FASE D (d).)
   5. Script 03 — Despliegue Docker (build + up de los 3 contenedores):
        bash 03-deploy.sh <SUBDOMINIO>.duckdns.org
   6. Inicializar la BD (schema versionado):

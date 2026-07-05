@@ -1,0 +1,345 @@
+================================================================================
+  GUÍA DE IMPLEMENTACIÓN EN VM DE GOOGLE CLOUD (GCP) — PRUEBA DE DESPLIEGUE
+  Sistema de Gestión de Almacenes — "Almacenes"
+  Región objetivo: northamerica-south1 (Querétaro, México)
+  Documento: guia_implementacion_vm_gcp_almacenes.txt · v1.0 · 2026-07-04
+================================================================================
+
+--------------------------------------------------------------------------------
+0. PROPÓSITO Y ALCANCE  (LEER PRIMERO — ESTO ES UNA PRUEBA)
+--------------------------------------------------------------------------------
+
+OBJETIVO
+  Levantar una VM real en GCP para SEGUIR LA GUÍA/INSTRUCTIVO DE PUESTA EN
+  PRODUCCIÓN de principio a fin y VERIFICAR su efectividad, veracidad y
+  funcionalidad. No es el despliegue productivo definitivo: al terminar la
+  prueba, la VM y sus recursos se DESTRUYEN (§ FASE G) para no generar costo.
+
+COORDINACIÓN CON LA GUÍA ORIGINAL
+  Esta guía NO reemplaza al procedimiento de producción. Lo ENVUELVE: cubre lo
+  específico de la nube (crear la VM, firewall de GCP, dominio de prueba, swap) y
+  luego ENGANCHA con el instructivo original a partir del script 01-prepare-server.sh.
+
+  Documentos originales (fuente de verdad operativa):
+    · almacenes-backend/scripts/INSTRUCTIVO_puesta_produccion_almacenes.md
+    · almacenes-frontend/docs/planificacion/plan_salida_produccion_v1_almacenes.txt
+    · Scripts: almacenes-backend/scripts/01..05 + maint-db.sh
+
+  La guía original está escrita para un SERVIDOR (físico o VM en la nube). Este
+  documento aporta los prerrequisitos de nube y las sustituciones de la prueba.
+
+CAMBIOS CONSCIENTES RESPECTO A LA GUÍA ORIGINAL (por ser una PRUEBA)
+  Estos son deltas deliberados; en un despliegue productivo real NO aplicarían:
+
+  | Tema                | Producción (guía original)        | Esta prueba en GCP                    |
+  |---------------------|-----------------------------------|---------------------------------------|
+  | Servidor            | Servidor físico / VM dedicada     | VM e2-medium en GCP (efímera)         |
+  | IP pública          | IP estática fija                  | IP EFÍMERA (se re-apunta si cambia)   |
+  | Dominio             | almacenes.codigo2enter.com        | Subdominio GRATIS de DuckDNS          |
+  | Firewall            | 1 capa (ufw dentro del server)    | 2 CAPAS: VPC de GCP + ufw en la VM    |
+  | RAM                 | ≥ 4 GB                            | 4 GB (mínimo) + 2 GB de SWAP          |
+  | Ciclo de vida       | Permanente                        | Se DESTRUYE al terminar la prueba     |
+  | Backup/DR, HA       | Sí (OPS-B1/B2)                    | Fuera de alcance de la prueba         |
+
+REQUISITOS PREVIOS
+  [ ] Cuenta de Google Cloud con facturación activa (o crédito gratis de $300/90 días).
+  [ ] `gcloud` CLI instalado y autenticado (o usar la Consola web de GCP).
+      Instalar: https://cloud.google.com/sdk/docs/install ; luego `gcloud init`.
+  [ ] Cuenta gratuita en DuckDNS (https://www.duckdns.org — login con Google/GitHub).
+  [ ] Los dos repositorios accesibles (para clonarlos en la VM).
+
+COSTO ESTIMADO DE LA PRUEBA (confirmar en https://cloud.google.com/products/calculator)
+  · e2-medium on-demand en México ≈ $0.040/h (estimado; us-central1 = $0.0335/h real).
+  · Prueba de ~8 h ≈ $0.40 · de ~48 h ≈ $2.30 (VM + IP + disco).
+  · Con crédito gratuito de $300 (cuenta nueva) → costo real $0.
+  · ⚠️ El costo sigue corriendo mientras la VM exista: NO OLVIDAR la FASE G (limpieza).
+
+
+--------------------------------------------------------------------------------
+CONVENCIONES DE ESTA GUÍA
+--------------------------------------------------------------------------------
+  Reemplaza estos marcadores por tus valores antes de ejecutar:
+    <PROYECTO_GCP>     ID de tu proyecto de GCP (ej. almacenes-prueba-123456)
+    <SUBDOMINIO>       nombre corto elegido en DuckDNS (ej. almacenes-test)
+                       → tu dominio completo será  <SUBDOMINIO>.duckdns.org
+    <TOKEN_DUCKDNS>    token que DuckDNS muestra en tu panel tras iniciar sesión
+    <IP_PUBLICA>       IP externa que GCP asigna a la VM (se obtiene en FASE A)
+  Zona usada: northamerica-south1-a  (región de México, Querétaro).
+
+
+================================================================================
+FASE A — CREAR LA VM EN GCP
+================================================================================
+
+A.1  Seleccionar / crear el proyecto y fijar defaults
+     gcloud auth login
+     gcloud projects list                       # ver proyectos existentes
+     gcloud config set project <PROYECTO_GCP>
+     gcloud config set compute/region northamerica-south1
+     gcloud config set compute/zone   northamerica-south1-a
+     # Habilitar Compute Engine (si es la primera vez en el proyecto):
+     gcloud services enable compute.googleapis.com
+
+A.2  Crear la instancia (e2-medium, Ubuntu 22.04, disco 30 GB pd-balanced)
+     gcloud compute instances create almacenes-test \
+       --zone=northamerica-south1-a \
+       --machine-type=e2-medium \
+       --image-family=ubuntu-2204-lts --image-project=ubuntu-os-cloud \
+       --boot-disk-size=30GB --boot-disk-type=pd-balanced \
+       --tags=http-server,https-server
+
+     NOTA (equivalente por Consola web):
+       Compute Engine → Crear instancia → Región northamerica-south1 (Querétaro),
+       Zona -a → Serie E2 → Tipo e2-medium → Disco de arranque: Ubuntu 22.04 LTS,
+       30 GB balanceado → Firewall: marcar "Permitir tráfico HTTP" y "HTTPS"
+       (equivale a las etiquetas http-server/https-server) → Crear.
+
+A.3  Verificar que arrancó y OBTENER LA IP PÚBLICA (anótala como <IP_PUBLICA>)
+     gcloud compute instances describe almacenes-test \
+       --zone=northamerica-south1-a \
+       --format='get(networkInterfaces[0].accessConfigs[0].natIP)'
+     # Debe imprimir una IP como 34.51.x.x → esa es <IP_PUBLICA>.
+
+A.4  Conectarse por SSH a la VM
+     gcloud compute ssh almacenes-test --zone=northamerica-south1-a
+     # (La primera vez genera claves SSH automáticamente.)
+
+VERIFICACIÓN FASE A
+  [ ] `gcloud compute instances list` muestra almacenes-test con STATUS=RUNNING.
+  [ ] Se obtuvo <IP_PUBLICA>.
+  [ ] La sesión SSH abre un shell en la VM (prompt `usuario@almacenes-test`).
+
+
+================================================================================
+FASE B — FIREWALL DE GCP (VPC)  ← CAPA NUEVA respecto a la guía original
+================================================================================
+
+CONCEPTO IMPORTANTE — DOS CAPAS DE FIREWALL
+  · Capa 1 (NUBE): el firewall de la VPC de GCP filtra ANTES de llegar a la VM.
+    Por defecto bloquea casi todo el ingress excepto SSH.
+  · Capa 2 (SO): el `ufw` que configura el script 04-firewall.sh, DENTRO de la VM.
+  AMBAS deben permitir 22/80/443 o el tráfico no llega. La guía original solo
+  documenta la capa 2 (correcto para un server físico); en GCP hay que abrir la
+  capa 1 también. Esto es un DELTA de esta prueba.
+
+B.1  Abrir 80 y 443 en la VPC (el 22/SSH ya viene permitido por default-allow-ssh)
+     gcloud compute firewall-rules create allow-web \
+       --allow=tcp:80,tcp:443 \
+       --target-tags=http-server,https-server \
+       --source-ranges=0.0.0.0/0 \
+       --description="Prueba Almacenes: HTTP/HTTPS de entrada"
+
+     NOTA: si en A.2 marcaste las casillas HTTP/HTTPS en la Consola, GCP ya creó
+     reglas equivalentes (default-allow-http / default-allow-https). En ese caso
+     este paso es opcional; verifícalo en B.2.
+
+B.2  Verificar las reglas de firewall de la VPC
+     gcloud compute firewall-rules list \
+       --format='table(name,direction,allowed[].map().firewall_rule().list(),sourceRanges.list(),targetTags.list())'
+     # Debe existir alguna regla que permita tcp:80 y tcp:443 hacia las etiquetas
+     # http-server/https-server, y una que permita tcp:22 (SSH).
+
+VERIFICACIÓN FASE B
+  [ ] Existe regla(s) para tcp:22, tcp:80 y tcp:443 en ingress.
+  [ ] La VM tiene las etiquetas http-server, https-server:
+      gcloud compute instances describe almacenes-test \
+        --zone=northamerica-south1-a --format='get(tags.items)'
+
+
+================================================================================
+FASE C — DOMINIO GRATUITO EN DuckDNS  ← DELTA respecto a la guía original
+================================================================================
+
+Por qué: la guía usa el dominio corporativo almacenes.codigo2enter.com. Para la
+prueba no lo tocamos: usamos un subdominio gratis de DuckDNS que apunta a la IP
+efímera de la VM. Let's Encrypt SÍ emite certificado válido para *.duckdns.org.
+
+C.1  Crear el subdominio
+     1. Entra a https://www.duckdns.org e inicia sesión (Google/GitHub/etc.).
+     2. En "domains", escribe <SUBDOMINIO> y pulsa "add domain".
+        → tu dominio completo queda: <SUBDOMINIO>.duckdns.org
+     3. Copia tu TOKEN (arriba de la página) → es <TOKEN_DUCKDNS>.
+
+C.2  Apuntar el subdominio a la IP pública de la VM (<IP_PUBLICA> de la FASE A)
+     Opción 1 — desde el panel web: escribe <IP_PUBLICA> en el campo "current ip"
+     del dominio y pulsa "update ip".
+     Opción 2 — por comando (desde tu equipo o la VM):
+       curl "https://www.duckdns.org/update?domains=<SUBDOMINIO>&token=<TOKEN_DUCKDNS>&ip=<IP_PUBLICA>"
+       # Respuesta esperada: OK
+
+C.3  RE-APUNTAR si la IP cambia (la IP efímera cambia si detienes/arrancas la VM)
+     Si haces `gcloud compute instances stop/start`, la IP efímera puede cambiar.
+     Vuelve a obtenerla (FASE A.3) y re-ejecuta el curl de C.2 con la nueva IP.
+     (Opcional) Automatizar dentro de la VM con cron cada 5 min:
+       ( crontab -l 2>/dev/null; echo "*/5 * * * * curl -s 'https://www.duckdns.org/update?domains=<SUBDOMINIO>&token=<TOKEN_DUCKDNS>&ip=' >/dev/null" ) | crontab -
+       # Con ip= vacío, DuckDNS usa la IP de origen de la petición (la de la VM).
+
+     ALTERNATIVA para evitar el problema: reservar la IP como estática (tiene un
+     costo mínimo mientras exista). Solo si la prueba durará varios días:
+       gcloud compute addresses create almacenes-test-ip --region=northamerica-south1
+       # luego asignarla a la VM. Recuerda liberarla en la FASE G.
+
+C.4  Verificar la resolución DNS (desde tu equipo)
+     nslookup <SUBDOMINIO>.duckdns.org
+     # Debe resolver a <IP_PUBLICA>. Puede tardar 1-2 min en propagar.
+     # Alternativa: dig +short <SUBDOMINIO>.duckdns.org
+
+VERIFICACIÓN FASE C
+  [ ] `nslookup <SUBDOMINIO>.duckdns.org` devuelve <IP_PUBLICA>.
+  [ ] La respuesta del update de DuckDNS fue "OK".
+
+
+================================================================================
+FASE D — PREPARAR LA VM (SWAP) Y ENGANCHE CON LA GUÍA ORIGINAL
+================================================================================
+
+D.1  Añadir 2 GB de SWAP  ← DELTA de esta prueba (4 GB de RAM es el mínimo)
+     Motivo: 03-deploy.sh compila la imagen del backend con Maven EN la VM. Con
+     `-DskipTests` el build es ligero, pero el swap evita un OOM en picos.
+     Ejecutar DENTRO de la VM (por SSH):
+       sudo fallocate -l 2G /swapfile
+       sudo chmod 600 /swapfile
+       sudo mkswap /swapfile
+       sudo swapon /swapfile
+       echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab   # persistente
+       free -h    # verificar que "Swap" muestra 2.0Gi
+
+D.2  A PARTIR DE AQUÍ: SEGUIR EL INSTRUCTIVO ORIGINAL
+     Continúa con  almacenes-backend/scripts/INSTRUCTIVO_puesta_produccion_almacenes.md
+     desde su "Script 01 — Preparación del servidor", aplicando estas SUSTITUCIONES
+     de la prueba en cada punto donde el instructivo use el dominio de producción:
+
+       (a) Dominio: usa  <SUBDOMINIO>.duckdns.org  en lugar de almacenes.codigo2enter.com
+       (b) SSL:      sudo bash 02-ssl.sh <SUBDOMINIO>.duckdns.org
+       (c) Deploy:   bash 03-deploy.sh <SUBDOMINIO>.duckdns.org
+                     (el script pide la contraseña de BD y genera el resto del .env)
+       (d) EDITAR DOS ARCHIVOS antes de construir imágenes (dominio hardcodeado):
+           · almacenes-frontend/nginx.conf  (líneas ssl_certificate / ssl_certificate_key):
+               /etc/letsencrypt/live/almacenes.codigo2enter.com/  →
+               /etc/letsencrypt/live/<SUBDOMINIO>.duckdns.org/
+             (server_name ya es "_" y acepta cualquier host — no se toca.)
+           · almacenes-frontend/src/environments/environment.prod.ts:
+               apiUrl: 'https://almacenes.codigo2enter.com/api/v1'  →
+               apiUrl: 'https://<SUBDOMINIO>.duckdns.org/api/v1'
+             (03-deploy.sh VALIDA que environment.prod.ts use el dominio correcto;
+              si no coincide, el script lo advierte.)
+       (e) Prerrequisito [B] del instructivo (merge develop→main): OMITIR para la
+           prueba — clona directamente las ramas ya publicadas (main o develop).
+
+
+================================================================================
+FASE E — EJECUTAR LA GUÍA ORIGINAL (resumen de secuencia con sustituciones)
+================================================================================
+
+Referencia rápida del flujo del INSTRUCTIVO, ya con las sustituciones de la prueba.
+El detalle, salidas esperadas y diagnóstico están en el INSTRUCTIVO original.
+
+  1. Script 01 — Preparación del servidor (instala Docker + Compose v2):
+       sudo bash 01-prepare-server.sh
+  2. Script 02 — Certificado SSL con Let's Encrypt (DuckDNS):
+       sudo bash 02-ssl.sh <SUBDOMINIO>.duckdns.org
+       (Requiere puerto 80 abierto en AMBOS firewalls y DNS ya apuntando — FASE B y C.)
+  3. Clonar los repos en /opt/almacenes/ (backend/ y frontend/).
+  4. Editar nginx.conf y environment.prod.ts (sustituciones (d) de la FASE D).
+  5. Script 03 — Despliegue Docker (build + up de los 3 contenedores):
+       bash 03-deploy.sh <SUBDOMINIO>.duckdns.org
+  6. Inicializar la BD (schema versionado):
+       bash maint-db.sh --schema /opt/almacenes/backend/src/main/resources/schema.sql
+  7. Script 04 — Firewall del SO (ufw dentro de la VM):
+       sudo bash 04-firewall.sh
+  8. Script 05 — Verificación post-despliegue (smoke tests):
+       bash 05-verify.sh
+  9. Primer arranque / datos iniciales / cambio de contraseña admin:
+       ver INSTRUCTIVO (OPS-B3 / OPS-B5). Para la prueba basta con validar el login.
+
+
+================================================================================
+FASE F — VALIDACIÓN / VERIFICACIÓN DE LA PRUEBA
+================================================================================
+
+Objetivo: confirmar que la guía original FUNCIONA de extremo a extremo en la nube.
+
+F.1  Salud del backend (dentro de la VM):
+     docker compose -f /opt/almacenes/docker-compose.yml exec backend \
+       wget -qO- http://localhost:8080/actuator/health
+     # Esperado: {"status":"UP"}
+
+F.2  HTTPS real con certificado válido (desde tu equipo, navegador o curl):
+     curl -I https://<SUBDOMINIO>.duckdns.org
+     # Esperado: HTTP/2 200, sin advertencias de certificado (Let's Encrypt válido).
+     curl -I http://<SUBDOMINIO>.duckdns.org
+     # Esperado: 301 → https:// (redirección forzada)
+
+F.3  Login por la API (vía nginx, mismo dominio):
+     curl -X POST https://<SUBDOMINIO>.duckdns.org/api/v1/auth/login \
+       -H "Content-Type: application/json" \
+       -d '{"username":"admin","password":"Admin123!"}'
+     # Esperado: JSON con campo "token".
+
+F.4  Frontend en el navegador:
+     Abrir  https://<SUBDOMINIO>.duckdns.org
+     [ ] Carga la pantalla de login sin errores de consola.
+     [ ] Login admin → el sidebar muestra todos los módulos.
+     [ ] Recargar en una ruta interna (F5 en /inventory/products) → NO da 404
+         (verifica el try_files de nginx).
+
+F.5  Puertos internos NO expuestos a internet:
+     curl -m 5 http://<SUBDOMINIO>.duckdns.org:8080/   # backend → debe FALLAR/timeout
+     curl -m 5 http://<SUBDOMINIO>.duckdns.org:5432/   # BD → debe FALLAR/timeout
+     # (Confirman que solo 80/443 están publicados.)
+
+CHECKLIST DE RESULTADO DE LA PRUEBA (¿la guía funcionó?)
+  [ ] Los 3 contenedores levantan (db healthy, backend, frontend).
+  [ ] /actuator/health responde {"status":"UP"}.
+  [ ] HTTPS con Let's Encrypt válido; HTTP redirige a HTTPS.
+  [ ] Login y navegación del frontend funcionan por el dominio.
+  [ ] 8080 y 5432 no accesibles desde internet.
+  [ ] Anotar en la FASE H cualquier paso del instructivo que fallara o fuera ambiguo.
+
+
+================================================================================
+FASE G — LIMPIEZA (DESTRUIR RECURSOS)  ← IMPRESCINDIBLE para no seguir pagando
+================================================================================
+
+Al terminar la prueba, elimina TODO lo creado:
+
+G.1  Borrar la VM (incluye su disco de arranque):
+     gcloud compute instances delete almacenes-test --zone=northamerica-south1-a
+     # Confirmar con "Y". Esto detiene todo el costo de cómputo y disco.
+
+G.2  Borrar la regla de firewall creada (opcional, buena higiene):
+     gcloud compute firewall-rules delete allow-web
+
+G.3  Liberar la IP estática SOLO si la reservaste (C.3 alternativa):
+     gcloud compute addresses delete almacenes-test-ip --region=northamerica-south1
+
+G.4  (Opcional) Liberar el subdominio DuckDNS desde su panel ("delete domain").
+     Es gratis, puedes conservarlo para futuras pruebas.
+
+G.5  Verificar que no queda nada facturable:
+     gcloud compute instances list          # no debe aparecer almacenes-test
+     gcloud compute addresses list          # sin IPs reservadas de la prueba
+     gcloud compute disks list              # sin discos huérfanos
+
+
+================================================================================
+FASE H — REGISTRO DE HALLAZGOS (retroalimentar la guía original)
+================================================================================
+
+El propósito de esta prueba es mejorar la guía. Documenta aquí (o en un issue)
+cualquier discrepancia detectada, para corregir el INSTRUCTIVO / plan de producción:
+
+  | # | Paso / script | Qué se esperaba | Qué pasó | Acción sobre la guía |
+  |---|---------------|-----------------|----------|----------------------|
+  |   |               |                 |          |                      |
+
+  Al corregir la guía original, seguir el protocolo de ramas del proyecto
+  (feature/fix/chore + merge --no-ff) y mantener la coordinación entre el
+  INSTRUCTIVO (backend/scripts) y el plan de producción (frontend/docs).
+
+
+================================================================================
+FIN — guia_implementacion_vm_gcp_almacenes.txt
+Prueba de implementación en GCP · Sistema Almacenes · coordinada con el
+INSTRUCTIVO de puesta en producción. Recordatorio: ejecutar la FASE G al terminar.
+================================================================================

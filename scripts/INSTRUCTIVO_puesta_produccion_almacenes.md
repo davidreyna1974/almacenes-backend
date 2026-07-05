@@ -160,10 +160,27 @@ export const environment = {
 
 ### [C] Requisitos del servidor
 
-El servidor debe ser:
+Este procedimiento aplica igual a un **servidor físico/dedicado** o a una **VM en la
+nube** (GCP, AWS, Azure, etc.). El servidor debe ser:
 - **Ubuntu 22.04 LTS** o Ubuntu 24.04 LTS (también funciona en Debian 12)
 - Mínimo recomendado: **2 vCPU, 4 GB RAM, 20 GB disco**
 - Acceso SSH con usuario que tenga permisos sudo
+
+> **☁️ Despliegue en una VM en la nube (o prueba de esta guía en la nube):** hay
+> pasos previos específicos de nube (crear la VM, abrir el **firewall del proveedor**
+> —una capa aparte del `ufw`—, IP pública/DNS y, en máquinas de 4 GB, activar swap
+> para el build de Maven). Para GCP existe una guía dedicada que envuelve este
+> instructivo y engancha desde el Script 01:
+> **`scripts/guia_implementacion_vm_gcp_almacenes.txt`**.
+
+> **🌐 Dominio distinto a `almacenes.codigo2enter.com`:** si despliegas bajo otro
+> dominio (otro cliente, un entorno de prueba con DuckDNS, etc.), además de pasarlo
+> como argumento a `02-ssl.sh` y `03-deploy.sh`, ajusta las **dos referencias
+> hardcodeadas** al dominio en el frontend:
+> - `almacenes-frontend/nginx.conf` → rutas `ssl_certificate` / `ssl_certificate_key`
+>   (`/etc/letsencrypt/live/<TU_DOMINIO>/...`). El `server_name _` acepta cualquier host.
+> - `almacenes-frontend/src/environments/environment.prod.ts` → `apiUrl` con tu dominio.
+>   (`03-deploy.sh` valida que este archivo use el dominio correcto.)
 
 **Copiar los scripts al servidor:**
 

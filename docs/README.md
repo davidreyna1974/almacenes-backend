@@ -30,7 +30,8 @@ Cada módulo documenta contexto, decisiones de diseño, contratos, RBAC, segurid
 ## 📦 Despliegue y operación
 | Documento | Contenido |
 |---|---|
-| [Instructivo de puesta en producción](../scripts/INSTRUCTIVO_puesta_produccion_almacenes.md) | Guía paso a paso de despliegue (servidor, SSL, firewall, verificación). |
+| [Instructivo de puesta en producción](../scripts/INSTRUCTIVO_puesta_produccion_almacenes.md) | Guía paso a paso de despliegue (servidor físico o VM en la nube): SSL, firewall, verificación. |
+| [Guía de implementación en VM de GCP (prueba)](../scripts/guia_implementacion_vm_gcp_almacenes.txt) | Envuelve el instructivo para una VM en Google Cloud: crear la VM, firewall de VPC, dominio DuckDNS, swap, validación y limpieza. |
 | [`scripts/`](../scripts/) | Scripts de despliegue a producción. |
 | [`scripts_beta/`](../scripts_beta/) | Variantes locales/beta de los scripts. |
 | [`Dockerfile`](../Dockerfile) | Imagen del backend. |

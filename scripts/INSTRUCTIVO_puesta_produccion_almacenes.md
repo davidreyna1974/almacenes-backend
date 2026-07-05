@@ -144,26 +144,44 @@ git push origin main
 git checkout develop
 ```
 
-**Verificar que `environment.prod.ts` tiene la URL correcta** (debe estar así desde
-la brecha FRONT-B1 ya resuelta):
+**`environment.prod.ts` usa una URL RELATIVA** (agnóstica del dominio; no se edita):
 
 ```typescript
 // src/environments/environment.prod.ts
 export const environment = {
   production: true,
-  apiUrl: 'https://almacenes.codigo2enter.com/api/v1',
-  sentryDsn: ''   // opcional: reemplazar con DSN real de Sentry si se usa monitoreo
+  apiUrl: '/api/v1',   // relativo: nginx sirve la SPA y proxea /api/ en el mismo origen
+  sentryDsn: ''        // opcional: DSN real de Sentry si se usa monitoreo
 };
 ```
+> El frontend NO lleva el dominio: por eso el mismo build sirve para cualquier
+> dominio (producción, otro cliente, o una prueba con DuckDNS).
 
 ---
 
 ### [C] Requisitos del servidor
 
-El servidor debe ser:
+Este procedimiento aplica igual a un **servidor físico/dedicado** o a una **VM en la
+nube** (GCP, AWS, Azure, etc.). El servidor debe ser:
 - **Ubuntu 22.04 LTS** o Ubuntu 24.04 LTS (también funciona en Debian 12)
 - Mínimo recomendado: **2 vCPU, 4 GB RAM, 20 GB disco**
 - Acceso SSH con usuario que tenga permisos sudo
+
+> **☁️ Despliegue en una VM en la nube (o prueba de esta guía en la nube):** hay
+> pasos previos específicos de nube (crear la VM, abrir el **firewall del proveedor**
+> —una capa aparte del `ufw`—, IP pública/DNS y, en máquinas de 4 GB, activar swap
+> para el build de Maven). Para GCP existe una guía dedicada que envuelve este
+> instructivo y engancha desde el Script 01:
+> **`scripts/guia_implementacion_vm_gcp_almacenes.txt`**.
+
+> **🌐 Dominio distinto a `almacenes.codigo2enter.com`:** el despliegue es **agnóstico
+> del dominio** — NO se edita ningún archivo. Basta con pasar tu dominio como argumento
+> a `02-ssl.sh <dominio>` y `03-deploy.sh <dominio>` (y tenerlo apuntando en DNS). Detrás:
+> - `environment.prod.ts` usa `apiUrl: '/api/v1'` (relativo, mismo origen) → sin dominio.
+> - `nginx.conf` toma la ruta del certificado de la variable `DOMAIN` (envsubst al
+>   arrancar el contenedor); `03-deploy.sh` la inyecta desde el argumento del dominio.
+>
+> Así el mismo build/imagen sirve para producción, otro cliente o una prueba con DuckDNS.
 
 **Copiar los scripts al servidor:**
 

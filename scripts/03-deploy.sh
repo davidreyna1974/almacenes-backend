@@ -227,6 +227,11 @@ services:
     restart: unless-stopped
     depends_on:
       - backend
+    environment:
+      # nginx (template del image) sustituye DOMAIN en la ruta del certificado al
+      # arrancar. El filtro NGINX_ENVSUBST_FILTER=DOMAIN ya va horneado en el
+      # Dockerfile del frontend (solo sustituye la variable DOMAIN).
+      DOMAIN: ${DOMAIN}
     ports:
       - "80:80"
       - "443:443"
@@ -289,14 +294,17 @@ else
     read -rp "  Presiona Enter cuando el frontend esté clonado..." _
 fi
 
-# Verificar que environment.prod.ts usa la URL correcta
+# Verificar que environment.prod.ts usa la URL RELATIVA (agnóstica del dominio).
+# Con nginx sirviendo la SPA y proxeando /api/ en el mismo origen, el frontend NO
+# necesita el dominio: apiUrl debe ser '/api/v1'. Así el mismo build sirve para
+# cualquier dominio (producción, otro cliente, o una prueba con DuckDNS).
 PROD_ENV="$DEPLOY_DIR/frontend/src/environments/environment.prod.ts"
 if [[ -f "$PROD_ENV" ]]; then
-    if grep -q "almacenes.codigo2enter.com" "$PROD_ENV"; then
-        ok "environment.prod.ts usa el dominio correcto"
+    if grep -q "apiUrl: '/api/v1'" "$PROD_ENV"; then
+        ok "environment.prod.ts usa apiUrl relativo '/api/v1' (agnóstico del dominio)"
     else
-        warn "⚠ environment.prod.ts NO contiene 'almacenes.codigo2enter.com'"
-        warn "  Verifica que apiUrl apunte a https://almacenes.codigo2enter.com/api/v1"
+        warn "⚠ environment.prod.ts no usa apiUrl relativo '/api/v1'"
+        warn "  Debe ser  apiUrl: '/api/v1'  (nginx proxea /api/ en el mismo origen)."
     fi
 fi
 

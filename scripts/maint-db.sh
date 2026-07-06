@@ -2,8 +2,8 @@
 # ============================================================
 # MAINT-DB — UTILIDAD DE MANTENIMIENTO DE BASE DE DATOS
 # Sistema  : Almacenes — codigoCodigoEnter
-# Dominio  : almacenes.codigo2enter.com
-# Versión  : 2.0 (2026-06-18)
+# Dominio  : (agnóstico del dominio — no usa el dominio)
+# Versión  : 2.1 (2026-07-06)
 #
 # ⚠ UTILIDAD OPCIONAL — NO ES PARTE DE LA SECUENCIA DE DESPLIEGUE
 #

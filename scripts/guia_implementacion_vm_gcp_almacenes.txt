@@ -85,10 +85,24 @@ FASE A — CREAR LA VM EN GCP
 
 A.1  Seleccionar / crear el proyecto y fijar defaults
      gcloud auth login
-     gcloud config set project <PROYECTO_GCP>
-     gcloud config set compute/region northamerica-south1
-     gcloud config set compute/zone   <ZONA>          # ej. northamerica-south1-a
-     gcloud services enable compute.googleapis.com    # habilitar Compute Engine
+
+     ⚠️ <PROYECTO_GCP> es el ID EXACTO de TU proyecto, no un nombre inventado. Un ID
+        ajeno o inexistente da PERMISSION_DENIED al habilitar servicios. Verifica cuáles
+        son TUYOS:
+          gcloud projects list          # columna PROJECT_ID (no PROJECT_NAME)
+
+     Si no tienes un proyecto propio, créalo y vincúlale una cuenta de facturación
+     (Compute Engine NO se puede habilitar sin billing, ni siquiera con el crédito gratis):
+          gcloud projects create <PROYECTO_GCP> --name="Almacenes"
+          gcloud billing accounts list                         # copia el ACCOUNT_ID
+          gcloud billing projects link <PROYECTO_GCP> \
+            --billing-account=<BILLING_ACCOUNT_ID>
+
+     Fija los defaults y habilita Compute Engine (ya con billing vinculado):
+          gcloud config set project <PROYECTO_GCP>
+          gcloud config set compute/region northamerica-south1
+          gcloud config set compute/zone   <ZONA>          # ej. northamerica-south1-a
+          gcloud services enable compute.googleapis.com    # habilitar Compute Engine
 
 A.2  Crear la instancia (Ubuntu 22.04)
      🏭 PRODUCCIÓN — e2-standard-2 (8 GB), disco 50 GB:
@@ -128,8 +142,9 @@ A.3  IP pública
        gcloud compute instances add-access-config <VM_NOMBRE> --zone=<ZONA> \
          --access-config-name="External NAT" --address=<IP_PUBLICA>
 
-     🧪 PRUEBA — usar la IP EFÍMERA que GCP ya asignó (gratis de reservar; cambia si
-        detienes/arrancas la VM → se re-apunta el DNS, FASE C.3):
+     🧪 PRUEBA — NO se reserva nada: A.3 aquí es SOLO LEER la IP EFÍMERA que GCP ya le
+        asignó a la VM al crearla (es gratis, pero cambia si detienes/arrancas la VM →
+        entonces se re-apunta el DNS, FASE C.3):
        gcloud compute instances describe <VM_NOMBRE> --zone=<ZONA> \
          --format='get(networkInterfaces[0].accessConfigs[0].natIP)'   # → <IP_PUBLICA>
 
@@ -270,10 +285,12 @@ Let's Encrypt (02-ssl.sh) valida el dominio por HTTP-01: el dominio DEBE resolve
        2. En "domains", escribe <SUBDOMINIO> y pulsa "add domain".
           → tu dominio queda: <SUBDOMINIO>.duckdns.org  (= <DOMINIO>)
        3. Copia tu TOKEN (arriba de la página) → <TOKEN_DUCKDNS>.
-  C.2  Apuntar el subdominio a <IP_PUBLICA>
-       Panel web: escribe <IP_PUBLICA> en "current ip" y pulsa "update ip". O:
-         curl "https://www.duckdns.org/update?domains=<SUBDOMINIO>&token=<TOKEN_DUCKDNS>&ip=<IP_PUBLICA>"
-         # Respuesta esperada: OK
+  C.2  Apuntar el subdominio a <IP_PUBLICA>   — haz SOLO UNA de las dos opciones:
+       · Opción 1 (panel web): escribe <IP_PUBLICA> en "current ip" y pulsa "update ip".
+       · Opción 2 (curl):
+           curl "https://www.duckdns.org/update?domains=<SUBDOMINIO>&token=<TOKEN_DUCKDNS>&ip=<IP_PUBLICA>"
+           # Respuesta esperada: OK
+       (No hace falta hacer las dos: ambas dejan el mismo registro apuntando a la IP.)
   C.3  RE-APUNTAR si la IP efímera cambia (tras stop/start de la VM)
        Vuelve a obtener la IP (FASE A) y re-ejecuta el curl de C.2 con la nueva IP.
        (Opcional) cron dentro de la VM cada 5 min (ip= vacío → DuckDNS usa la IP de origen):
@@ -351,7 +368,7 @@ dominio va como argumento (<DOMINIO>) en cada script que lo requiere.
   6. Script 04 — Firewall del SO (ufw dentro de la VM):
        sudo bash 04-firewall.sh
   7. Script 05 — Verificación post-despliegue (smoke tests):
-       bash 05-verify.sh
+       bash 05-verify.sh <DOMINIO>          # el dominio es obligatorio (9/9 PASS)
 
 
 ================================================================================
@@ -397,7 +414,12 @@ FASE G — GO-LIVE (🏭 PRODUCCIÓN)  /  LIMPIEZA (🧪 PRUEBA)
   [ ] OPS-B3 — Cargar los datos maestros del cliente (categorías, productos,
               proveedores, clientes, saldos iniciales de stock).
   [ ] OPS-B1/B2 — Configurar el backup diario de PostgreSQL + probar la restauración.
-  [ ] Confirmar la renovación automática del certificado SSL (cron de certbot).
+  [ ] Confirmar la renovación automática del certificado SSL:
+        systemctl is-active certbot.timer                                  # → active
+        ls -l /etc/letsencrypt/renewal-hooks/deploy/reload-frontend.sh     # ejecutable
+        sudo certbot renew --run-deploy-hooks                              # prueba el hook
+        cat /var/log/almacenes-cert-renew.log                             # bitácora del reinicio
+      (Es certbot.timer + renewal-hooks, NO un cron manual — ver 02-ssl.sh paso 8.)
   [ ] (Recomendado) Monitoreo/alertas y política de retención de logs.
   La VM es PERMANENTE — NO se destruye.
 

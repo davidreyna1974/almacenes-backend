@@ -2,8 +2,8 @@
 # ============================================================
 # SCRIPT 03 — DESPLIEGUE DE SERVICIOS DOCKER
 # Sistema  : Almacenes — codigoCodigoEnter
-# Dominio  : almacenes.codigo2enter.com
-# Versión  : 1.0 (2026-06-18)
+# Dominio  : (se pasa como argumento — agnóstico del dominio)
+# Versión  : 1.1 (2026-07-06)
 #
 # Descripción:
 #   - Solicita interactivamente las variables de entorno de
@@ -14,14 +14,16 @@
 #   - Espera a que el backend esté disponible antes de salir.
 #
 # Prerequisitos:
-#   - Scripots 01 y 02 ejecutados exitosamente
+#   - Scripts 01 y 02 ejecutados exitosamente
 #   - Certificado SSL presente en /etc/letsencrypt/live/<dominio>/
 #   - Sesión SSH reiniciada (para que el grupo docker surta efecto)
-#   - environment.prod.ts en el repo frontend actualizado con
-#     apiUrl: 'https://almacenes.codigo2enter.com/api/v1'
+#   - environment.prod.ts usa apiUrl relativo ('/api/v1') — el frontend
+#     es agnóstico del dominio; nginx resuelve el dominio vía ${DOMAIN}
 #
-# Cómo ejecutar:
-#   bash 03-deploy.sh
+# Cómo ejecutar (el dominio es OBLIGATORIO):
+#   bash 03-deploy.sh <dominio>
+#   bash 03-deploy.sh almacenes.codigo2enter.com       (producción)
+#   bash 03-deploy.sh mi-subdominio.duckdns.org        (modo prueba)
 #   (sin sudo — el usuario ya pertenece al grupo docker)
 #
 # Qué hace paso a paso:
@@ -46,7 +48,13 @@ err()  { echo -e "  ${RED}✘ ERROR: $1${NC}"; exit 1; }
 
 DEPLOY_DIR="/opt/almacenes"
 ENV_FILE="$DEPLOY_DIR/.env"
-DOMAIN="${1:-almacenes.codigo2enter.com}"
+
+# El dominio es OBLIGATORIO — no se asume ningún dominio por defecto (el
+# despliegue es agnóstico del dominio). Antes usaba ${1:-almacenes.codigo2enter.com}:
+# ejecutar sin argumento asumía el dominio corporativo y fallaba confusamente
+# ("Certificado SSL no encontrado en .../almacenes.codigo2enter.com"). (finding #7 prueba GCP)
+[[ $# -lt 1 ]] && err "Falta el dominio. Uso: bash 03-deploy.sh <dominio>  (ej. mi-subdominio.duckdns.org)"
+DOMAIN="$1"
 
 echo ""
 echo -e "${BLUE}============================================================${NC}"
@@ -73,8 +81,13 @@ ok "Docker disponible"
 ok "Directorio $DEPLOY_DIR existe"
 
 # ¿Existe el certificado SSL?
+# Este script corre SIN sudo (el usuario está en el grupo docker), pero
+# Let's Encrypt deja /etc/letsencrypt/live y /archive accesibles solo por root.
+# Un `[[ -f ]]` como usuario no-root daba falso (no puede atravesar el dir) →
+# error engañoso "Certificado SSL no encontrado" aunque el cert existiera.
+# Usamos `sudo test -f` para verificar como root. (finding #8 prueba GCP)
 CERT_PATH="/etc/letsencrypt/live/$DOMAIN"
-if [[ ! -f "$CERT_PATH/fullchain.pem" ]] || [[ ! -f "$CERT_PATH/privkey.pem" ]]; then
+if ! sudo test -f "$CERT_PATH/fullchain.pem" || ! sudo test -f "$CERT_PATH/privkey.pem"; then
     err "Certificado SSL no encontrado en $CERT_PATH.\n     Ejecuta primero: sudo bash 02-ssl.sh $DOMAIN"
 fi
 ok "Certificado SSL presente en $CERT_PATH"
@@ -445,19 +458,24 @@ docker compose -f "$DEPLOY_DIR/docker-compose.yml" ps
 # Spring, conexión a BD, validación Hibernate del esquema).
 # /actuator/health retorna {"status":"UP"} cuando está listo.
 echo "  Esperando a que el backend esté disponible..."
-MAX_WAIT=120
+# MAX_WAIT configurable (env). 240s por defecto: en VM chica (e2-medium, 2 vCPU)
+# el arranque de Spring Boot + validación Hibernate puede pasar de 120s. (finding #9 prueba GCP)
+MAX_WAIT="${BACKEND_MAX_WAIT:-240}"
 ELAPSED=0
 INTERVAL=5
 
-echo "  (timeout: ${MAX_WAIT}s)"
+echo "  (timeout: ${MAX_WAIT}s — configurable con BACKEND_MAX_WAIT)"
+# La imagen del backend (eclipse-temurin:17-jre-alpine) NO trae curl — solo el
+# wget de busybox. Usar `curl` aquí daba SIEMPRE timeout ("exec: curl: not found")
+# aunque el backend estuviera UP → el despliegue parecía fallar sin fallar. (finding #9 prueba GCP)
 until docker compose -f "$DEPLOY_DIR/docker-compose.yml" exec -T backend \
-    curl -sf http://localhost:8080/actuator/health &>/dev/null; do
+    wget -q -O- http://localhost:8080/actuator/health 2>/dev/null | grep -q '"status":"UP"'; do
     echo -n "  ."
     sleep $INTERVAL
     ELAPSED=$((ELAPSED + INTERVAL))
     if [[ $ELAPSED -ge $MAX_WAIT ]]; then
         echo ""
-        err "El backend no respondió en ${MAX_WAIT}s.\n     Logs: docker compose -f $DEPLOY_DIR/docker-compose.yml logs backend"
+        err "El backend no respondió en ${MAX_WAIT}s.\n     Logs: docker compose -f $DEPLOY_DIR/docker-compose.yml exec backend tail -100 /var/log/almacenes/app.log"
     fi
 done
 

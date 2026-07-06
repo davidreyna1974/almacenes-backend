@@ -2,13 +2,14 @@
 # ============================================================
 # SCRIPT 02 — OBTENCIÓN DE CERTIFICADO SSL
 # Sistema  : Almacenes — codigoCodigoEnter
-# Dominio  : almacenes.codigo2enter.com
-# Versión  : 1.0 (2026-06-18)
+# Dominio  : (se pasa como argumento — agnóstico del dominio)
+# Versión  : 1.1 (2026-07-06)
 #
 # Descripción:
 #   Instala certbot y obtiene el certificado SSL/TLS gratuito
 #   de Let's Encrypt para el dominio de producción.
-#   Configura la renovación automática via cron.
+#   Configura la renovación automática vía el timer nativo de
+#   certbot (certbot.timer) + renewal-hooks que reinician nginx.
 #
 # Prerequisitos OBLIGATORIOS antes de ejecutar:
 #   1. El registro DNS del dominio debe apuntar a la IP de
@@ -17,8 +18,9 @@
 #      challenge HTTP-01 de verificación de dominio)
 #   3. Script 01 ejecutado exitosamente
 #
-# Cómo ejecutar:
-#   sudo bash 02-ssl.sh almacenes.codigo2enter.com
+# Cómo ejecutar (el dominio es OBLIGATORIO):
+#   sudo bash 02-ssl.sh almacenes.codigo2enter.com     (producción)
+#   sudo bash 02-ssl.sh mi-subdominio.duckdns.org      (modo prueba)
 #
 # Qué hace paso a paso:
 #   1. Verifica privilegios de root
@@ -28,7 +30,7 @@
 #   5. Instala certbot
 #   6. Obtiene el certificado SSL (challenge HTTP-01)
 #   7. Verifica que los archivos del certificado existen
-#   8. Configura renovación automática via cron
+#   8. Configura la renovación automática (certbot.timer + renewal-hooks)
 # ============================================================
 
 set -euo pipefail
@@ -37,6 +39,7 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC
 step() { echo -e "\n${BLUE}▶ $1${NC}"; }
 ok()   { echo -e "  ${GREEN}✔ $1${NC}"; }
 warn() { echo -e "  ${YELLOW}⚠ $1${NC}"; }
+info() { echo -e "  ${YELLOW}ℹ${NC}      $1"; }
 err()  { echo -e "  ${RED}✘ ERROR: $1${NC}"; exit 1; }
 
 echo ""
@@ -168,29 +171,81 @@ ok "privkey.pem existe"
 ok "Vencimiento: $EXPIRY"
 
 # ============================================================
-# PASO 8 — Configurar renovación automática via cron
+# PASO 8 — Configurar renovación automática (certbot.timer + hooks)
 # ============================================================
-# Let's Encrypt emite certificados válidos por 90 días.
-# certbot renew verifica si el certificado vence en menos de
-# 30 días y lo renueva si es necesario.
+# Let's Encrypt emite certificados válidos por 90 días. El paquete
+# apt de certbot YA instala y habilita `certbot.timer` (systemd), que
+# corre `certbot renew` dos veces al día. Renovar via un cron manual
+# propio es redundante y frágil (en la prueba GCP el cron ni siquiera
+# quedó registrado). Por eso NO agregamos cron: usamos el timer nativo
+# + renewal-hooks. (finding #6 prueba GCP)
 #
-# El cron se ejecuta diariamente a las 3:00 AM.
-# pre-hook : detiene el contenedor frontend para liberar el
-#            puerto 443 (nginx dentro del contenedor lo usa).
-# post-hook: reinicia el contenedor frontend con el nuevo
-#            certificado (que está montado como volumen :ro).
+# El problema que resuelven los hooks:
+#   - `certbot renew` usa --standalone (como en la emisión) → necesita
+#     el puerto 80 libre, pero el contenedor frontend (nginx) lo ocupa.
+#   - Aunque el ARCHIVO del cert se renueve, nginx sigue sirviendo el
+#     cert VIEJO hasta que el contenedor frontend se reinicia.
+#
+# Solución con renewal-hooks (se ejecutan SOLO cuando hay renovación real):
+#   pre/    → detiene frontend (libera el puerto 80 para el challenge)
+#   deploy/ → (solo si renovó con éxito) reinicia frontend + deja bitácora
+#   post/   → arranca frontend siempre (red de seguridad ante fallos)
 step "8/8 Configurando renovación automática del certificado..."
-CRON_JOB="0 3 * * * certbot renew --quiet --pre-hook \"docker compose -f /opt/almacenes/docker-compose.yml stop frontend\" --post-hook \"docker compose -f /opt/almacenes/docker-compose.yml start frontend\""
 
-if crontab -l 2>/dev/null | grep -q "certbot renew"; then
-    warn "Ya existe una tarea cron para renovación de certificado. Se omite."
+HOOKS_DIR="/etc/letsencrypt/renewal-hooks"
+COMPOSE="/opt/almacenes/docker-compose.yml"
+RENEW_LOG="/var/log/almacenes-cert-renew.log"
+mkdir -p "$HOOKS_DIR/pre" "$HOOKS_DIR/deploy" "$HOOKS_DIR/post"
+
+# pre-hook: liberar el puerto 80 deteniendo el frontend
+cat > "$HOOKS_DIR/pre/stop-frontend.sh" <<EOF
+#!/bin/bash
+# Detiene el contenedor frontend para liberar el puerto 80 durante el
+# challenge HTTP-01 de la renovación. Generado por 02-ssl.sh.
+docker compose -f "$COMPOSE" stop frontend || true
+EOF
+
+# deploy-hook: solo corre si el certificado se renovó con éxito
+cat > "$HOOKS_DIR/deploy/reload-frontend.sh" <<EOF
+#!/bin/bash
+# Reinicia el frontend para que nginx cargue el certificado renovado, y
+# deja evidencia en la bitácora. Solo se ejecuta cuando certbot renueva
+# de verdad (o con 'certbot renew --run-deploy-hooks'). Generado por 02-ssl.sh.
+echo "\$(date '+%Y-%m-%d %H:%M:%S') — cert renovado; reiniciando frontend (deploy-hook)" >> "$RENEW_LOG"
+docker compose -f "$COMPOSE" restart frontend
+EOF
+
+# post-hook: garantizar que el frontend quede arriba pase lo que pase
+cat > "$HOOKS_DIR/post/start-frontend.sh" <<EOF
+#!/bin/bash
+# Red de seguridad: arranca el frontend tras cada intento de renovación
+# (aunque haya fallado, para no dejar el sitio caído). Generado por 02-ssl.sh.
+docker compose -f "$COMPOSE" start frontend || true
+EOF
+
+chmod +x "$HOOKS_DIR/pre/stop-frontend.sh" \
+         "$HOOKS_DIR/deploy/reload-frontend.sh" \
+         "$HOOKS_DIR/post/start-frontend.sh"
+ok "Renewal-hooks creados (pre/deploy/post) en $HOOKS_DIR"
+
+# Asegurar que el timer nativo de certbot está habilitado y activo
+if systemctl list-unit-files 2>/dev/null | grep -q '^certbot.timer'; then
+    systemctl enable --now certbot.timer 2>/dev/null || true
+    TIMER_STATE=$(systemctl is-active certbot.timer 2>/dev/null || echo "inactivo")
+    ok "certbot.timer: $TIMER_STATE"
 else
-    (crontab -l 2>/dev/null; echo "$CRON_JOB") | crontab -
-    ok "Cron configurado: renovación diaria a las 3:00 AM"
+    warn "No se encontró certbot.timer. Verifica la instalación de certbot (apt)."
 fi
 
-# Verificar que el cron quedó registrado
-ok "Cron activo: $(crontab -l | grep certbot)"
+# Limpiar un posible cron manual heredado de versiones anteriores del script
+if crontab -l 2>/dev/null | grep -q "certbot renew"; then
+    crontab -l 2>/dev/null | grep -v "certbot renew" | crontab - || true
+    warn "Se eliminó un cron manual 'certbot renew' heredado (ahora lo maneja certbot.timer)."
+fi
+
+echo ""
+info "Para probar los hooks SIN esperar 90 días ni gastar el rate limit:"
+info "  sudo certbot renew --run-deploy-hooks   (dispara el deploy-hook y verás la bitácora en $RENEW_LOG)"
 
 # ============================================================
 # RESUMEN FINAL
@@ -204,8 +259,9 @@ echo "  Dominio    : $DOMAIN"
 echo "  Certificado: $CERT_PATH/fullchain.pem"
 echo "  Clave      : $CERT_PATH/privkey.pem"
 echo "  Vencimiento: $EXPIRY"
-echo "  Renovación : automática (cron diario 3:00 AM)"
+echo "  Renovación : automática (certbot.timer + renewal-hooks)"
+echo "  Bitácora   : $RENEW_LOG (se escribe al renovar/reiniciar frontend)"
 echo ""
-echo -e "${YELLOW}  SIGUIENTE PASO:${NC}"
-echo "  bash 03-deploy.sh"
+echo -e "${YELLOW}  SIGUIENTE PASO (pasa el mismo dominio):${NC}"
+echo "  bash 03-deploy.sh $DOMAIN"
 echo ""

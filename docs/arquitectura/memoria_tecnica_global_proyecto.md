@@ -643,6 +643,7 @@ secreto entra al historial de git, debe considerarse comprometido.
 | Módulo `returns` (devoluciones) | Media | Depende del flujo de UX del frontend para definir estados |
 | Tests B* en `SecurityFilterTest` para Swagger | Baja | Swagger usa sus propios endpoints — requiere `@SpringBootTest` |
 | Paginación en endpoints de `reports` | Baja | Reports son analíticos — datos ya agregados, volumen bajo |
+| `DataInitializer`: admin bootstrap solo con `ROLE_ADMIN` (quitar `ROLE_WAREHOUSEMAN`) | Baja | Hoy el admin por defecto se crea con `ROLE_ADMIN` + `ROLE_WAREHOUSEMAN` (líneas 57-58). Es redundante (ADMIN ya tiene acceso total) y no cumple mínimo privilegio. Mejora v1.1: crear el bootstrap solo con `ROLE_ADMIN`; los usuarios por rol se crean después (OPS-B5). Detectado en la prueba de despliegue en GCP (2026-07-06). |
 
 ### Frontend — en curso
 

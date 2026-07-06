@@ -421,8 +421,9 @@ docker compose -f /opt/almacenes/docker-compose.yml ps
 # almacenes-frontend-1 Up X minutes
 
 # El backend debe responder
+# (usar wget, NO curl: la imagen jre-alpine del backend no trae curl)
 docker compose -f /opt/almacenes/docker-compose.yml exec backend \
-  curl -sf http://localhost:8080/actuator/health
+  wget -qO- http://localhost:8080/actuator/health
 # Resultado esperado: {"status":"UP"}
 # (application-prod.yaml usa management.endpoint.health.show-details: never, por lo
 #  que NO se muestran los 'components'; ver el detalle de la BD con la consulta de abajo.)
@@ -755,7 +756,7 @@ docker compose -f /opt/almacenes/docker-compose.yml start backend
 
 # 5. Verificar que el backend está saludable
 docker compose -f /opt/almacenes/docker-compose.yml exec backend \
-  curl -sf http://localhost:8080/actuator/health
+  wget -qO- http://localhost:8080/actuator/health
 ```
 
 **Para verificar la restauración sin tocar producción** (recomendado antes del go-live):
@@ -912,7 +913,7 @@ df -h /opt/almacenes/
 | Backend no arranca / `CORS` rechaza peticiones | `CORS_ALLOWED_ORIGINS` no está en `.env` | Agregar `CORS_ALLOWED_ORIGINS=https://dominio` al `.env` y reiniciar backend |
 | `/login` devuelve 404 | nginx sin `try_files` para SPA | Verificar `nginx.conf` en el Dockerfile del frontend |
 | HTTPS no responde o devuelve error de certificado | Certificados no montados correctamente | Verificar que `/etc/letsencrypt/live/dominio/` tiene `fullchain.pem` y que el volumen está montado en el contenedor frontend |
-| Certificado SSL vencido | Cron de renovación no funciona | `sudo certbot renew --force-renewal` |
+| Certificado SSL vencido | `certbot.timer` o el deploy-hook no corrieron | Verificar `systemctl is-active certbot.timer` y `ls -l /etc/letsencrypt/renewal-hooks/deploy/reload-frontend.sh`; forzar: `sudo certbot renew --force-renewal` (el deploy-hook reinicia el frontend) |
 | Puerto 8080 accesible desde internet | Docker bypass de iptables | Ejecutar `sudo bash 04-firewall.sh` de nuevo |
 | `pg_dump` falla en el backup | Contenedor `db` detenido | `docker compose -f /opt/almacenes/docker-compose.yml start db` |
 | Login con `admin`/`Admin123!` falla | Contraseña ya fue cambiada o BD vacía | Usar la nueva contraseña o verificar que el backend arrancó correctamente |
@@ -929,9 +930,9 @@ Infraestructura
 [ ] DNS: almacenes.codigo2enter.com → IP del servidor (verificado con nslookup)
 [ ] Repositorios: develop mergeado a main en backend y frontend
 [ ] Script 01: Docker instalado, sesión SSH reabierta
-[ ] Script 02: Certificado SSL obtenido y cron de renovación configurado
+[ ] Script 02: Certificado SSL obtenido y renovación automática (certbot.timer + renewal-hooks) configurada
 [ ] Script 03: Tres contenedores corriendo; BD inicializada (unaccent, 12 tablas, 4 roles, 10 índices); /actuator/health UP
-[ ] Script 05: Firewall activo — 8080 y 5432 bloqueados desde exterior
+[ ] Script 04: Firewall activo — 8080 y 5432 bloqueados desde exterior
 
 Datos y acceso
 [ ] Carga de datos iniciales completada (Opción A UI o Opción B SQL)
@@ -954,4 +955,4 @@ Verificación final
 ---
 
 *Documento generado junto con el plan de producción `docs/arquitectura/plan_salida_produccion_v1_almacenes.txt`.*
-*Última actualización: 2026-06-19*
+*Última actualización: 2026-07-06 (correcciones de la prueba de despliegue en GCP).*

@@ -2,7 +2,7 @@
   GUÍA DE DESPLIEGUE EN VM DE GOOGLE CLOUD (GCP)
   Sistema de Gestión de Almacenes — "Almacenes"
   Región de ejemplo: northamerica-south1 (Querétaro, México) — ajústala a la tuya
-  Documento: guia_implementacion_vm_gcp_almacenes.txt · v2.0 · 2026-07-05
+  Documento: guia_implementacion_vm_gcp_almacenes.txt · v2.1 · 2026-07-06
 ================================================================================
 
 --------------------------------------------------------------------------------

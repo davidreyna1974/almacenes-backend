@@ -363,11 +363,14 @@ dominio va como argumento (<DOMINIO>) en cada script que lo requiere.
   4. Script 03 — Despliegue Docker (build + up de los 3 contenedores):
        bash 03-deploy.sh <DOMINIO>
        (Sin edición de archivos — el dominio va como argumento; ver FASE D.)
-  5. Inicializar la BD (schema versionado):
-       bash maint-db.sh --schema /opt/almacenes/backend/src/main/resources/schema.sql
-  6. Script 04 — Firewall del SO (ufw dentro de la VM):
+       ⚠️ 03 YA INICIALIZA LA BD en el primer despliegue: carga schema.sql (12 tablas),
+          inserta los 4 roles, crea los 10 índices e instala la extensión unaccent.
+          NO ejecutes `maint-db.sh --schema` por tu cuenta después: schema.sql usa
+          CREATE TABLE/FUNCTION sin IF NOT EXISTS → duplicaría objetos y daría ERROR.
+          `maint-db.sh` es solo mantenimiento/fallback (ver INSTRUCTIVO).
+  5. Script 04 — Firewall del SO (ufw dentro de la VM):
        sudo bash 04-firewall.sh
-  7. Script 05 — Verificación post-despliegue (smoke tests):
+  6. Script 05 — Verificación post-despliegue (smoke tests):
        bash 05-verify.sh <DOMINIO>          # el dominio es obligatorio (9/9 PASS)
 
 

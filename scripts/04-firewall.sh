@@ -2,8 +2,8 @@
 # ============================================================
 # SCRIPT 04 — CONFIGURACIÓN DEL FIREWALL (ufw)
 # Sistema  : Almacenes — codigoCodigoEnter
-# Dominio  : almacenes.codigo2enter.com
-# Versión  : 1.0 (2026-06-18)
+# Dominio  : (agnóstico del dominio — el firewall no usa el dominio)
+# Versión  : 1.1 (2026-07-06)
 #
 # Descripción:
 #   Configura el firewall ufw (Uncomplicated Firewall) del

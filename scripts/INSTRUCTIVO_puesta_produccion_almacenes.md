@@ -59,7 +59,7 @@ PREREQUISITOS
 [02-ssl.sh dominio]      → Certificado SSL en /etc/letsencrypt/
         │
         ▼
-[03-deploy.sh]           → .env + docker-compose.yml creados, imágenes construidas,
+[03-deploy.sh dominio]   → .env + docker-compose.yml creados, imágenes construidas,
         │                   DB inicializada (unaccent, schema.sql, roles, 10 índices),
         │                   backend y frontend activos, /actuator/health OK
         ▼
@@ -75,7 +75,7 @@ PREREQUISITOS
 [PASO MANUAL — OPS-B1/B2] → Configuración de backup automático diario
         │
         ▼
-[05-verify.sh]           → 8/8 smoke tests PASS → PRODUCCIÓN ACTIVA
+[05-verify.sh dominio]   → 9/9 smoke tests PASS → PRODUCCIÓN ACTIVA
         │
         ▼
 https://almacenes.codigo2enter.com
@@ -271,21 +271,25 @@ ls /opt/almacenes/        # backend/  frontend/
 > ```bash
 > exit          # cerrar sesión actual
 > ssh usuario@IP-DEL-SERVIDOR   # nueva sesión
-> cd ~/scripts-almacenes/
+> cd /opt/almacenes/backend/scripts/
 > ```
 
 ---
 
 ## Script 02 — Obtención del certificado SSL
 
-**Ejecutar como:** `sudo bash 02-ssl.sh almacenes.codigo2enter.com`
+**Ejecutar como:** `sudo bash 02-ssl.sh <DOMINIO>`
+> Sustituye `<DOMINIO>` por tu dominio real. En producción: `almacenes.codigo2enter.com`.
+> En modo prueba: tu subdominio, p.ej. `mi-subdominio.duckdns.org`. El dominio es
+> **obligatorio** (el script aborta si falta).
 
 **Qué hace:**
 - Verifica que el registro DNS del dominio resuelve a este servidor
 - Verifica que el puerto 80 está libre (lo necesita certbot para el challenge)
 - Instala `certbot` (herramienta oficial de Let's Encrypt)
 - Obtiene el certificado SSL/TLS gratuito (válido 90 días)
-- Configura renovación automática via cron (`0 3 * * * certbot renew --quiet`)
+- Configura la renovación automática con el **timer nativo de certbot**
+  (`certbot.timer`) + **renewal-hooks** que reinician nginx con el cert renovado
 
 **Tiempo estimado:** 2–3 minutos
 
@@ -299,7 +303,7 @@ ls /opt/almacenes/        # backend/  frontend/
 **Dónde quedan los certificados:**
 
 ```
-/etc/letsencrypt/live/almacenes.codigo2enter.com/
+/etc/letsencrypt/live/<DOMINIO>/
 ├── fullchain.pem   ← certificado + cadena de confianza (para nginx)
 └── privkey.pem     ← clave privada (protegida, solo lectura de root)
 ```
@@ -307,20 +311,31 @@ ls /opt/almacenes/        # backend/  frontend/
 **Verificación manual después de ejecutar:**
 
 ```bash
-ls -la /etc/letsencrypt/live/almacenes.codigo2enter.com/
+sudo ls -la /etc/letsencrypt/live/<DOMINIO>/
 # Debe mostrar fullchain.pem y privkey.pem
+# (nota el sudo: /etc/letsencrypt/live es de solo lectura de root)
 
-# Verificar configuración de renovación automática
-sudo crontab -l | grep certbot
-# Debe mostrar algo como: 0 3 * * * certbot renew --quiet
+# Verificar la renovación automática (timer nativo de certbot, NO cron)
+systemctl is-active certbot.timer          # → active
+systemctl list-timers certbot.timer        # próxima ejecución programada
+
+# Verificar los renewal-hooks que reinician nginx tras renovar
+ls -l /etc/letsencrypt/renewal-hooks/deploy/reload-frontend.sh   # debe ser ejecutable
+
+# Probar el deploy-hook SIN renovar de verdad (no gasta el rate limit):
+sudo certbot renew --run-deploy-hooks
+cat /var/log/almacenes-cert-renew.log      # debe registrar el reinicio del frontend
 ```
 
 ---
 
 ## Script 03 — Despliegue de servicios Docker
 
-**Ejecutar como:** `bash 03-deploy.sh`
+**Ejecutar como:** `bash 03-deploy.sh <DOMINIO>`
 *(sin sudo — el usuario ya está en el grupo docker tras reabrir la sesión)*
+> Pasa el **mismo `<DOMINIO>`** que usaste en `02-ssl.sh`. Es **obligatorio**: el
+> script aborta si falta (así nginx toma la ruta correcta del certificado). En modo
+> prueba, tu subdominio DuckDNS, p.ej. `bash 03-deploy.sh mi-subdominio.duckdns.org`.
 
 **Qué hace:**
 - Si ya existe un `.env`, pregunta si sobreescribir (responde `N` si es re-despliegue)
@@ -337,7 +352,9 @@ sudo crontab -l | grep certbot
   - **Re-despliegues**: detecta tablas existentes y omite la carga del esquema
   - Crea los 10 índices de rendimiento (`IF NOT EXISTS` — idempotente en re-despliegues)
 - **Levanta backend y frontend** una vez la BD está lista
-- Espera hasta 120 segundos a que el backend responda en `/actuator/health`
+- Espera hasta 240 segundos a que el backend responda en `/actuator/health`
+  (configurable con `BACKEND_MAX_WAIT`; el sondeo usa `wget`, no `curl`, porque la
+  imagen `jre-alpine` no trae curl)
 
 > **Por qué esta secuencia:** El backend usa `ddl-auto: validate` en producción. Hibernate
 > NO crea tablas — solo verifica que existan. Si el backend arranca con una BD vacía,
@@ -374,9 +391,11 @@ SPRING_DATASOURCE_USERNAME=almacenes_user
 SPRING_DATASOURCE_PASSWORD=<la que ingresaste>
 JWT_SECRET=<generado automáticamente — 512 bits>
 SPRING_PROFILES_ACTIVE=prod
-CORS_ALLOWED_ORIGINS=https://almacenes.codigo2enter.com
-DOMAIN=almacenes.codigo2enter.com
+CORS_ALLOWED_ORIGINS=https://<DOMINIO>
+DOMAIN=<DOMINIO>
 ```
+> `CORS_ALLOWED_ORIGINS` y `DOMAIN` los deriva el script del `<DOMINIO>` que le pasaste
+> como argumento (en producción `almacenes.codigo2enter.com`; en modo prueba tu DuckDNS).
 
 > ⚠ **El archivo `.env` NUNCA debe subirse al repositorio.** Está en `.gitignore`.
 > Guarda la contraseña de la BD y el `JWT_SECRET` fuera del servidor
@@ -487,7 +506,7 @@ creado por `DataInitializer`). Hay dos opciones para poblarla:
 
 ### Opción A — Entrada manual por la UI (recomendada si los datos son pocos)
 
-1. Abrir `https://almacenes.codigo2enter.com` en el navegador.
+1. Abrir `https://<DOMINIO>` en el navegador (tu dominio real; en modo prueba, tu DuckDNS).
 2. Iniciar sesión con `admin` / `Admin123!` (ver sección siguiente para cambiar contraseña).
 3. Ir a **Inventario → Categorías** y crear las categorías de la empresa.
 4. Ir a **Compras → Proveedores** y registrar los proveedores.
@@ -503,7 +522,7 @@ Si tienes datos exportados de un sistema anterior en formato SQL:
 scp /ruta/local/datos_produccion.sql usuario@IP-DEL-SERVIDOR:~/
 
 # Ejecutar la carga
-bash ~/scripts-almacenes/maint-db.sh --schema ~/datos_produccion.sql
+bash /opt/almacenes/backend/scripts/maint-db.sh --schema ~/datos_produccion.sql
 ```
 
 El script `maint-db.sh --schema` carga el archivo SQL dentro del contenedor
@@ -525,7 +544,7 @@ docker compose -f /opt/almacenes/docker-compose.yml exec db \
   -c "SELECT count(*) FROM categories WHERE active = true;"
 
 # Verificar desde la UI
-# https://almacenes.codigo2enter.com → Inventario → Productos
+# https://<DOMINIO> → Inventario → Productos
 # La tabla debe mostrar los productos cargados
 ```
 
@@ -549,7 +568,7 @@ de usuario disponible aún en el frontend):
 
 ```bash
 # 1a. Obtener un token JWT del admin (con la contraseña actual)
-TOKEN=$(curl -s -X POST https://almacenes.codigo2enter.com/api/v1/auth/login \
+TOKEN=$(curl -s -X POST https://<DOMINIO>/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"Admin123!"}' \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
@@ -557,7 +576,7 @@ TOKEN=$(curl -s -X POST https://almacenes.codigo2enter.com/api/v1/auth/login \
 echo "Token obtenido: ${TOKEN:0:50}..."
 
 # 1b. Cambiar la contraseña usando el token
-curl -s -X PUT https://almacenes.codigo2enter.com/api/v1/auth/me/password \
+curl -s -X PUT https://<DOMINIO>/api/v1/auth/me/password \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d '{
@@ -587,12 +606,12 @@ Crear un usuario para cada persona que usará el sistema. El rol define qué pue
 
 ```bash
 # Ejemplo: crear usuario para el jefe de almacén
-TOKEN=$(curl -s -X POST https://almacenes.codigo2enter.com/api/v1/auth/login \
+TOKEN=$(curl -s -X POST https://<DOMINIO>/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"<NUEVA-CONTRASEÑA>"}' \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
 
-curl -s -X POST https://almacenes.codigo2enter.com/api/v1/auth/users \
+curl -s -X POST https://<DOMINIO>/api/v1/auth/users \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d '{
@@ -610,7 +629,7 @@ Repetir este comando para cada miembro del equipo, ajustando `username`, `passwo
 
 ```bash
 # Verificar que el nuevo usuario puede hacer login
-curl -s -X POST https://almacenes.codigo2enter.com/api/v1/auth/login \
+curl -s -X POST https://<DOMINIO>/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"jefe.almacen","password":"Almacen@2026!"}' \
   | python3 -c "import sys,json; d=json.load(sys.stdin); print('Rol:', d.get('roles'))"
@@ -781,27 +800,29 @@ aws s3 cp "$BACKUP_FILE" s3://nombre-del-bucket/almacenes/
 
 ## Script 05 — Verificación post-despliegue (smoke tests)
 
-**Ejecutar como:** `bash 05-verify.sh`
-**Con dominio custom:** `bash 05-verify.sh almacenes.codigo2enter.com`
+**Ejecutar como:** `bash 05-verify.sh <DOMINIO>`
+> El dominio es **obligatorio** (el script aborta si falta). En producción
+> `almacenes.codigo2enter.com`; en modo prueba tu subdominio DuckDNS.
 
-**8 pruebas automatizadas:**
+**9 pruebas automatizadas:**
 
 | # | Qué verifica | Resultado esperado |
 |---|---|---|
 | 1 | Contenedores db, backend, frontend activos | `Up X minutes` |
-| 2 | Backend `/actuator/health` | `{"status":"UP"}` |
+| 2 | Backend `/actuator/health` (vía `wget`, no curl) | `{"status":"UP"}` |
 | 3 | HTTP → HTTPS redirección | `HTTP 301` |
 | 4 | HTTPS responde | `HTTP 200` |
 | 5 | Certificado SSL válido y no expirado | PASS con fecha de vencimiento |
 | 6 | API `/api/v1/auth/login` accesible | `HTTP 400` o `401` |
 | 7 | SPA routing `/login` devuelve index.html | `HTTP 200` |
 | 8 | Puerto 8080 bloqueado desde exterior | Connection refused |
+| 9 | Deploy-hook de renovación presente y ejecutable | PASS |
 
 **Resultado esperado:**
 
 ```
-8/8 PASS — SISTEMA EN PRODUCCIÓN — TODAS LAS PRUEBAS PASARON
-Acceso: https://almacenes.codigo2enter.com
+9/9 PASS — SISTEMA EN PRODUCCIÓN — TODAS LAS PRUEBAS PASARON
+Acceso: https://<DOMINIO>
 ```
 
 Si alguna prueba falla, el script muestra el detalle del error y sale con
@@ -834,7 +855,7 @@ docker compose -f /opt/almacenes/docker-compose.yml build backend   # o frontend
 docker compose -f /opt/almacenes/docker-compose.yml up -d --no-deps backend   # o frontend
 
 # 5. Verificar
-bash ~/scripts-almacenes/05-verify.sh
+bash /opt/almacenes/backend/scripts/05-verify.sh <DOMINIO>
 ```
 
 ---
@@ -925,7 +946,7 @@ Backup
 [ ] Restauración probada en BD de prueba temporal
 
 Verificación final
-[ ] bash 05-verify.sh → 8/8 PASS
+[ ] bash 05-verify.sh <DOMINIO> → 9/9 PASS
 [ ] Acceso https://almacenes.codigo2enter.com desde navegador externo
 [ ] Login con usuario real (no admin)
 ```

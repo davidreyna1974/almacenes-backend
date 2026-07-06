@@ -162,10 +162,13 @@ código, corrección con gatekeeper, re-ejecución y certificación), coordinada
 
 ## 📦 Despliegue
 
-El repositorio incluye scripts e instructivo de puesta en producción:
+El repositorio incluye scripts e instructivo de puesta en producción. El despliegue
+es **agnóstico del dominio**: el dominio se pasa como argumento a `02-ssl.sh`/`03-deploy.sh`
+(no se edita ningún archivo).
 
-- `scripts/` — scripts de despliegue a producción (preparación de servidor, SSL, deploy, firewall, verificación).
-- `scripts/INSTRUCTIVO_puesta_produccion_almacenes.md` — guía paso a paso de puesta en producción.
+- `scripts/` — scripts de despliegue a producción `01`–`05` (preparación de servidor, SSL, deploy, firewall, verificación) + `maint-db.sh`.
+- `scripts/INSTRUCTIVO_puesta_produccion_almacenes.md` — procedimiento paso a paso de puesta en producción (servidor físico o VM).
+- `scripts/guia_implementacion_vm_gcp_almacenes.txt` — guía de despliegue en una VM de Google Cloud (modo producción o modo prueba con limpieza de recursos).
 - `Dockerfile` — imagen del backend.
 
 > `scripts_beta/` contiene variantes locales/beta de los scripts anteriores.

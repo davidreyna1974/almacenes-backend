@@ -159,9 +159,30 @@ B.1  Abrir 80 y 443 en la VPC (el 22/SSH ya viene permitido por default-allow-ss
      NOTA: si en A.2 marcaste las casillas HTTP/HTTPS en la Consola, GCP ya creó
      reglas equivalentes (default-allow-http / default-allow-https) → este paso es
      opcional; verifícalo en B.2.
-     🏭 PRODUCCIÓN (recomendado): restringe el SSH a tu IP de administración en vez
-        de 0.0.0.0/0 (crea una regla tcp:22 con --source-ranges=<TU_IP>/32 y quita
-        o acota default-allow-ssh). Endurecimiento; no aplica al modo prueba.
+     🏭 PRODUCCIÓN (recomendado) — restringir el SSH a tu IP de administración:
+        Por defecto GCP crea la regla `default-allow-ssh` que permite SSH (tcp:22)
+        desde 0.0.0.0/0 (TODO internet). El firewall de GCP es ADITIVO/permisivo: si
+        solo agregas una regla restrictiva pero dejas esa regla amplia, el SSH SIGUE
+        abierto al mundo. Por eso hay que crear tu regla restrictiva Y ADEMÁS quitar
+        o acotar `default-allow-ssh`. Elige UNA de las dos:
+
+        1) Crear la regla que permite SSH solo desde tu IP:
+             gcloud compute firewall-rules create allow-ssh-admin \
+               --allow=tcp:22 --source-ranges=<TU_IP>/32 --target-tags=http-server
+           # Tu IP pública:  curl -s ifconfig.me   (o https://api.ipify.org)
+
+        2a) QUITAR la regla amplia (te quedas solo con la restrictiva):
+             gcloud compute firewall-rules delete default-allow-ssh
+        2b) O ACOTARLA (cambiar su origen a tu IP en vez de borrarla):
+             gcloud compute firewall-rules update default-allow-ssh \
+               --source-ranges=<TU_IP>/32
+
+        Resultado: el puerto 22 deja de estar abierto a todo internet.
+        ⚠️ Si tu IP de administración es DINÁMICA (cambia), acotar a una sola /32
+           puede dejarte fuera al cambiar. Alternativas: actualizar la regla cuando
+           cambie, usar una VPN con IP fija, o IAP for TCP forwarding (SSH sin exponer
+           el puerto 22 a internet).
+        Este endurecimiento NO aplica al modo prueba (🧪).
 
 B.2  Verificar las reglas de la VPC
      gcloud compute firewall-rules list \

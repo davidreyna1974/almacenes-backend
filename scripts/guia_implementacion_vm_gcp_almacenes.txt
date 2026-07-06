@@ -327,12 +327,7 @@ FASE E — EJECUTAR EL DESPLIEGUE (scripts 01–05)
 Secuencia del INSTRUCTIVO (detalle, salidas esperadas y diagnóstico allí). El
 dominio va como argumento (<DOMINIO>) en cada script que lo requiere.
 
-  1. Script 01 — Preparación del servidor (instala Docker + Compose v2):
-       sudo bash 01-prepare-server.sh
-  2. Script 02 — Certificado SSL con Let's Encrypt:
-       sudo bash 02-ssl.sh <DOMINIO>
-       (Requiere puerto 80 abierto en AMBOS firewalls y DNS ya apuntando — FASE B y C.)
-  3. Clonar los repos privados en /opt/almacenes/ (backend/ y frontend/).
+  1. CLONAR los repos privados PRIMERO (traen los scripts 01–05 + el código):
      🔐 Los repos son PRIVADOS → la VM necesita credenciales de GitHub. Elige UNA:
         · 🧪 Prueba (rápido): Personal Access Token de solo lectura:
             sudo mkdir -p /opt/almacenes && sudo chown -R $USER:$USER /opt/almacenes
@@ -340,17 +335,22 @@ dominio va como argumento (<DOMINIO>) en cada script que lo requiere.
             git clone https://<TU_TOKEN>@github.com/davidreyna1974/almacenes-frontend.git /opt/almacenes/frontend
         · 🏭 Producción (limpio): Deploy key (ssh-keygen en la VM → añadir la clave
             pública en cada repo → Settings → Deploy keys, solo lectura → clonar por SSH).
-        Detalle y verificación en el INSTRUCTIVO, "Paso previo al script 03 — Clonar
-        repositorios". Al clonar el backend obtienes también scripts/ (no hace falta scp).
-        (Alternativa: gcloud compute scp --recurse <repo>/ <VM>:/opt/almacenes/<repo>/)
-  4. (Sin edición de archivos — el dominio va como argumento; ver FASE D.)
-  5. Script 03 — Despliegue Docker (build + up de los 3 contenedores):
+        Detalle y verificación en el INSTRUCTIVO, "Paso previo — Clonar los repositorios".
+        (git viene en Ubuntu; si no: sudo apt-get update && sudo apt-get install -y git)
+        Desde aquí, ejecuta los scripts desde  /opt/almacenes/backend/scripts/.
+  2. Script 01 — Preparación del servidor (instala Docker + Compose v2):
+       sudo bash 01-prepare-server.sh
+  3. Script 02 — Certificado SSL con Let's Encrypt:
+       sudo bash 02-ssl.sh <DOMINIO>
+       (Requiere puerto 80 abierto en AMBOS firewalls y DNS ya apuntando — FASE B y C.)
+  4. Script 03 — Despliegue Docker (build + up de los 3 contenedores):
        bash 03-deploy.sh <DOMINIO>
-  6. Inicializar la BD (schema versionado):
+       (Sin edición de archivos — el dominio va como argumento; ver FASE D.)
+  5. Inicializar la BD (schema versionado):
        bash maint-db.sh --schema /opt/almacenes/backend/src/main/resources/schema.sql
-  7. Script 04 — Firewall del SO (ufw dentro de la VM):
+  6. Script 04 — Firewall del SO (ufw dentro de la VM):
        sudo bash 04-firewall.sh
-  8. Script 05 — Verificación post-despliegue (smoke tests):
+  7. Script 05 — Verificación post-despliegue (smoke tests):
        bash 05-verify.sh
 
 

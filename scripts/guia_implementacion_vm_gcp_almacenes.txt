@@ -427,15 +427,52 @@ FASE G — GO-LIVE (🏭 PRODUCCIÓN)  /  LIMPIEZA (🧪 PRUEBA)
   La VM es PERMANENTE — NO se destruye.
 
 🧪 PRUEBA — LIMPIEZA (destruir recursos para no seguir pagando):
-  G.1  Borrar la VM (incluye su disco):
-       gcloud compute instances delete <VM_NOMBRE> --zone=<ZONA>
-  G.2  Borrar la regla de firewall creada (opcional):
-       gcloud compute firewall-rules delete allow-web
-  G.3  Liberar la IP estática SOLO si la reservaste:
-       gcloud compute addresses delete <VM_NOMBRE>-ip --region=northamerica-south1
-  G.4  (Opcional) Liberar el subdominio DuckDNS desde su panel ("delete domain").
-  G.5  Verificar que no queda nada facturable:
-       gcloud compute instances list ; gcloud compute addresses list ; gcloud compute disks list
+
+  ⚠️ QUÉ CUESTA Y QUÉ NO (para no dejar recursos facturando por olvido):
+     · Cuestan:  VM (cómputo) · DISCO de arranque · IP estática RESERVADA no usada ·
+                 snapshots/imágenes personalizadas.
+     · Gratis:   reglas de firewall · red VPC (default) · IP EFÍMERA (se libera sola) ·
+                 subdominio DuckDNS (externo).
+     El olvido más común y caro es el DISCO: al borrar la VM el disco se borra SOLO si
+     tenía auto-delete (por defecto sí en VMs creadas por gcloud). Si detuviste la VM en
+     vez de borrarla, o el disco quedó huérfano, SIGUE facturando. Verifícalo (G.2).
+
+  G.1  Borrar la VM (con su disco de arranque):
+       gcloud compute instances delete <VM_NOMBRE> --zone=<ZONA> --delete-disks=all --quiet
+       # --delete-disks=all fuerza el borrado del/los disco(s) aunque auto-delete
+       #   estuviera desactivado. --quiet evita la confirmación interactiva.
+
+  G.2  Verificar que NO quedó ningún disco huérfano (esto es lo que más se olvida):
+       gcloud compute disks list
+       # Si aparece un disco del test sin VM asociada (columna USERS vacía) → bórralo:
+       gcloud compute disks delete <NOMBRE_DISCO> --zone=<ZONA> --quiet
+
+  G.3  Liberar la IP estática SOLO si reservaste una (la efímera se libera sola):
+       gcloud compute addresses list      # busca estado RESERVED y no IN_USE
+       gcloud compute addresses delete <VM_NOMBRE>-ip --region=northamerica-south1 --quiet
+
+  G.4  Borrar snapshots / imágenes personalizadas SI creaste alguna (normalmente no):
+       gcloud compute snapshots list
+       gcloud compute images list --no-standard-images
+       # Si hay algo del test:  gcloud compute snapshots delete <NOMBRE> --quiet
+
+  G.5  Borrar las reglas de firewall creadas (gratis, pero por higiene):
+       gcloud compute firewall-rules delete allow-web --quiet
+       # Si endureciste el SSH (B.1 prod), borra también tu regla dedicada:
+       gcloud compute firewall-rules delete allow-ssh-admin --quiet   # si la creaste
+
+  G.6  (Opcional) Liberar el subdominio DuckDNS desde su panel ("delete domain").
+
+  G.7  VERIFICACIÓN FINAL — que no quede NADA facturable (todo debe salir vacío):
+       gcloud compute instances list      # sin instancias
+       gcloud compute disks list          # sin discos del test
+       gcloud compute addresses list      # sin IPs RESERVED
+       gcloud compute snapshots list      # sin snapshots
+
+  G.8  OPCIÓN "CERO GARANTIZADO" — si creaste un PROYECTO dedicado solo para la prueba
+       (ver A.1), ciérralo entero: borra todo lo que contiene de un golpe y deja de
+       facturar de inmediato (queda ~30 días recuperable):
+       gcloud projects delete <PROYECTO_GCP>
 
 
 ================================================================================

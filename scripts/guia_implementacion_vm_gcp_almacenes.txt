@@ -159,30 +159,68 @@ B.1  Abrir 80 y 443 en la VPC (el 22/SSH ya viene permitido por default-allow-ss
      NOTA: si en A.2 marcaste las casillas HTTP/HTTPS en la Consola, GCP ya creó
      reglas equivalentes (default-allow-http / default-allow-https) → este paso es
      opcional; verifícalo en B.2.
-     🏭 PRODUCCIÓN (recomendado) — restringir el SSH a tu IP de administración:
+     🏭 PRODUCCIÓN (recomendado) — restringir el SSH a tu IP de administración.
         Por defecto GCP crea la regla `default-allow-ssh` que permite SSH (tcp:22)
         desde 0.0.0.0/0 (TODO internet). El firewall de GCP es ADITIVO/permisivo: si
         solo agregas una regla restrictiva pero dejas esa regla amplia, el SSH SIGUE
-        abierto al mundo. Por eso hay que crear tu regla restrictiva Y ADEMÁS quitar
-        o acotar `default-allow-ssh`. Elige UNA de las dos:
+        abierto al mundo. La MEJOR práctica es reemplazar la regla amplia por una
+        propia (por IP + target-tag), en esta SECUENCIA SEGURA de 3 pasos (para NO
+        dejarte fuera). Este endurecimiento NO aplica al modo prueba (🧪).
 
-        1) Crear la regla que permite SSH solo desde tu IP:
-             gcloud compute firewall-rules create allow-ssh-admin \
-               --allow=tcp:22 --source-ranges=<TU_IP>/32 --target-tags=http-server
-           # Tu IP pública:  curl -s ifconfig.me   (o https://api.ipify.org)
+        ── PASO 1 — Crear tu regla SSH (por IP + target-tag), ANTES de borrar nada ──
+          1a. Obtén tu IP pública de administración (desde tu equipo):
+                curl -s ifconfig.me ; echo        # o: curl -s https://api.ipify.org
+              (anótala como <TU_IP>)
+          1b. Etiqueta la VM para el SSH restringido (target-tag dedicado):
+                gcloud compute instances add-tags <VM_NOMBRE> --zone=<ZONA> \
+                  --tags=ssh-admin
+          1c. Crea la regla que permite SSH SOLO desde tu IP a las VMs con esa etiqueta:
+                gcloud compute firewall-rules create allow-ssh-admin \
+                  --allow=tcp:22 \
+                  --source-ranges=<TU_IP>/32 \
+                  --target-tags=ssh-admin \
+                  --description="SSH solo desde IP de administracion"
+          1d. Comprueba que quedó bien (IP, tag y que la VM tiene la etiqueta):
+                gcloud compute firewall-rules describe allow-ssh-admin \
+                  --format='get(sourceRanges,targetTags,allowed)'
+                gcloud compute instances describe <VM_NOMBRE> --zone=<ZONA> \
+                  --format='get(tags.items)'      # debe incluir: ssh-admin
 
-        2a) QUITAR la regla amplia (te quedas solo con la restrictiva):
-             gcloud compute firewall-rules delete default-allow-ssh
-        2b) O ACOTARLA (cambiar su origen a tu IP en vez de borrarla):
-             gcloud compute firewall-rules update default-allow-ssh \
-               --source-ranges=<TU_IP>/32
+        ── PASO 2 — Verificar que puedes entrar por SSH con la nueva regla ──
+          ⚠️ MUY IMPORTANTE: NO cierres tu sesión SSH actual. Abre una NUEVA (en otra
+             terminal) para probar; si algo falla, todavía tienes la sesión abierta
+             para corregir.
+          2a. En una terminal NUEVA:
+                gcloud compute ssh <VM_NOMBRE> --zone=<ZONA>
+              Debe conectar. (Nota: con `default-allow-ssh` aún presente, la conexión
+              podría estar pasando por CUALQUIERA de las dos reglas — por eso el PASO 4
+              re-verifica ya sin la regla amplia.)
 
-        Resultado: el puerto 22 deja de estar abierto a todo internet.
-        ⚠️ Si tu IP de administración es DINÁMICA (cambia), acotar a una sola /32
-           puede dejarte fuera al cambiar. Alternativas: actualizar la regla cuando
-           cambie, usar una VPN con IP fija, o IAP for TCP forwarding (SSH sin exponer
-           el puerto 22 a internet).
-        Este endurecimiento NO aplica al modo prueba (🧪).
+        ── PASO 3 — Borrar la regla amplia `default-allow-ssh` ──
+          Con tu regla creada y el acceso confirmado:
+                gcloud compute firewall-rules delete default-allow-ssh
+
+        ── PASO 4 — Re-verificar (ahora el SSH pasa SOLO por tu regla) ──
+          Sin cerrar la sesión abierta, abre OTRA terminal nueva:
+                gcloud compute ssh <VM_NOMBRE> --zone=<ZONA>
+          · Conecta  → ✅ el endurecimiento quedó bien: el puerto 22 solo acepta tu IP.
+          · Falla    → tu regla no cubre tu acceso. Desde la sesión que dejaste abierta,
+                       recrea/ajusta `allow-ssh-admin` (revisa <TU_IP> y el target-tag).
+                       Fallback si te quedaste sin sesiones: usa la Serial Console de
+                       GCP (o IAP) para recuperar el acceso.
+
+        ── Alternativas ──
+          · Más simple (sin target-tag, editando el default en sitio): en vez del
+            PASO 3, ACOTA la regla amplia a tu IP:
+                gcloud compute firewall-rules update default-allow-ssh \
+                  --source-ranges=<TU_IP>/32
+            (afecta a TODAS las VMs de la red; menos granular que la regla propia).
+          · Más seguro para prod expuesta a internet: IAP for TCP forwarding — NO
+            expone el puerto 22; el SSH pasa por el proxy de Google (origen
+            35.235.240.0/20) y se controla con IAM.
+          ⚠️ Si tu IP de administración es DINÁMICA (cambia), una sola /32 puede
+             dejarte fuera al cambiar: actualiza la regla cuando cambie, usa una VPN
+             con IP fija, o IAP.
 
 B.2  Verificar las reglas de la VPC
      gcloud compute firewall-rules list \

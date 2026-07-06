@@ -275,23 +275,55 @@ sudo crontab -l | grep certbot
 
 Antes de ejecutar el script 03, los repositorios deben estar en el servidor.
 El script 03 los detecta y ofrece la opción de clonarlos si no existen, pero
-hacerlo manualmente antes evita interrupciones.
+hacerlo manualmente antes evita interrupciones. Al clonar obtienes el código de
+ambos repos **y** la carpeta `scripts/` (dentro del backend) — no hace falta
+copiar los scripts por separado con `scp`.
+
+> **🔐 REPOS PRIVADOS — autenticar el servidor primero.** Los repositorios son
+> privados; una máquina recién creada NO tiene credenciales de GitHub. Elige UNA:
+>
+> **A) Deploy key (recomendado para producción — solo lectura, por repo):**
+> ```bash
+> # En el servidor: generar una clave y mostrar la PÚBLICA
+> ssh-keygen -t ed25519 -C "deploy-almacenes" -f ~/.ssh/id_ed25519 -N ""
+> cat ~/.ssh/id_ed25519.pub
+> ```
+> Copia esa clave pública y añádela en CADA repo de GitHub →
+> Settings → **Deploy keys** → Add deploy key (deja "Allow write access" DESmarcado).
+> Luego clona con la URL SSH (ver más abajo, variante SSH).
+>
+> **B) Personal Access Token (rápido, útil para una prueba — solo lectura):**
+> En GitHub → Settings → Developer settings → **Fine-grained token** con
+> permiso *Contents: Read-only* sobre los dos repos. Úsalo en la URL HTTPS
+> (variante TOKEN). ⚠️ El token es un secreto: no lo compartas ni lo commitees.
 
 ```bash
-# Backend
-cd /opt/almacenes/backend
-git clone https://github.com/davidreyna1974/almacenes-backend.git .
-git checkout main
+# Crear la estructura (01-prepare-server.sh ya crea /opt/almacenes)
+sudo mkdir -p /opt/almacenes/backend /opt/almacenes/frontend
+sudo chown -R $USER:$USER /opt/almacenes
 
-# Frontend
-cd /opt/almacenes/frontend
-git clone https://github.com/davidreyna1974/almacenes-frontend.git .
-git checkout main
+# ── Variante SSH (Deploy key, opción A) ──────────────────────────────────
+git clone git@github.com:davidreyna1974/almacenes-backend.git  /opt/almacenes/backend
+git clone git@github.com:davidreyna1974/almacenes-frontend.git /opt/almacenes/frontend
+
+# ── Variante TOKEN (opción B) — reemplaza <TU_TOKEN> ─────────────────────
+git clone https://<TU_TOKEN>@github.com/davidreyna1974/almacenes-backend.git  /opt/almacenes/backend
+git clone https://<TU_TOKEN>@github.com/davidreyna1974/almacenes-frontend.git /opt/almacenes/frontend
+
+# Rama a desplegar (main = estable/liberado; o develop para lo más reciente)
+git -C /opt/almacenes/backend  checkout main
+git -C /opt/almacenes/frontend checkout main
 
 # Verificar
-ls /opt/almacenes/backend/src/    # debe mostrar main/, test/
-ls /opt/almacenes/frontend/src/   # debe mostrar app/, environments/
+ls /opt/almacenes/backend/scripts/   # 01..05, maint-db.sh, seed_data.sql (¡ya los tienes!)
+ls /opt/almacenes/backend/src/       # main/, test/
+ls /opt/almacenes/frontend/src/      # app/, environments/
 ```
+
+> Alternativa sin autenticación en el servidor: si prefieres no poner credenciales
+> de GitHub en la VM, copia los repos desde tu equipo (ya autenticado) con
+> `gcloud compute scp --recurse <repo>/ <VM>:/opt/almacenes/<repo>/` (o `scp`).
+> Clonar es más limpio y actualizable (`git pull`); scp sirve para un despliegue puntual.
 
 ---
 

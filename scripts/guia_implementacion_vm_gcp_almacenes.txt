@@ -332,7 +332,17 @@ dominio va como argumento (<DOMINIO>) en cada script que lo requiere.
   2. Script 02 — Certificado SSL con Let's Encrypt:
        sudo bash 02-ssl.sh <DOMINIO>
        (Requiere puerto 80 abierto en AMBOS firewalls y DNS ya apuntando — FASE B y C.)
-  3. Clonar los repos en /opt/almacenes/ (backend/ y frontend/).
+  3. Clonar los repos privados en /opt/almacenes/ (backend/ y frontend/).
+     🔐 Los repos son PRIVADOS → la VM necesita credenciales de GitHub. Elige UNA:
+        · 🧪 Prueba (rápido): Personal Access Token de solo lectura:
+            sudo mkdir -p /opt/almacenes && sudo chown -R $USER:$USER /opt/almacenes
+            git clone https://<TU_TOKEN>@github.com/davidreyna1974/almacenes-backend.git  /opt/almacenes/backend
+            git clone https://<TU_TOKEN>@github.com/davidreyna1974/almacenes-frontend.git /opt/almacenes/frontend
+        · 🏭 Producción (limpio): Deploy key (ssh-keygen en la VM → añadir la clave
+            pública en cada repo → Settings → Deploy keys, solo lectura → clonar por SSH).
+        Detalle y verificación en el INSTRUCTIVO, "Paso previo al script 03 — Clonar
+        repositorios". Al clonar el backend obtienes también scripts/ (no hace falta scp).
+        (Alternativa: gcloud compute scp --recurse <repo>/ <VM>:/opt/almacenes/<repo>/)
   4. (Sin edición de archivos — el dominio va como argumento; ver FASE D.)
   5. Script 03 — Despliegue Docker (build + up de los 3 contenedores):
        bash 03-deploy.sh <DOMINIO>

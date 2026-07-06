@@ -183,17 +183,28 @@ nube** (GCP, AWS, Azure, etc.). El servidor debe ser:
 >
 > Así el mismo build/imagen sirve para producción, otro cliente o una prueba con DuckDNS.
 
-**Copiar los scripts al servidor:**
+**Llevar los scripts al servidor:**
+
+La forma recomendada es **clonar los repos** (los scripts vienen dentro del backend,
+en `scripts/`, junto al código que se despliega). No hace falta copiarlos aparte:
+ver **"Paso previo al script 03 — Clonar repositorios"** (incluye cómo autenticar el
+servidor a los repos privados con deploy key o token).
 
 ```bash
-# Desde la máquina de desarrollo
-scp -r scripts/ usuario@IP-DEL-SERVIDOR:~/scripts-almacenes/
-
-# Conectarse al servidor
-ssh usuario@IP-DEL-SERVIDOR
-cd ~/scripts-almacenes/
+# En el servidor, tras clonar (ver esa sección):
+cd /opt/almacenes/backend/scripts
 chmod +x *.sh
+ls    # 01-prepare-server.sh ... 05-verify.sh, maint-db.sh, seed_data.sql
 ```
+
+> Alternativa (despliegue puntual, sin credenciales de GitHub en la VM): copia los
+> scripts desde tu equipo ya autenticado. Con SSH clásico usa tu usuario del servidor
+> (no `root`) y la clave correcta; en GCP es más simple `gcloud compute scp`:
+> ```bash
+> gcloud compute scp --recurse scripts/ <VM_NOMBRE>:~/scripts-almacenes/ --zone=<ZONA>
+> # (o) scp -r scripts/ <usuario>@<IP-DEL-SERVIDOR>:~/scripts-almacenes/
+> ```
+> Nota: clonar es más limpio y actualizable (`git pull`); scp sirve para un envío puntual.
 
 ---
 

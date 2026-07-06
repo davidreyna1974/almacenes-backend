@@ -109,7 +109,12 @@ A.2  Crear la instancia (Ubuntu 22.04)
 
      NOTA (Consola web): Compute Engine → Crear instancia → Región/Zona → Serie E2 →
      Tipo (e2-standard-2 / 🧪 e2-medium) → Disco Ubuntu 22.04 LTS → marcar
-     "Permitir HTTP" y "HTTPS" (= etiquetas http-server/https-server) → Crear.
+     "Permitir HTTP" y "HTTPS" → Crear.
+     ⚠️ Diferencia clave según el método:
+       · Consola con esas casillas marcadas → crea las etiquetas Y las reglas de
+         firewall de 80/443 → NO necesitas B.1.
+       · Comando gcloud de arriba → las --tags SOLO etiquetan la VM; NO crean reglas
+         → B.1 es OBLIGATORIO para abrir 80/443 (ver FASE B).
 
 A.3  IP pública
      🏭 PRODUCCIÓN — reservar IP ESTÁTICA y asignarla a la VM (no cambia nunca):
@@ -156,9 +161,23 @@ B.1  Abrir 80 y 443 en la VPC (el 22/SSH ya viene permitido por default-allow-ss
        --source-ranges=0.0.0.0/0 \
        --description="Almacenes: HTTP/HTTPS de entrada"
 
-     NOTA: si en A.2 marcaste las casillas HTTP/HTTPS en la Consola, GCP ya creó
-     reglas equivalentes (default-allow-http / default-allow-https) → este paso es
-     opcional; verifícalo en B.2.
+     ⚠️ ¿ES B.1 OBLIGATORIO O OPCIONAL? DEPENDE DE CÓMO CREASTE LA VM:
+
+       · Si creaste la VM por gcloud (comando de A.2) → B.1 es OBLIGATORIO.
+         Las etiquetas --tags=http-server,https-server SOLO etiquetan la VM;
+         NO crean ninguna regla de firewall. Sin B.1, los puertos 80/443 quedan
+         BLOQUEADOS en la VPC (el sitio no será accesible y 02-ssl.sh fallará).
+
+       · Si creaste la VM por la Consola y MARCASTE las casillas "Permitir tráfico
+         HTTP" y "HTTPS" → B.1 es OPCIONAL: la Consola ya creó las reglas
+         default-allow-http (tcp:80) y default-allow-https (tcp:443) por ti.
+
+       Recuerda: en GCP las reglas de firewall son de la RED (VPC), no de la VM;
+       la VM solo aporta la etiqueta y la regla se crea una vez a nivel de red.
+
+       CÓMO SABER SI YA LAS TIENES: ejecuta B.2 y busca reglas que permitan tcp:80
+       y tcp:443. Si NO aparecen (p.ej. no ves default-allow-http/https ni allow-web)
+       → ejecuta B.1. Ante la duda, ejecutar B.1 es seguro (no duplica nada dañino).
      🏭 PRODUCCIÓN (recomendado) — restringir el SSH a tu IP de administración.
         Por defecto GCP crea la regla `default-allow-ssh` que permite SSH (tcp:22)
         desde 0.0.0.0/0 (TODO internet). El firewall de GCP es ADITIVO/permisivo: si

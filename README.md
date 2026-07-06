@@ -171,8 +171,6 @@ es **agnóstico del dominio**: el dominio se pasa como argumento a `02-ssl.sh`/`
 - `scripts/guia_implementacion_vm_gcp_almacenes.txt` — guía de despliegue en una VM de Google Cloud (modo producción o modo prueba con limpieza de recursos).
 - `Dockerfile` — imagen del backend.
 
-> `scripts_beta/` contiene variantes locales/beta de los scripts anteriores.
-
 ---
 
 ## 📁 Estructura del proyecto

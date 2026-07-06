@@ -1411,14 +1411,6 @@ Documentación completa en `scripts/INSTRUCTIVO_puesta_produccion_almacenes.md`.
 `03-deploy.sh` inicializa la BD automáticamente: extensión `unaccent` → `schema.sql`
 → 4 roles → función `f_unaccent` → 10 índices. No se necesita intervención manual.
 
-### Beta local (`scripts_beta/`)
-
-Para validar el despliegue sin DNS real usando Lima (VM Ubuntu en Mac).
-Documentación en `scripts_beta/instructivo_beta.md`. Directorio autocontenido.
-
-Scripts exclusivos beta: `02-ssl-local.sh` y `05-verify-local.sh`.
-Scripts idénticos a producción: `01-prepare-server.sh`, `03-deploy.sh`, `04-firewall.sh`.
-
 ### Checklist pre-producción (L28)
 
 ```

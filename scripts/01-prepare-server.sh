@@ -2,7 +2,7 @@
 # ============================================================
 # SCRIPT 01 — PREPARACIÓN DEL SERVIDOR
 # Sistema  : Almacenes — codigoCodigoEnter
-# Dominio  : almacenes.codigo2enter.com
+# Dominio  : (agnóstico del dominio — se pasa como argumento a 02/03)
 # Versión  : 1.0 (2026-06-18)
 #
 # Descripción:
@@ -220,6 +220,6 @@ echo "  Docker Compose: $(docker compose version)"
 echo "  Directorio:     /opt/almacenes/"
 echo "  Usuario:        $REAL_USER"
 echo ""
-echo -e "${YELLOW}  SIGUIENTE PASO:${NC}"
-echo "  sudo bash 02-ssl.sh almacenes.codigo2enter.com"
+echo -e "${YELLOW}  SIGUIENTE PASO (pasa tu dominio como argumento):${NC}"
+echo "  sudo bash 02-ssl.sh <DOMINIO>"
 echo ""

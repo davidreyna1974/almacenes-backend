@@ -1402,10 +1402,10 @@ Documentación completa en `scripts/INSTRUCTIVO_puesta_produccion_almacenes.md`.
 | Script | Cuándo |
 |---|---|
 | `01-prepare-server.sh` | Una sola vez al configurar el servidor |
-| `02-ssl.sh` | Una sola vez (Let's Encrypt + cron de renovación) |
+| `02-ssl.sh` | Una sola vez (Let's Encrypt + certbot.timer/renewal-hooks); exige el dominio |
 | `03-deploy.sh` | Primer despliegue y cada re-despliegue |
 | `04-firewall.sh` | Una sola vez tras el primer despliegue |
-| `05-verify.sh` | Tras cada despliegue (8 smoke tests) |
+| `05-verify.sh` | Tras cada despliegue (9 smoke tests) |
 | `maint-db.sh` | Solo mantenimiento puntual (opcional) |
 
 `03-deploy.sh` inicializa la BD automáticamente: extensión `unaccent` → `schema.sql`

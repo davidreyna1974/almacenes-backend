@@ -84,7 +84,7 @@ RESUMEN DE LA DIFERENCIA CI vs CD (clave conceptual)
 
   | Repo      | Archivo                       | Qué hace                              | Disparador                     |
   |-----------|-------------------------------|---------------------------------------|--------------------------------|
-  | backend   | .github/workflows/ci.yml      | mvn verify (compila + 408 tests JUnit)| push/PR a develop, main        |
+  | backend   | .github/workflows/ci.yml      | mvn verify (compila + 412 tests JUnit)| push/PR a develop, main        |
   | backend   | .github/workflows/cd.yml      | build + push imagen a GHCR            | push a main + manual           |
   | frontend  | .github/workflows/ci.yml      | ng build + ng test (462 specs Vitest) | push/PR a develop, main        |
   | frontend  | .github/workflows/cd.yml      | build + push imagen a GHCR            | push a main + manual           |
@@ -186,15 +186,15 @@ RESUMEN DE LA DIFERENCIA CI vs CD (clave conceptual)
     CRITERIO: los comandos pasan en local; entiendes qué hará cada workflow.
 
   ── FASE A — CI del Backend ────────────────────────────────────────────────────
-    OBJETIVO: compilar y correr los 408 tests JUnit en cada push/PR.
+    OBJETIVO: compilar y correr los 412 tests JUnit en cada push/PR.
     ARCHIVO: almacenes-backend/.github/workflows/ci.yml   (contenido en §6.1)
     PASOS:
       1. Crear rama `chore/ci-pipeline` en el repo backend.
       2. Añadir el archivo ci.yml.
       3. commit + push de la rama → abrir PR a develop.
     CÓMO VERIFICAR: en el PR aparece el check "CI — Backend / Build & Test"; en la
-      pestaña Actions ves el log (setup JDK → cache → mvn verify → 408 tests).
-    CRITERIO: el workflow termina en ✔ verde con "BUILD SUCCESS" y 408 tests.
+      pestaña Actions ves el log (setup JDK → cache → mvn verify → 412 tests).
+    CRITERIO: el workflow termina en ✔ verde con "BUILD SUCCESS" y 412 tests.
 
   ── FASE B — CI del Frontend ───────────────────────────────────────────────────
     OBJETIVO: build de producción (AOT estricto) + 462 specs Vitest en cada push/PR.
@@ -290,7 +290,7 @@ RESUMEN DE LA DIFERENCIA CI vs CD (clave conceptual)
               distribution: 'temurin'
               cache: maven
           - name: Build & tests (mvn verify)
-            run: ./mvnw -B -ntp verify    # 3) compila + 408 tests + JaCoCo
+            run: ./mvnw -B -ntp verify    # 3) compila + 412 tests + JaCoCo
           - name: Subir reporte de cobertura
             if: always()                  # incluso si fallan los tests
             uses: actions/upload-artifact@v4
@@ -495,7 +495,7 @@ RESUMEN DE LA DIFERENCIA CI vs CD (clave conceptual)
 10. CHECKLIST DE CIERRE  (se marca al ejecutar)
 --------------------------------------------------------------------------------
   [ ] FASE 0 — comandos base verdes en local.
-  [ ] FASE A — ci.yml backend en verde (408 tests).
+  [ ] FASE A — ci.yml backend en verde (412 tests).
   [ ] FASE B — ci.yml frontend en verde (build AOT + 462 specs).
   [ ] FASE C — cd.yml backend: imagen en GHCR (sha + latest).
   [ ] FASE D — cd.yml frontend: imagen en GHCR (sha + latest).

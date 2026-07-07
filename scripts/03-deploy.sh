@@ -402,12 +402,9 @@ if [[ "${TABLE_COUNT:-0}" -lt 5 ]]; then
         -v ON_ERROR_STOP=1 < "$SCHEMA_SQL"
     ok "Esquema cargado (12 tablas, secuencias, constraints, índices)"
 
-    # Insertar los 4 roles del sistema (requeridos por DataInitializer)
-    db_exec "
-INSERT INTO roles (name) VALUES
-    ('ROLE_ADMIN'), ('ROLE_MANAGER'), ('ROLE_WAREHOUSEMAN'), ('ROLE_SALES')
-ON CONFLICT (name) DO NOTHING;" >/dev/null
-    ok "Roles del sistema insertados"
+    # Los 4 roles del sistema los siembra la APLICACIÓN al arrancar, de forma
+    # idempotente (backend: core/config/RoleInitializer, @Order(1) antes del
+    # DataInitializer). Ya NO se insertan aquí — eran un paso manual redundante.
 else
     ok "Re-despliegue — esquema existente (${TABLE_COUNT} tablas encontradas)"
 fi

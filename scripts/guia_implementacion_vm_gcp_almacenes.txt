@@ -364,7 +364,8 @@ dominio va como argumento (<DOMINIO>) en cada script que lo requiere.
        bash 03-deploy.sh <DOMINIO>
        (Sin edición de archivos — el dominio va como argumento; ver FASE D.)
        ⚠️ 03 YA INICIALIZA LA BD en el primer despliegue: carga schema.sql (12 tablas),
-          inserta los 4 roles, crea los 10 índices e instala la extensión unaccent.
+          crea los 10 índices e instala la extensión unaccent. (Los 4 roles los siembra
+          la APP al arrancar — RoleInitializer, idempotente — no el script.)
           NO ejecutes `maint-db.sh --schema` por tu cuenta después: schema.sql usa
           CREATE TABLE/FUNCTION sin IF NOT EXISTS → duplicaría objetos y daría ERROR.
           `maint-db.sh` es solo mantenimiento/fallback (ver INSTRUCTIVO).

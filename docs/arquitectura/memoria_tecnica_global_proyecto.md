@@ -481,7 +481,7 @@ JWT_SECRET=...       # mínimo 64 caracteres hex (openssl rand -hex 32)
 
 | Módulo | Estado | Tests | Notas |
 |---|---|---|---|
-| `auth` (RBAC) | ✓ Completo | 45 B* + 20 A + 12 B + 17 C | 4 roles, 9 endpoints, DataInitializer |
+| `auth` (RBAC) | ✓ Completo | 45 B* + 20 A + 12 B + 17 C | 4 roles (sembrados por `RoleInitializer`), 9 endpoints, `DataInitializer` |
 | `inventory` | ✓ Completo | 29 A + 16 B + 4 D | unitCost NOT NULL |
 | `purchases` | ✓ Completo | 43 A + 25 B | Máquina de estados PENDING→APPROVED→RECEIVED |
 | `sales` | ✓ Completo | 47 A + 25 B + 3 C + 5 D | Optimistic Locking, reservas |
@@ -489,7 +489,7 @@ JWT_SECRET=...       # mínimo 64 caracteres hex (openssl rand -hex 32)
 | Swagger/OpenAPI | ✓ Completo | — | 62 paths documentados |
 | Paginación | ✓ Completo | — | 9 endpoints paginados |
 
-**Suite total backend**: **408 tests — 0 fallos — BUILD SUCCESS** _(406 certificados en la campaña de QA + 2 de Actuator post-certificación)_  
+**Suite total backend**: **412 tests — 0 fallos — BUILD SUCCESS** _(406 certificados en la campaña de QA + 2 de Actuator + 4 de RoleInitializer/seeding)_  
 **Fix transversal (2026-06-28):** `GlobalExceptionHandler.handleTypeMismatch` — params de query con tipo inválido
 ahora devuelven **HTTP 400** (antes 500 filtrando `java.time.LocalDate`). Blast radius global; ver
 `docs/modulos/reports/memoria_tecnica_modulo_reports.md` §8 Bug 3.

@@ -151,17 +151,9 @@ if [[ -n "$SCHEMA_FILE" ]]; then
         psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < "$SCHEMA_FILE"
     ok "Script SQL cargado: $SCHEMA_FILE"
 
-    # Insertar los 4 roles del sistema (requeridos por DataInitializer para el usuario admin)
-    # El schema.sql solo crea la estructura — los datos base van aquí.
-    # INSERT ... ON CONFLICT DO NOTHING: seguro de ejecutar en re-despliegues.
-    psql_exec "
-INSERT INTO roles (name) VALUES
-    ('ROLE_ADMIN'),
-    ('ROLE_MANAGER'),
-    ('ROLE_WAREHOUSEMAN'),
-    ('ROLE_SALES')
-ON CONFLICT (name) DO NOTHING;"
-    ok "Roles del sistema insertados (ROLE_ADMIN, ROLE_MANAGER, ROLE_WAREHOUSEMAN, ROLE_SALES)"
+    # Los 4 roles del sistema los siembra la APLICACIÓN al arrancar, de forma
+    # idempotente (backend: core/config/RoleInitializer). Ya NO se insertan aquí —
+    # eran un paso manual redundante. Basta con arrancar el backend.
 else
     warn "No se especificó --schema."
     warn "Si es el PRIMER despliegue, DEBES cargar schema.sql antes de arrancar el backend:"

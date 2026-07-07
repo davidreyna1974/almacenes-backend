@@ -413,7 +413,9 @@ El sistema implementa 4 roles con acceso diferenciado por URL en `SecurityConfig
 
 `SecurityConfig.java` usa `@EnableMethodSecurity` y reglas `hasRole()` / `hasAnyRole()` por URL. El orden de las reglas importa: las más específicas van antes que las generales.
 
-**DataInitializer**: `core/config/DataInitializer.java` crea el usuario `admin`/`Admin123!` con `ROLE_ADMIN` + `ROLE_WAREHOUSEMAN` al arrancar si la tabla `users` está vacía. Resuelve el problema chicken-and-egg de no tener un admin inicial sin registro público.
+**RoleInitializer** (`core/config/RoleInitializer.java`, `@Order(1)`): al arrancar (`ApplicationReadyEvent`) siembra de forma **idempotente** los 4 roles de referencia obligatorios (`ROLE_ADMIN`, `ROLE_MANAGER`, `ROLE_WAREHOUSEMAN`, `ROLE_SALES`) — datos de referencia que la app aprovisiona sola, sin inserción manual ni dependencia de scripts/tests. Corre **antes** que `DataInitializer`.
+
+**DataInitializer** (`core/config/DataInitializer.java`, `@Order(2)`): crea el usuario `admin`/`Admin123!` con `ROLE_ADMIN` + `ROLE_WAREHOUSEMAN` al arrancar si la tabla `users` está vacía. Los roles ya existen (los sembró `RoleInitializer`). Resuelve el problema chicken-and-egg de no tener un admin inicial sin registro público.
 
 **Gestión de usuarios — solo ADMIN**:
 - `POST /api/v1/auth/login` — público
@@ -1154,7 +1156,7 @@ open target/site/jacoco/index.html
 
 **Umbrales configurados**: 70% de cobertura de líneas por paquete (excluyendo paquetes `dto`, `model`, `mapper` — son código auto-generado por MapStruct o solo campos sin lógica).
 
-**Métricas actuales** (**408 tests — backend completo**, 0 fallos — BUILD SUCCESS; 2026-06-30; la campaña de QA certificó 406, +2 de Actuator post-certificación):
+**Métricas actuales** (**412 tests — backend completo**, 0 fallos — BUILD SUCCESS; 2026-07-07; la campaña de QA certificó 406, +2 de Actuator, +4 de RoleInitializer/seeding):
 - Líneas: ~84.6% ✓ (umbral: 70%)
 - Métodos: ~87.5% ✓
 - Ramas: ~61.6% ~ (área de mejora — sin umbral configurado aún)
@@ -1295,10 +1297,10 @@ assertFalse(jwtUtils.validateToken(expiredToken));
   4. Flujo completo MANAGER: crea categoría, producto, orden de compra y la aprueba — verifica en BD que `approvedByUsername` es el usuario MANAGER
   5. Token con firma manipulada → 403 (verifica try-catch real del filtro JWT)
 
-### Suite de tests actual: **408 tests — 0 fallos** (2026-06-30)
+### Suite de tests actual: **412 tests — 0 fallos** (2026-07-07)
 
-> El desglose por tipo de abajo es el snapshot histórico (378). El total verificado actual es **408**
-> (`./mvnw test` → `Tests run: 408, Failures: 0, Errors: 0 — BUILD SUCCESS`). Incluye el test de regresión
+> El desglose por tipo de abajo es el snapshot histórico (378). El total verificado actual es **412**
+> (`./mvnw test` → `Tests run: 412, Failures: 0, Errors: 0 — BUILD SUCCESS`). Incluye el test de regresión
 > `ReportControllerTest.parametroFechaInvalido_retorna400SinFiltrarTipoInterno` (CYBER-05, fix 500→400) y
 > `ActuatorHealthTest` (BACK-I8, +2 tests post-certificación). La campaña de QA de 4 fases certificó 406.
 
@@ -1309,7 +1311,7 @@ Tipo B* (con seguridad):      45 tests  (+12 RBAC reports)
 Tipo C (@SpringBootTest):     51 tests
 Tipo D (@DataJpaTest):        22 tests
 ──────────────────────────────────────
-TOTAL MAVEN (snapshot):      378 tests   →  actual: 408 tests
+TOTAL MAVEN (snapshot):      378 tests   →  actual: 412 tests
 Tests E2E curl:              129 tests  (fuera del pipeline Maven)
 ```
 

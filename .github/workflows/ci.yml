@@ -1,0 +1,32 @@
+name: CI — Backend
+# Integración Continua: compila y corre los 408 tests JUnit en cada push/PR.
+# Brecha 1 (CI/CD) — ver docs/planificacion/plan_implementacion_CI_CD_almacenes.txt
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+permissions:
+  contents: read                       # permiso mínimo: solo leer el código
+jobs:
+  build-test:
+    name: Build & Test (JDK 17)
+    runs-on: ubuntu-latest             # runner efímero que presta GitHub
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4      # descarga el código al runner
+      - name: Set up JDK 17 (Temurin) + cache Maven
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven                 # acelera reutilizando ~/.m2 entre corridas
+      - name: Build & tests (mvn verify → 408 tests + JaCoCo)
+        run: ./mvnw -B -ntp verify     # -B batch, -ntp sin transfer progress
+      - name: Subir reporte de cobertura (JaCoCo)
+        if: always()                   # súbelo aunque fallen los tests
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-backend
+          path: target/site/jacoco/
+          if-no-files-found: ignore

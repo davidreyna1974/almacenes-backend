@@ -5,7 +5,7 @@
 ![versión](https://img.shields.io/badge/versión-1.0.0-6B3C6B)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5-6DB33F)
 ![Java](https://img.shields.io/badge/Java-17-007396)
-![tests](https://img.shields.io/badge/tests-408%20passing-2E7D32)
+![tests](https://img.shields.io/badge/tests-412%20passing-2E7D32)
 ![CI](https://github.com/davidreyna1974/almacenes-backend/actions/workflows/ci.yml/badge.svg)
 ![QA](https://img.shields.io/badge/QA-certificado%20(4%20fases)-1565C0)
 ![licencia](https://img.shields.io/badge/licencia-MIT-757575)
@@ -152,7 +152,7 @@ Contrato completo de cada endpoint en Swagger UI y en la
 Este proyecto se sometió a una **campaña de QA formal bajo un Protocolo de 4 fases** (congelamiento de
 código, corrección con gatekeeper, re-ejecución y certificación), coordinada con el frontend.
 
-- **408 tests** (JUnit 5) · 0 fallos · BUILD SUCCESS
+- **412 tests** (JUnit 5) · 0 fallos · BUILD SUCCESS
 - Verificación de seguridad server-side con `curl` + JWT por rol (enforcement RBAC + redacción de campos)
 - Parte de los **704 casos de prueba** del sistema; 5 módulos certificados, 0 bugs funcionales
 
@@ -181,7 +181,7 @@ almacenes-backend/
 ├── src/main/java/com/codigo2enter/almacenes/
 │   ├── core/            seguridad, excepciones, configuración
 │   └── modules/         auth · inventory · purchases · sales · reports
-├── src/test/            suites JUnit (408 tests)
+├── src/test/            suites JUnit (412 tests)
 ├── docs/                documentación (ver docs/README.md)
 │   ├── arquitectura/    memoria técnica global, diagrama
 │   └── modulos/         memoria técnica por módulo

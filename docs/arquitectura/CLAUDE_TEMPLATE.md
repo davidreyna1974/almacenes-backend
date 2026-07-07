@@ -1409,7 +1409,8 @@ Documentación completa en `scripts/INSTRUCTIVO_puesta_produccion_almacenes.md`.
 | `maint-db.sh` | Solo mantenimiento puntual (opcional) |
 
 `03-deploy.sh` inicializa la BD automáticamente: extensión `unaccent` → `schema.sql`
-→ 4 roles → función `f_unaccent` → 10 índices. No se necesita intervención manual.
+→ función `f_unaccent` → 10 índices. No se necesita intervención manual. Los 4 roles
+de referencia los siembra la app al arrancar (`RoleInitializer`, idempotente).
 
 ### Checklist pre-producción (L28)
 

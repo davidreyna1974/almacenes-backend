@@ -348,10 +348,12 @@ cat /var/log/almacenes-cert-renew.log      # debe registrar el reinicio del fron
 - **Inicializa la BD automáticamente:**
   - Instala la extensión `unaccent` (búsquedas accent-insensitive)
   - Crea la función inmutable `f_unaccent(text)` necesaria para índices funcionales
-  - **Primer despliegue**: detecta BD vacía → carga `schema.sql` (12 tablas) → inserta los 4 roles del sistema
+  - **Primer despliegue**: detecta BD vacía → carga `schema.sql` (12 tablas)
   - **Re-despliegues**: detecta tablas existentes y omite la carga del esquema
   - Crea los 10 índices de rendimiento (`IF NOT EXISTS` — idempotente en re-despliegues)
 - **Levanta backend y frontend** una vez la BD está lista
+- **Los 4 roles del sistema los siembra la APLICACIÓN al arrancar** (backend
+  `RoleInitializer`, idempotente) — no es un paso del script ni una inserción manual
 - Espera hasta 240 segundos a que el backend responda en `/actuator/health`
   (configurable con `BACKEND_MAX_WAIT`; el sondeo usa `wget`, no `curl`, porque la
   imagen `jre-alpine` no trae curl)

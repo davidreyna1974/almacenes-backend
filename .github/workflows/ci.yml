@@ -48,7 +48,7 @@ jobs:
           psql -h localhost -U postgres -d almacen_db -v ON_ERROR_STOP=1 \
             -f src/main/resources/schema.sql
           # Los 4 roles NO se siembran aquí: los crea la app (RoleInitializer) al arrancar.
-      - name: Build & tests (mvn verify → 411 tests + JaCoCo)
+      - name: Build & tests (mvn verify → 412 tests + JaCoCo)
         run: ./mvnw -B -ntp verify
       - name: Subir reporte de cobertura (JaCoCo)
         if: always()

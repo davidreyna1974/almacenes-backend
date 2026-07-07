@@ -1,0 +1,40 @@
+name: CD — Publicar imagen (Backend)
+# Entrega Continua (Continuous DELIVERY): al llegar a main, construye la imagen
+# Docker y la PUBLICA en GHCR, versionada. NO despliega — el artefacto queda listo.
+# Brecha 1 (CI/CD) — ver docs/planificacion/plan_implementacion_CI_CD_almacenes.txt
+on:
+  push:
+    branches: [main]          # cada release a main publica una imagen
+  workflow_dispatch:          # o a mano cuando quieras
+permissions:
+  contents: read
+  packages: write             # necesario para publicar en GHCR (habilitar en Settings)
+jobs:
+  image:
+    name: Build & Push image (GHCR)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Login a GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}   # token automático del workflow
+      - name: Calcular tags (por SHA + latest)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/davidreyna1974/almacenes-backend
+          tags: |
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64       # el runner es amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

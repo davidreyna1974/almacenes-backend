@@ -1,5 +1,5 @@
 name: CI — Backend
-# Integración Continua: compila y corre los 408 tests JUnit en cada push/PR.
+# Integración Continua: compila y corre los tests JUnit en cada push/PR.
 # Brecha 1 (CI/CD) — ver docs/planificacion/plan_implementacion_CI_CD_almacenes.txt
 on:
   push:
@@ -12,19 +12,46 @@ jobs:
   build-test:
     name: Build & Test (JDK 17)
     runs-on: ubuntu-latest             # runner efímero que presta GitHub
+    # Los tests de integración/repositorio necesitan un PostgreSQL real (ddl-auto:
+    # validate + características específicas de PG: unaccent, f_unaccent). Se levanta
+    # como "service container" para el job. Los 4 roles de referencia los siembra la
+    # app (RoleInitializer) al arrancar — NO se insertan aquí.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: almacen_db
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres    # credencial efímera solo para el runner
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      # Los tests usan el perfil por defecto; se apunta el datasource al servicio.
+      SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/almacen_db
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
     steps:
       - name: Checkout
-        uses: actions/checkout@v4      # descarga el código al runner
+        uses: actions/checkout@v4
       - name: Set up JDK 17 (Temurin) + cache Maven
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: maven                 # acelera reutilizando ~/.m2 entre corridas
-      - name: Build & tests (mvn verify → 408 tests + JaCoCo)
-        run: ./mvnw -B -ntp verify     # -B batch, -ntp sin transfer progress
+          cache: maven
+      - name: Cargar el esquema (unaccent + f_unaccent + tablas)
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d almacen_db -v ON_ERROR_STOP=1 \
+            -f src/main/resources/schema.sql
+          # Los 4 roles NO se siembran aquí: los crea la app (RoleInitializer) al arrancar.
+      - name: Build & tests (mvn verify → 411 tests + JaCoCo)
+        run: ./mvnw -B -ntp verify
       - name: Subir reporte de cobertura (JaCoCo)
-        if: always()                   # súbelo aunque fallen los tests
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: jacoco-backend

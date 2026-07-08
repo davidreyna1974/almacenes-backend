@@ -171,6 +171,29 @@ que ocurra, sin posibilidad de olvidar la regla.
 
 ---
 
+## 🔁 CI/CD (GitHub Actions)
+
+Pipeline implementado (Brecha 1, 2026-07). Workflows en `.github/workflows/`:
+
+- **`ci.yml` — CI** (en cada `push`/`pull_request` a `develop`/`main`): levanta un service
+  container `postgres:16-alpine`, carga `schema.sql`, y corre `./mvnw -B -ntp verify`
+  (build + **412 tests** JUnit + JaCoCo). Los 4 roles los siembra la app al arrancar
+  (`RoleInitializer`, `@Order(1)`), **no** el workflow. Sube el reporte JaCoCo como artifact.
+- **`cd.yml` — CD** (push a `main` + `workflow_dispatch`): construye la imagen Docker
+  (Dockerfile multi-stage) y la **publica en GHCR** (`ghcr.io/davidreyna1974/almacenes-backend`),
+  etiquetada por **SHA** + `latest`. NO despliega (Continuous Delivery).
+
+**Compuerta y capas de protección:**
+- Branch protection en `main`/`develop` (require PR + status check `Build & Test (JDK 17)`) — pero
+  en **repo privado de plan gratuito GitHub NO la hace cumplir** (necesita Pro/Team/Enterprise o
+  repo público). Queda como intención documentada.
+- Capa local: hook `hooks/pre-commit` bloquea commits directos a `main`/`develop` en la máquina.
+- El CI corre **después** del push (no lo bloquea); su resultado se liga al **SHA** del commit.
+
+Plan completo: `docs/planificacion/plan_implementacion_CI_CD_almacenes.txt`. Badges de CI/CD en el README.
+
+---
+
 ## Comandos comunes
 
 ```bash

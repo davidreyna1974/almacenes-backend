@@ -227,6 +227,14 @@ Todo trabajo va en una `feature/` o `fix/` branch y llega a `develop`
 exclusivamente vía `git merge --no-ff`. Un commit directo viola el historial
 y dificulta saber qué cambios llegaron juntos.
 
+> **CI/CD (GitHub Actions):** el gatekeeper (build + tests + lint) lo automatiza el workflow de CI
+> en cada `push`/`pull_request`; el CD publica el artefacto versionado a un registry (imagen a GHCR)
+> al llegar a `main`; los E2E van en un workflow **aparte** (manual). La branch protection
+> (require PR + check de CI) es la compuerta — pero en repos privados de plan gratuito **no se hace
+> cumplir**, así que el hook `pre-commit` local es la defensa complementaria. El resultado del CI se
+> liga al **SHA** del commit y corre **después** del push (no lo bloquea). Sección CI/CD completa en
+> el `CLAUDE_TEMPLATE.md` maestro (`Proyecto desarrollo/templates/contexto/`).
+
 **Protección automatizada**: incluir un hook pre-commit en `hooks/pre-commit`
 que bloquee automáticamente commits en ramas protegidas:
 ```bash

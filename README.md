@@ -7,6 +7,7 @@
 ![Java](https://img.shields.io/badge/Java-17-007396)
 ![tests](https://img.shields.io/badge/tests-412%20passing-2E7D32)
 ![CI](https://github.com/davidreyna1974/almacenes-backend/actions/workflows/ci.yml/badge.svg)
+![CD](https://github.com/davidreyna1974/almacenes-backend/actions/workflows/cd.yml/badge.svg)
 ![QA](https://img.shields.io/badge/QA-certificado%20(4%20fases)-1565C0)
 ![licencia](https://img.shields.io/badge/licencia-MIT-757575)
 

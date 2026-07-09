@@ -184,9 +184,10 @@ Pipeline implementado (Brecha 1, 2026-07). Workflows en `.github/workflows/`:
   etiquetada por **SHA** + `latest`. NO despliega (Continuous Delivery).
 
 **Compuerta y capas de protección:**
-- Branch protection en `main`/`develop` (require PR + status check `Build & Test (JDK 17)`) — pero
-  en **repo privado de plan gratuito GitHub NO la hace cumplir** (necesita Pro/Team/Enterprise o
-  repo público). Queda como intención documentada.
+- Branch protection en `main`/`develop` (require PR + status check `Build & Test (JDK 17)`). Con el
+  **repo público** GitHub **sí la hace cumplir** (en repo privado de plan gratuito no se haría —
+  requeriría Pro/Team/Enterprise). `enforce_admins: false` → el dueño puede bypassear para el flujo
+  directo del portafolio.
 - Capa local: hook `hooks/pre-commit` bloquea commits directos a `main`/`develop` en la máquina.
 - El CI corre **después** del push (no lo bloquea); su resultado se liga al **SHA** del commit.
 

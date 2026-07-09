@@ -231,7 +231,8 @@ y dificulta saber qué cambios llegaron juntos.
 > en cada `push`/`pull_request`; el CD publica el artefacto versionado a un registry (imagen a GHCR)
 > al llegar a `main`; los E2E van en un workflow **aparte** (manual). La branch protection
 > (require PR + check de CI) es la compuerta — pero en repos privados de plan gratuito **no se hace
-> cumplir**, así que el hook `pre-commit` local es la defensa complementaria. El resultado del CI se
+> cumplir** (sí en repos públicos o planes de pago), así que el hook `pre-commit` local es la defensa
+> complementaria. El resultado del CI se
 > liga al **SHA** del commit y corre **después** del push (no lo bloquea). Sección CI/CD completa en
 > el `CLAUDE_TEMPLATE.md` maestro (`Proyecto desarrollo/templates/contexto/`).
 
@@ -289,6 +290,24 @@ datasource.password: ${DB_PASSWORD:password-local}
 En producción, las variables de entorno reales anulan los defaults.
 Si un secreto llega al historial de git, debe considerarse comprometido
 y rotarse de inmediato aunque se elimine del código.
+
+### Versionado y releases (SemVer + tags inmutables)
+
+Cada merge `develop → main` que entrega valor es una **release**.
+
+- **SemVer `MAJOR.MINOR.PATCH`:** `PATCH` correcciones, `MINOR` funcionalidad retrocompatible,
+  `MAJOR` cambios incompatibles. El CHANGELOG (*Keep a Changelog*, versión más reciente arriba) se
+  actualiza **antes** de cortar el tag.
+- **Un tag es un puntero nombre→SHA**, no texto del commit. Usar **anotado**
+  (`git tag -a vX.Y.Z -m "..."`); apunta al commit de release en `main` (igual que el check de CI,
+  se ancla al SHA).
+- **Regla de oro — un tag publicado es INMUTABLE.** Nunca `git tag -f` + `git push -f` (anti-patrón:
+  rompe la trazabilidad de quien ya lo consumió). Una corrección sale como versión nueva
+  (`vX.Y.Z+1`), no como re-etiquetado.
+- **GitHub Release:** objeto adjunto al tag con notas legibles; la más reciente se marca *Latest*.
+- **Flujo:** en `main`, con CHANGELOG y badge de versión ya commiteados →
+  `git tag -a vX.Y.Z -m "Release X.Y.Z — <resumen>"` (SIN `-f`) → `git push origin vX.Y.Z` →
+  `gh release create vX.Y.Z --title "..." --notes "..."`.
 
 ---
 

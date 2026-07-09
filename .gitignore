@@ -35,3 +35,6 @@ build/
 ### macOS ###
 .DS_Store
 **/.DS_Store
+
+### Claude Code — no se versionan (viven solo en disco / en templates) ###
+CLAUDE*.md

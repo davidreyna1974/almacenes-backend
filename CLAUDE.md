@@ -195,6 +195,21 @@ Plan completo: `docs/planificacion/plan_implementacion_CI_CD_almacenes.txt`. Bad
 
 ---
 
+## 🏷️ Versionado y releases (Brecha 2)
+
+Cada merge `develop → main` que entrega valor es una **release** (SemVer `MAJOR.MINOR.PATCH`;
+CHANGELOG *Keep a Changelog* actualizado **antes** de tagear).
+
+- Los tags son **anotados** (`git tag -a vX.Y.Z`) y apuntan al SHA del commit de release en `main`.
+- **Regla de oro — un tag publicado es INMUTABLE:** nunca `git tag -f` + `git push -f`. Una corrección
+  sale como versión nueva (`vX.Y.Z+1`), no como re-etiquetado.
+- **Flujo:** en `main`, con CHANGELOG + badge de versión ya commiteados →
+  `git tag -a vX.Y.Z -m "..."` (sin `-f`) → `git push origin vX.Y.Z` → `gh release create vX.Y.Z ...`.
+- Versiones actuales: **v1.0.0** (2026-06-28, QA-certificado) · **v1.1.0** (2026-07-08, CI/CD + roles +
+  público). Detalle en la memoria global §6.2 y `docs/planificacion/plan_implementacion_versionado_releases_almacenes.txt`.
+
+---
+
 ## Comandos comunes
 
 ```bash

@@ -5,6 +5,26 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/)
 y el proyecto se adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 
+## [1.1.0] — 2026-07-08
+
+Pipeline de CI/CD, corrección de raíz del sembrado de roles y repositorio público.
+
+### Añadido
+- **CI/CD (GitHub Actions):** `ci.yml` (service PostgreSQL + `schema.sql` + `./mvnw verify`,
+  **412 tests** + JaCoCo) y `cd.yml` (publica la imagen Docker en **GHCR**, tag SHA + `latest`).
+  Badges de CI/CD en el README.
+- **`RoleInitializer`:** siembra automática e idempotente de los 4 roles de referencia al arrancar
+  (`@Order(1)`, antes de `DataInitializer`), eliminando la inserción manual de roles. +4 tests (408 → 412).
+
+### Corregido
+- Prueba de despliegue en GCP (10 hallazgos): scripts `02-ssl`/`03-deploy`/`05-verify` (dominio como
+  argumento obligatorio, `certbot.timer` + renewal-hooks, sondeo con `wget`, verificación de cert con
+  `sudo`) y documentación (INSTRUCTIVO, guía GCP).
+
+### Cambiado
+- Repositorio **público**; branch protection activa (require PR + check de CI). Despliegue agnóstico
+  del dominio (se pasa como argumento a los scripts).
+
 ## [1.0.0] — 2026-06-28
 
 Primera versión estable. Sistema certificado bajo el Protocolo de QA de 4 fases.

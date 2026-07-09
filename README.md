@@ -92,7 +92,7 @@ com.codigo2enter.almacenes/
 | **reports** | Dashboard ejecutivo, reportes analíticos y operativos | `GET /reports/dashboard/executive`, `GET /reports/operations/pending` |
 
 Contrato completo de cada endpoint en Swagger UI y en la
-[memoria técnica global](docs/arquitectura/memoria_tecnica_global_proyecto.md) (sección de contratos).
+[memoria técnica global](https://github.com/davidreyna1974/almacenes/blob/main/docs/memoria_tecnica_global_proyecto.md) (sección de contratos).
 
 ---
 
@@ -183,12 +183,11 @@ almacenes-backend/
 │   ├── core/            seguridad, excepciones, configuración
 │   └── modules/         auth · inventory · purchases · sales · reports
 ├── src/test/            suites JUnit (412 tests)
-├── docs/                documentación (ver docs/README.md)
-│   ├── arquitectura/    memoria técnica global, diagrama
+├── docs/                documentación propia del backend (ver docs/README.md)
+│   ├── arquitectura/    diagrama de arquitectura (backend)
 │   └── modulos/         memoria técnica por módulo
 ├── scripts/             despliegue a producción + instructivo
 ├── Dockerfile
-├── CLAUDE.md            guía para asistentes de IA / convenciones del repo
 ├── CHANGELOG.md         historial de versiones
 └── README.md           este archivo
 ```
@@ -199,7 +198,7 @@ almacenes-backend/
 
 Toda la documentación está indexada en **[`docs/README.md`](docs/README.md)**. Destacados:
 
-- [Memoria técnica global](docs/arquitectura/memoria_tecnica_global_proyecto.md) — visión, decisiones, contratos de integración, RBAC, lecciones.
+- [Memoria técnica global](https://github.com/davidreyna1974/almacenes/blob/main/docs/memoria_tecnica_global_proyecto.md) — visión, decisiones, contratos de integración, RBAC, lecciones.
 - [Diagrama de arquitectura](docs/arquitectura/diagrama_arquitectura.md) — diagramas Mermaid.
 - [Memorias técnicas por módulo](docs/modulos/) — decisiones de diseño y bugs por módulo.
 - [Instructivo de puesta en producción](scripts/INSTRUCTIVO_puesta_produccion_almacenes.md).

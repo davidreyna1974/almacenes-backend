@@ -1,0 +1,285 @@
+================================================================================
+  PLAN DE IMPLEMENTACIÓN DE VERSIONADO Y RELEASES — Sistema "Almacenes"
+  Brecha 2 de cierre de proyecto · Higiene de releases/tags (SemVer + Releases)
+  Documento: plan_implementacion_versionado_releases_almacenes.txt · v1.0 · 2026-07-08
+  Repos: almacenes-backend, almacenes-frontend (PÚBLICOS) + almacenes (umbrella)
+================================================================================
+
+--------------------------------------------------------------------------------
+0. PROPÓSITO Y ALCANCE  (LEER PRIMERO)
+--------------------------------------------------------------------------------
+
+OBJETIVO
+  Adoptar una higiene de versionado y releases profesional: versiones con SemVer,
+  **tags inmutables**, GitHub Releases con notas, y un proceso de release repetible.
+  Corrige el ANTI-PATRÓN que veníamos arrastrando: mover el tag `v1.0.0` a la fuerza
+  (`git tag -f` + `git push -f`) en cada cambio (decenas de veces esta sesión).
+
+OBJETIVO PEDAGÓGICO
+  Este documento explica QUÉ es cada concepto (SemVer, tag anotado, release, changelog),
+  POR QUÉ importa, y CÓMO se aplica en ESTE proyecto. Se ejecuta por FASES delimitadas.
+
+POR QUÉ ESTA BRECHA (el problema concreto)
+  · Un tag liberado debe ser **inmutable**: `v1.0.0` debería apuntar SIEMPRE al mismo
+    commit. Moverlo rompe la reproducibilidad: quien clonó `v1.0.0` ayer y hoy obtiene
+    código distinto; `v1.0.0` deja de significar "esa" versión.
+  · No hay **GitHub Releases** (notas de versión) publicados.
+  · El **CHANGELOG** se detiene en `[1.0.0]` (su actualización a fondo es la Brecha 3;
+    aquí se toca lo mínimo para que cada release tenga su entrada).
+
+QUÉ SÍ SE IMPLEMENTA
+  · SemVer (MAJOR.MINOR.PATCH) como convención de versión.
+  · Tags **inmutables** y **anotados** (nunca más `-f` sobre un tag liberado).
+  · GitHub Releases con notas para la versión vigente (y saneo del histórico `v1.0.0`).
+  · Un **runbook de release** (cómo cortar una versión de aquí en adelante, por PR).
+  · Decisión de versionado multi-repo (sincronizado backend+frontend).
+
+QUÉ NO SE IMPLEMENTA (o queda para otra brecha)
+  · CHANGELOG completo y detallado → Brecha 3 (aquí solo la entrada de la versión vigente).
+  · Automatización de releases (semantic-release / release-please) → §9, documentada, opcional.
+
+
+--------------------------------------------------------------------------------
+1. GLOSARIO DE CONCEPTOS  (para el aprendizaje)
+--------------------------------------------------------------------------------
+
+  SemVer            Semantic Versioning: `MAJOR.MINOR.PATCH` (p.ej. 1.2.3).
+                    · PATCH (1.0.→1→): corrección compatible hacia atrás (bugfix, docs).
+                    · MINOR (1.→1→.0): funcionalidad nueva compatible hacia atrás.
+                    · MAJOR (→2→.0.0): cambio que ROMPE compatibilidad (breaking change).
+  Tag               Etiqueta que apunta a un commit (SHA). Marca una versión/hito.
+  Tag anotado       `git tag -a v1.2.3 -m "..."`: objeto de tag con autor, fecha y mensaje
+                    (recomendado para releases). Un tag "ligero" (`git tag v1.2.3`) es solo
+                    un puntero sin metadata.
+  Tag inmutable     Convención: un tag ya publicado NO se mueve nunca. Una versión nueva =
+                    un tag nuevo. Lo contrario (`git tag -f` + `push -f`) es el anti-patrón.
+  Release (GitHub)  Una "publicación" asociada a un tag, con TÍTULO + NOTAS (release notes)
+                    y binarios opcionales. Se ve en la pestaña "Releases" del repo.
+  Release notes     El resumen legible de qué trae la versión (para humanos).
+  Pre-release/Draft  Un release marcado como borrador (no visible) o pre-lanzamiento (RC/beta).
+  CHANGELOG         Archivo `CHANGELOG.md` con el historial por versión (formato
+                    "Keep a Changelog": sección `[Unreleased]` + versiones con fecha).
+  Conventional      Convención de mensajes de commit (`feat:`, `fix:`, `chore:`…) que permite
+   Commits          deducir el bump de versión y generar changelog automáticamente.
+  Versionado        En un sistema multi-repo: ¿cada repo tiene su versión independiente, o
+   sincronizado     todos suben juntos con la misma "versión del sistema"?
+  gh release        Subcomando de la CLI de GitHub para crear/gestionar Releases.
+
+
+--------------------------------------------------------------------------------
+2. ESTADO ACTUAL Y OBJETIVO
+--------------------------------------------------------------------------------
+
+  ESTADO ACTUAL
+  | Repo | Tag | Problema |
+  |---|---|---|
+  | almacenes-backend  | `v1.0.0` movido a la fuerza ~decenas de veces | apunta al main actual, no al 1.0.0 real |
+  | almacenes-frontend | `v1.0.0` movido a la fuerza ~decenas de veces | idem |
+  | almacenes (umbrella) | (sin tags) | el badge del README dice 1.0.0 pero no hay tag |
+  · Sin GitHub Releases. CHANGELOG en `[1.0.0] 2026-06-28`. Repos ahora PÚBLICOS con
+    branch protection **activa** → releases por PR.
+
+  OBJETIVO (estado deseado)
+  · Cada versión = un **tag inmutable anotado** + un **GitHub Release** con notas + una
+    entrada de CHANGELOG.
+  · `git tag` deja de usarse con `-f`; el proceso de release es un runbook claro.
+  · La "versión del sistema" es coherente entre backend, frontend y el badge del umbrella.
+
+
+--------------------------------------------------------------------------------
+3. DECISIONES DE DISEÑO Y JUSTIFICACIÓN
+--------------------------------------------------------------------------------
+
+  D1 — SemVer como convención.
+       Comunica el impacto de cada versión sin leer el diff. Regla para decidir el bump:
+       ¿rompe compatibilidad? → MAJOR. ¿agrega función compatible? → MINOR. ¿solo arregla/
+       documenta? → PATCH.
+
+  D2 — Tags INMUTABLES y ANOTADOS.
+       Nunca más `git tag -f` / `git push -f` sobre un tag liberado. Cada release corta un
+       tag NUEVO con `git tag -a vX.Y.Z -m "..."`. Así cada versión es un punto fijo y
+       reproducible.
+
+  D3 — Versionado SINCRONIZADO (backend + frontend).
+       Backend y frontend son un sistema acoplado (misma release del producto), así que
+       suben JUNTOS con la MISMA versión (v1.1.0 en ambos). El umbrella no lleva tag propio
+       de código, pero su badge de README refleja la **versión del sistema**. (Alternativa:
+       versionar cada repo por separado; se descarta por ser un solo producto.)
+
+  D4 — Qué versión cortar AHORA (DECISIÓN A CONFIRMAR).
+       Desde el 1.0.0 certificado (2026-06-28) el sistema sumó: Actuator, correcciones de
+       despliegue, la corrección de raíz de roles (`RoleInitializer`) y **todo el CI/CD**
+       (Brecha 1). Nada rompe la API (compatible hacia atrás) pero SÍ hay funcionalidad
+       nueva significativa (CI/CD, seeding automático) → **bump MINOR**.
+       → PROPUESTA: cortar **v1.1.0** como la versión vigente. (Si prefieres tratar el
+         público + CI/CD como un hito mayor, sería v1.1.0 igualmente; MAJOR se reserva para
+         breaking changes de la API.)
+
+  D5 — Saneamiento del tag histórico `v1.0.0` (DECISIÓN A CONFIRMAR).
+       El `v1.0.0` quedó apuntando al main actual (por los force-push), lo cual es
+       incorrecto. Opciones:
+       (a) **Re-apuntarlo UNA última vez** al commit real del release 1.0.0 (el de
+           2026-06-28) y de ahí en adelante NUNCA moverlo. Correcto históricamente.
+       (b) Dejarlo donde está y solo avanzar con v1.1.0 (más simple, pero `v1.0.0` queda
+           "mal" para siempre).
+       → RECOMENDACIÓN: (a) si logramos identificar el commit 1.0.0 original en FASE 0; si
+         no es identificable con confianza, (b) y se documenta.
+
+  D6 — GitHub Releases con notas.
+       Cada tag de release tiene su Release en GitHub (título + notas). Se puede autogenerar
+       un borrador de notas desde los commits (`--generate-notes`) y luego pulir.
+
+  D7 — Releases por PR (repos públicos, branch protection activa).
+       Ya no se pushea directo a `main`. El corte de versión va: rama → PR a `main` → CI
+       verde → merge → `git tag -a` sobre `main` → `git push` del tag → GitHub Release.
+       (Los tags NO los bloquea la branch protection; el merge a main sí requiere PR+CI.)
+
+
+--------------------------------------------------------------------------------
+4. PRERREQUISITOS
+--------------------------------------------------------------------------------
+
+  [ ] CLI `gh` autenticada: `gh auth login` (para `gh release create` y `gh pr`).
+      Alternativa: crear releases/PRs en la UI de GitHub.
+  [ ] Confirmar la decisión D4 (número de versión vigente: propuesta v1.1.0).
+  [ ] Confirmar la decisión D5 (saneo de v1.0.0: re-apuntar al 1.0.0 real vs dejar).
+  [ ] Identificar el commit del release 1.0.0 original:
+        git log --oneline --all --since=2026-06-27 --until=2026-06-29 -- CHANGELOG.md
+        (o el commit de main cercano a la fecha `[1.0.0] 2026-06-28` del CHANGELOG).
+
+
+--------------------------------------------------------------------------------
+5. FASES DE IMPLEMENTACIÓN  (delimitadas — una a la vez)
+--------------------------------------------------------------------------------
+
+  ── FASE 0 — Preparación y decisiones ──────────────────────────────────────────
+    · `gh auth login`. · Confirmar D4 (versión vigente) y D5 (saneo histórico).
+    · Identificar el commit 1.0.0 original (si se opta por re-apuntar).
+    CRITERIO: decisiones tomadas; `gh` autenticada; commit 1.0.0 localizado (si aplica).
+
+  ── FASE A — Saneamiento del tag histórico v1.0.0 (una sola vez) ───────────────
+    OBJETIVO: dejar `v1.0.0` correcto y establecer la regla "nunca más `-f`".
+    Opción (a): re-apuntar por ÚLTIMA vez al commit 1.0.0 real, en ambos repos:
+      git tag -f -a v1.0.0 <SHA_1.0.0_real> -m "Release 1.0.0 — certificación QA (2026-06-28)"
+      git push -f origin v1.0.0
+    Opción (b): documentar que v1.0.0 quedó impreciso y avanzar (sin tocar).
+    CRITERIO: `v1.0.0` en su lugar definitivo; a partir de aquí es INMUTABLE.
+
+  ── FASE B — Cortar la versión vigente (tag inmutable anotado) ─────────────────
+    OBJETIVO: etiquetar el estado actual como v1.1.0 en backend y frontend.
+    Sobre `main` actualizado (ya integrado por PR):
+      git tag -a v1.1.0 -m "Release 1.1.0 — CI/CD (Brecha 1) + RoleInitializer + repos públicos"
+      git push origin v1.1.0        # SIN -f
+    CRITERIO: `git tag` lista v1.0.0 y v1.1.0; `git show v1.1.0` muestra el mensaje anotado.
+
+  ── FASE C — GitHub Releases ───────────────────────────────────────────────────
+    OBJETIVO: publicar el Release de la versión vigente (y opcionalmente el de 1.0.0).
+      gh release create v1.1.0 --title "v1.1.0 — CI/CD + RoleInitializer" \
+        --notes "<resumen>"        # o --generate-notes para un borrador
+    (Repetir en backend y frontend; si difieren, notas específicas por repo.)
+    CRITERIO: en la pestaña "Releases" de cada repo aparece v1.1.0 con sus notas.
+
+  ── FASE D — CHANGELOG (entrada mínima de la versión) ──────────────────────────
+    OBJETIVO: que cada versión tenga su entrada (el detalle completo es Brecha 3).
+    Añadir en `CHANGELOG.md` la sección `## [1.1.0] — 2026-07-08` con los cambios clave
+    (CI/CD, RoleInitializer, correcciones de despliegue, repos públicos) y el enlace de
+    comparación. Actualizar el badge de versión de los READMEs (1.0.0 → 1.1.0).
+    CRITERIO: CHANGELOG y badges reflejan v1.1.0.
+
+  ── FASE E — Runbook de release (documentar el proceso de aquí en adelante) ─────
+    OBJETIVO: dejar escrito CÓMO se corta una versión, para no volver a improvisar.
+    Documento/apéndice "Proceso de release" (ver §6.4). Incluye: cuándo bumpear, el flujo
+    por PR, el tag anotado, el Release y el CHANGELOG.
+    CRITERIO: runbook incorporado (a este plan o al INSTRUCTIVO/CLAUDE.md).
+
+  ── FASE F — Verificación y cierre ─────────────────────────────────────────────
+    · `git tag` en ambos repos: v1.0.0 (histórico, fijo) + v1.1.0 (vigente).
+    · Releases visibles en GitHub. CHANGELOG y badges en 1.1.0.
+    · Regla asentada: cero `git tag -f` de aquí en adelante.
+    CRITERIO: todo lo anterior verificado; brecha cerrada.
+
+
+--------------------------------------------------------------------------------
+6. DETALLE / COMANDOS  (referencia comentada)
+--------------------------------------------------------------------------------
+
+  §6.1 — Cortar un tag de release (lo correcto)
+    git checkout main && git pull                      # main ya integrado por PR, CI verde
+    git tag -a v1.1.0 -m "Release 1.1.0 — <resumen>"   # tag ANOTADO
+    git push origin v1.1.0                             # SIN -f (inmutable)
+
+  §6.2 — Publicar el GitHub Release
+    gh release create v1.1.0 --title "v1.1.0 — <título>" --notes "<notas>"
+    # o para un borrador autogenerado desde commits:
+    gh release create v1.1.0 --generate-notes --draft
+
+  §6.3 — Si te EQUIVOCAS al taggear (antes de que nadie lo consuma)
+    git tag -d v1.1.0                    # borra local
+    git push origin :refs/tags/v1.1.0    # borra remoto
+    # ...corrige y vuelve a crear el tag. (Solo si aún NO se publicó/consumió.)
+    ⚠️ Nunca "mover" un tag ya publicado y usado: corta uno nuevo (v1.1.1).
+
+  §6.4 — RUNBOOK: cómo cortar una versión de aquí en adelante
+    1. Trabajo por ramas → PR a `develop` (CI verde) → merge.
+    2. Release: PR de `develop` → `main` (CI verde) → merge.
+    3. Decidir el bump (SemVer): PATCH/MINOR/MAJOR según el cambio.
+    4. `git tag -a vX.Y.Z -m "..."` sobre `main` → `git push origin vX.Y.Z` (sin -f).
+    5. `gh release create vX.Y.Z ...` con notas.
+    6. Actualizar `CHANGELOG.md` (mover `[Unreleased]` → `[X.Y.Z] — fecha`) y el badge del README.
+
+
+--------------------------------------------------------------------------------
+7. CÓMO VERIFICAR
+--------------------------------------------------------------------------------
+  · `git tag` → lista los tags; `git show vX.Y.Z` → muestra el tag anotado y su commit.
+  · Pestaña "Releases" del repo en GitHub → el release con sus notas.
+  · Badge de versión del README y sección del CHANGELOG coinciden con el tag.
+  · `git tag --points-at main` → qué versión está en la punta de main.
+
+
+--------------------------------------------------------------------------------
+8. RIESGOS, LÍMITES Y BUENAS PRÁCTICAS
+--------------------------------------------------------------------------------
+  · NUNCA `git tag -f`/`push -f` sobre un tag publicado y consumido (rompe a terceros).
+  · Tags ANOTADOS para releases (llevan autor/fecha/mensaje); ligeros solo para marcas internas.
+  · Versión sincronizada backend+frontend (mismo número = misma release del producto).
+  · Un Release sin notas útiles vale poco: el "qué cambió" es para humanos.
+  · SemVer se basa en compatibilidad de la **interfaz pública** (API), no en el tamaño del cambio.
+
+
+--------------------------------------------------------------------------------
+9. AUTOMATIZACIÓN OPCIONAL  (DOCUMENTADA, NO SE IMPLEMENTA)
+--------------------------------------------------------------------------------
+  Herramientas que, a partir de Conventional Commits, deducen la versión, generan el
+  CHANGELOG y publican el Release automáticamente:
+    · release-please (Google) — PR de release con changelog + tag + release.
+    · semantic-release — versión y release automáticos en el CI.
+  Requieren adoptar Conventional Commits de forma estricta. Se deja como mejora futura;
+  por ahora el proceso es manual y controlado (§6.4).
+
+
+--------------------------------------------------------------------------------
+10. CHECKLIST DE CIERRE  (se marca al ejecutar)
+--------------------------------------------------------------------------------
+  [ ] FASE 0 — gh autenticada; D4 (v1.1.0) y D5 (saneo v1.0.0) confirmadas.
+  [ ] FASE A — v1.0.0 en su lugar definitivo (última vez que se toca); regla "no -f" asentada.
+  [ ] FASE B — v1.1.0 (tag anotado) en backend y frontend, pusheado sin -f.
+  [ ] FASE C — GitHub Releases v1.1.0 (y v1.0.0 si aplica) con notas.
+  [ ] FASE D — CHANGELOG con [1.1.0] + badges de versión actualizados.
+  [ ] FASE E — runbook de release documentado.
+  [ ] FASE F — verificación completa; brecha cerrada.
+
+
+--------------------------------------------------------------------------------
+11. REFERENCIAS
+--------------------------------------------------------------------------------
+  · SemVer — https://semver.org
+  · Keep a Changelog — https://keepachangelog.com
+  · GitHub Releases — docs.github.com/repositories/releasing-projects-on-github
+  · gh release — cli.github.com/manual/gh_release
+  · Relación: Brecha 3 (CHANGELOG) y Brecha 1 (CI/CD, releases por PR).
+
+================================================================================
+FIN — plan_implementacion_versionado_releases_almacenes.txt
+Ejecutar por FASES (0→F), una a la vez, con el flujo por PR (repos públicos).
+================================================================================

@@ -212,6 +212,12 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    # Límites de recursos (Brecha 6) — evitan que un servicio agote la RAM del host.
+    # Calibrados para una VM ~2 GB; AJUSTAR según los recursos reales del servidor.
+    deploy:
+      resources:
+        limits: { cpus: "0.75", memory: 512M }
+        reservations: { memory: 256M }
 
   backend:
     build:
@@ -219,6 +225,9 @@ services:
       dockerfile: Dockerfile
     container_name: almacenes-backend
     restart: unless-stopped
+    # Da tiempo al graceful shutdown de Spring (timeout-per-shutdown-phase: 30s) antes
+    # del SIGKILL de Docker (por defecto solo 10s). Debe ser > 30s.
+    stop_grace_period: 40s
     depends_on:
       db:
         condition: service_healthy
@@ -231,6 +240,17 @@ services:
       CORS_ALLOWED_ORIGINS:      ${CORS_ALLOWED_ORIGINS}
     expose:
       - "8080"
+    # Healthcheck (Brecha 6): la app está "healthy" solo cuando Actuator responde OK.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s        # margen para el arranque de Spring Boot
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 900M }
+        reservations: { memory: 384M }
 
   frontend:
     build:
@@ -251,6 +271,16 @@ services:
     volumes:
       # Certificados Let's Encrypt montados como read-only
       - /etc/letsencrypt:/etc/letsencrypt:ro
+    # Healthcheck (Brecha 6): nginx está vivo si el puerto 80 acepta conexiones.
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 80 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 128M }
+        reservations: { memory: 64M }
 
 volumes:
   postgres_data:

@@ -5,7 +5,7 @@
 	<parent>
 		<groupId>org.springframework.boot</groupId>
 		<artifactId>spring-boot-starter-parent</artifactId>
-		<version>3.5.14</version>
+		<version>4.1.0</version>
 		<relativePath/> <!-- lookup parent from repository -->
 	</parent>
 	<groupId>com.codigo2enter</groupId>
@@ -28,7 +28,7 @@
 	</scm>
 	<properties>
 		<java.version>17</java.version>
-		<org.mapstruct.version>1.5.5.Final</org.mapstruct.version>
+		<org.mapstruct.version>1.6.3</org.mapstruct.version>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -81,24 +81,24 @@
 		<dependency>
 			<groupId>io.jsonwebtoken</groupId>
 			<artifactId>jjwt-api</artifactId>
-			<version>0.12.6</version>
+			<version>0.13.0</version>
 		</dependency>
 		<dependency>
 			<groupId>io.jsonwebtoken</groupId>
 			<artifactId>jjwt-impl</artifactId>
-			<version>0.12.6</version>
+			<version>0.13.0</version>
 			<scope>runtime</scope>
 		</dependency>
 		<dependency>
 			<groupId>io.jsonwebtoken</groupId>
 			<artifactId>jjwt-jackson</artifactId>
-			<version>0.12.6</version>
+			<version>0.13.0</version>
 			<scope>runtime</scope>
 		</dependency>
 		<dependency>
 			<groupId>org.springdoc</groupId>
 			<artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
-			<version>2.7.0</version>
+			<version>3.0.3</version>
 		</dependency>
 	</dependencies>
 
@@ -107,7 +107,7 @@
 			<plugin>
 				<groupId>org.jacoco</groupId>
 				<artifactId>jacoco-maven-plugin</artifactId>
-				<version>0.8.11</version>
+				<version>0.8.15</version>
 				<executions>
 					<!-- Instrumenta el bytecode antes de ejecutar los tests -->
 					<execution>

@@ -11,8 +11,9 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 10
     groups:
-      maven-dependencies:            # agrupa para reducir el ruido de PRs
-        patterns: ["*"]
+      maven-minor-patch:             # agrupa SOLO minor/patch (seguros); los major
+        patterns: ["*"]              # llegan como PRs individuales para revisión manual
+        update-types: ["minor", "patch"]
 
   # Acciones usadas en los workflows de GitHub Actions.
   - package-ecosystem: "github-actions"

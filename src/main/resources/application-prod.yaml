@@ -21,6 +21,10 @@ spring:
       ddl-auto: validate
     show-sql: false
 
+  # Apagado ordenado (Brecha 6): ventana para drenar las peticiones en vuelo al detener
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+
 # Deshabilitar Swagger/OpenAPI en producción (BACK-I2)
 springdoc:
   api-docs:
@@ -47,3 +51,8 @@ logging:
 jwt:
   secret: ${JWT_SECRET}
   expiration: 7200000
+
+# Apagado ordenado (Brecha 6 — graceful shutdown): al recibir SIGTERM, deja de aceptar
+# nuevas peticiones y termina las en vuelo antes de cerrar (12-Factor IX, disposability).
+server:
+  shutdown: graceful

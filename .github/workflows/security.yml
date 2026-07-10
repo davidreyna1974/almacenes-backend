@@ -1,0 +1,46 @@
+name: Security — Dependency Check (OWASP)
+# Escaneo profundo de dependencias (SCA) contra la base NVD de CVEs. Es PESADO
+# (descarga la base NVD), por eso va APARTE del CI de cada push: se ejecuta semanal
+# y a demanda, para no ralentizar la compuerta de cada commit.
+# Brecha 4 — ver docs de almacenes: plan_implementacion_seguridad_madurez_almacenes.txt
+on:
+  schedule:
+    - cron: '0 6 * * 1'          # lunes 06:00 UTC
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  owasp:
+    name: OWASP Dependency-Check (JDK 17)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up JDK 17 (Temurin) + cache Maven
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+      - name: Cache de la base NVD de OWASP
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/owasp/dependency-check-data
+          key: owasp-nvd-${{ github.run_id }}
+          restore-keys: owasp-nvd-
+      - name: OWASP Dependency-Check (falla si CVSS >= 7)
+        # NVD_API_KEY (secret opcional) acelera la descarga de la base NVD.
+        # Sin la key funciona igual, pero más lento.
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: |
+          ARGS="-Dformat=HTML -DfailBuildOnCVSS=7"
+          if [ -n "${NVD_API_KEY}" ]; then ARGS="$ARGS -DnvdApiKey=${NVD_API_KEY}"; fi
+          ./mvnw -B -ntp org.owasp:dependency-check-maven:check $ARGS
+      - name: Subir reporte OWASP
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: owasp-dependency-check-report
+          path: target/dependency-check-report.html
+          if-no-files-found: ignore

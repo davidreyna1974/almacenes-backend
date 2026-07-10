@@ -108,6 +108,9 @@ Contrato completo de cada endpoint en Swagger UI y en la
 - **Manejo global de excepciones** (`GlobalExceptionHandler`): parámetros malformados → `400` sin filtrar
   tipos internos; validaciones → `400`/`422` con mensaje útil.
 - **Búsqueda insensible a acentos** vía función `f_unaccent()` de PostgreSQL (nativeQuery).
+- **Gobernanza de dependencias:** [`SECURITY.md`](SECURITY.md) (reporte vía GitHub Private Vulnerability
+  Reporting), **Dependabot** y **OWASP dependency-check** (workflow `security.yml`). Secretos
+  externalizados con `${VAR:default}` — nunca en git.
 
 ---
 

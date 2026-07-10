@@ -7,15 +7,21 @@ y el proyecto se adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 
 ## [No publicado]
 
-Cambios de documentación posteriores a 1.1.0 (integrados en `main`, aún sin liberar;
-se publicarán como v1.1.1).
+## [1.1.1] — 2026-07-10
+
+Documentación, organización de repositorios y gobernanza de seguridad (sin cambios funcionales).
+
+### Añadido
+- **Gobernanza de seguridad (Brecha 4):** `SECURITY.md` (canal *GitHub Private Vulnerability
+  Reporting*), Dependabot (`maven` + `github-actions`, agrupado minor/patch) y workflow `security.yml`
+  con **OWASP dependency-check** (schedule semanal + manual, `failBuildOnCVSS=7`).
 
 ### Cambiado
-- **Organización documental:** los archivos `CLAUDE*.md` dejan de versionarse (gitignorados;
-  la plantilla `CLAUDE_TEMPLATE.md` vive solo en el directorio de plantillas). La documentación
-  general del sistema (memoria técnica global y planes de implementación) se centraliza en el repo
-  paraguas `almacenes`; este repositorio conserva solo su documentación propia (arquitectura backend,
-  módulos, análisis y pruebas). Enlaces de los README e índices de `docs/` actualizados.
+- **Organización documental:** los archivos `CLAUDE*.md` dejan de versionarse (gitignorados; la
+  plantilla vive solo en el directorio de plantillas). La documentación general del sistema (memoria
+  técnica global y planes de implementación) se centraliza en el repo paraguas `almacenes`; este
+  repositorio conserva solo su documentación propia. Enlaces de README e índices de `docs/` actualizados.
+- Actualización de dependencias minor/patch (Dependabot).
 
 ## [1.1.0] — 2026-07-08
 
@@ -70,6 +76,7 @@ Primera versión estable. Sistema certificado bajo el Protocolo de QA de 4 fases
   0 bugs funcionales, 0 regresiones.
 - Verificación de seguridad server-side con `curl` + JWT por rol (enforcement RBAC + redacción de campos).
 
-[No publicado]: https://github.com/davidreyna1974/almacenes-backend/compare/v1.1.0...HEAD
+[No publicado]: https://github.com/davidreyna1974/almacenes-backend/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/davidreyna1974/almacenes-backend/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/davidreyna1974/almacenes-backend/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/davidreyna1974/almacenes-backend/releases/tag/v1.0.0

@@ -1,0 +1,24 @@
+# Dependabot — vigilancia de dependencias (Brecha 4).
+# GitHub ejecuta el escaneo en sus servidores (inicial + semanal) y abre PRs de
+# actualización/seguridad. No depende del CI ni de un push de código.
+# Ver docs de almacenes: plan_implementacion_seguridad_madurez_almacenes.txt
+version: 2
+updates:
+  # Dependencias Java del backend (Maven).
+  - package-ecosystem: "maven"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      maven-dependencies:            # agrupa para reducir el ruido de PRs
+        patterns: ["*"]
+
+  # Acciones usadas en los workflows de GitHub Actions.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns: ["*"]

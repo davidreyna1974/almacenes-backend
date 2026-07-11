@@ -9,7 +9,11 @@
 ![CI](https://github.com/davidreyna1974/almacenes-backend/actions/workflows/ci.yml/badge.svg)
 ![CD](https://github.com/davidreyna1974/almacenes-backend/actions/workflows/cd.yml/badge.svg)
 ![QA](https://img.shields.io/badge/QA-certificado%20(4%20fases)-1565C0)
+![estado](https://img.shields.io/badge/estado-estable%20·%20mantenimiento-2E7D32)
 ![licencia](https://img.shields.io/badge/licencia-MIT-757575)
+
+> **Estado:** proyecto **cerrado en v1.1.1** — estable, en **modo mantenimiento**. Acta de cierre en el
+> repo paraguas [`almacenes`](https://github.com/davidreyna1974/almacenes/blob/main/docs/cierre_proyecto_almacenes.md).
 
 Este repositorio contiene el **backend Spring Boot**. Es parte de un sistema de dos capas:
 
